@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SC9 Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+  <script src="https://unpkg.com/react-is@18/umd/react-is.production.min.js"></script>
+  <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script>
+    // Shim mínimo: o bundle foi compilado com require("react") etc. como
+    // externos (não empacotados) — aqui a gente resolve esses nomes pros
+    // globais que os scripts de CDN acima já colocaram em `window`.
+    window.require = function (name) {
+      var map = {
+        react: window.React,
+        "react-dom": window.ReactDOM,
+        "react-dom/client": window.ReactDOM, // createRoot já vem no UMD do React 18
+        recharts: window.Recharts,
+        xlsx: window.XLSX,
+      };
+      if (map[name]) return map[name];
+      throw new Error("Módulo não resolvido: " + name + " (verifique se o script de CDN correspondente carregou)");
+    };
+    window.addEventListener("error", function (e) {
+      var el = document.getElementById("boot-error");
+      if (el && !window.__sc9_mounted) {
+        el.style.display = "block";
+        el.textContent = "Erro ao carregar o painel: " + (e.message || e);
+      }
+    }, true);
+  </script>
+</head>
+<body style="margin:0; background:#070916;">
+  <div id="boot-error" style="display:none; color:#FF6E85; background:#141433; padding:16px; font-family:monospace; white-space:pre-wrap;"></div>
+  <div id="root"></div>
+  <script src="/bundle.js"></script>
+</body>
+</html>
