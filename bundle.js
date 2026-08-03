@@ -6,7 +6,7 @@
         ::-webkit-scrollbar { height: 8px; width: 8px; }
         ::-webkit-scrollbar-thumb { background: ${e.border}; border-radius: 4px; }
         @keyframes scanline { 0% { transform: translateX(-100%); opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { transform: translateX(220%); opacity: 0; } }
-        .scan::after { content: ""; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(124,147,255,0.16), transparent); animation: scanline 2.2s ease-in-out 1; }
+        .scan::after { content: ""; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(124,147,255,0.16), transparent); animation: scanline 2.2s ease-in-out 1; pointer-events: none; }
         @media (prefers-reduced-motion: reduce) { .scan::after { animation: none; } }
         input[type="date"] { color-scheme: dark; }
         .gate-btn { transition: transform .15s ease, border-color .15s ease, background .15s ease; }
