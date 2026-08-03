@@ -9,7 +9,10 @@ const { saveSnapshot, loadSnapshot, usingSupabase } = require("./storage");
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || ""; // vazio = sem senha (não recomendado em produção)
 const COOKIE_NAME = "sc9_auth";
-const PUBLIC_DIR = path.join(__dirname, "public");
+const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
+// só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
+// (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
+const SERVABLE = new Set(["index.html", "bundle.js"]);
 const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20MB — dá folga pro JSON de um mês inteiro de pedidos
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
@@ -66,25 +69,37 @@ function sendJson(res, status, obj) {
 }
 
 function serveStatic(req, res, urlPath) {
-  let filePath = path.join(PUBLIC_DIR, urlPath === "/" ? "index.html" : urlPath);
-  if (!filePath.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end("proibido"); }
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      // qualquer rota não encontrada cai no index.html (SPA)
-      fs.readFile(path.join(PUBLIC_DIR, "index.html"), (err2, data2) => {
-        if (err2) { res.writeHead(404); return res.end("não encontrado"); }
-        res.writeHead(200, { "Content-Type": MIME[".html"] });
-        res.end(data2);
-      });
-      return;
-    }
-    const ext = path.extname(filePath);
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
+  const name = urlPath === "/" ? "index.html" : urlPath.replace(/^\//, "");
+  if (!SERVABLE.has(name)) {
+    // qualquer coisa fora da lista (inclusive rotas de navegação tipo /alguma-coisa)
+    // cai no index.html — é o comportamento normal de uma SPA
+    return fs.readFile(path.join(PUBLIC_DIR, "index.html"), (err, data) => {
+      if (err) { res.writeHead(404); return res.end("não encontrado"); }
+      res.writeHead(200, { "Content-Type": MIME[".html"] });
+      res.end(data);
+    });
+  }
+  fs.readFile(path.join(PUBLIC_DIR, name), (err, data) => {
+    if (err) { res.writeHead(404); return res.end("não encontrado"); }
+    res.writeHead(200, { "Content-Type": MIME[path.extname(name)] || "application/octet-stream" });
     res.end(data);
   });
 }
 
 async function handleApi(req, res, pathname) {
+  if (pathname === "/api/debug-fs" && req.method === "GET") {
+    let listing = [];
+    try { listing = fs.readdirSync(PUBLIC_DIR); } catch (e) { listing = ["ERRO ao listar: " + e.message]; }
+    return sendJson(res, 200, {
+      __dirname,
+      PUBLIC_DIR,
+      arquivosEncontrados: listing,
+      indexExiste: fs.existsSync(path.join(PUBLIC_DIR, "index.html")),
+      bundleExiste: fs.existsSync(path.join(PUBLIC_DIR, "bundle.js")),
+      cwd: process.cwd(),
+    });
+  }
+
   if (pathname === "/api/health" && req.method === "GET") {
     return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", time: new Date().toISOString() });
   }
