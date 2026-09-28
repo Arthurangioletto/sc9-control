@@ -101,7 +101,10 @@ const SESSION_COOKIE = "sc9_sess";
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.createHash("sha256").update("sc9-sessao|" + APP_PASSWORD).digest("hex");
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
-const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin" });
+// perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
+const PERFIS = ["controle0201", "saida"];
+const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
+const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
 function assinarToken(payload) {
   const b = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -160,7 +163,7 @@ function alterarUsuarios(fn) {
     return nova;
   });
 }
-const usuarioPublico = (u) => ({ usuario: u.usuario, nome: u.nome, ativo: u.ativo !== false, criadoEm: u.criadoEm || null });
+const usuarioPublico = (u) => ({ usuario: u.usuario, nome: u.nome, ativo: u.ativo !== false, criadoEm: u.criadoEm || null, perfis: perfisDe(u) });
 class ErroHttp extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 
 async function getSession(req) {
@@ -171,7 +174,7 @@ async function getSession(req) {
     if (p.r === "admin") return ADMIN();
     const u = await achaUsuario(p.u);
     // desativar o acesso ou trocar a senha (sv) derruba a sessão na hora
-    if (u && u.ativo !== false && (u.sv || 0) === (p.sv || 0)) return { usuario: u.usuario, nome: u.nome, role: "operador" };
+    if (u && u.ativo !== false && (u.sv || 0) === (p.sv || 0)) return { usuario: u.usuario, nome: u.nome, role: "operador", perfis: perfisDe(u) };
     return null;
   }
   // compatibilidade: cookie antigo (senha do administrador) e cabeçalho x-app-password
@@ -180,10 +183,11 @@ async function getSession(req) {
   if (header && timingSafeEqualStr(header, APP_PASSWORD)) return ADMIN();
   return null;
 }
-async function exigir(req, res, papeis) {
+async function exigir(req, res, papeis, perfil) {
   const sess = await getSession(req);
   if (!sess) { sendJson(res, 401, { error: "não autenticado" }); return null; }
   if (papeis && !papeis.includes(sess.role)) { sendJson(res, 403, { error: "seu acesso não permite isso" }); return null; }
+  if (perfil && sess.role !== "admin" && !(sess.perfis || []).includes(perfil)) { sendJson(res, 403, { error: "seu acesso não permite isso" }); return null; }
   return sess;
 }
 function colocarCookie(res, sess, sv) {
@@ -252,6 +256,90 @@ function serveStatic(req, res, urlPath) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// SAÍDA PARA EXPEDIÇÃO: o conferente BIPA o número do pedido; o servidor devolve
+// as informações completas do pedido e, no mesmo passo, registra ele como
+// "na expedição". Tudo acontece numa fila única no servidor, então 4 pessoas
+// bipando ao mesmo tempo não se atropelam, e o mesmo pedido nunca entra 2 vezes
+// sem querer (o 2º recebe "já bipado por Fulano às hh:mm").
+// ---------------------------------------------------------------------------
+const INDICE_OBJ = "pedidos-indice.json";
+const TRANSP_NOMES = { "2": "Brasil", "4": "Retira 01", "5": "Retira 02", "6": "Retira 03", "7": "Retira 04", "10057": "Emergência", "10023": "São Paulo" };
+const DESFAZER_MS = Number(process.env.SAIDA_DESFAZER_MS) || 5 * 60 * 1000;
+const SAIDA_DIAS_DUP = 3;
+
+// Só o que o conferente precisa pra conferir o bipe. Pedidos/itens completos do SC9
+// continuam só com o administrador.
+function montarIndicePedidos(p) {
+  const nomes = new Map((p.itemNames || []).map(([k, v]) => [String(k), String(v)]));
+  const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
+  const itensPorPed = new Map(), fimConf = new Map();
+  for (const it of p.items || []) {
+    const k = String(it.pedido);
+    if (!itensPorPed.has(k)) itensPorPed.set(k, new Map());
+    const m = itensPorPed.get(k);
+    m.set(String(it.produto), (m.get(String(it.produto)) || 0) + (Number(it.qt) || 0));
+    if (it.confEnd && (!fimConf.has(k) || it.confEnd > fimConf.get(k))) fimConf.set(k, it.confEnd);
+  }
+  const pedidos = {}, usados = new Set();
+  const limpo = (v) => (v === null || v === undefined || String(v).trim() === "0" ? "" : String(v).trim());
+  for (const o of p.orders || []) {
+    const k = String(o.pedido);
+    const itens = Array.from((itensPorPed.get(k) || new Map()).entries());
+    itens.forEach(([prod]) => usados.add(prod));
+    const cod = sc5.get(k);
+    pedidos[k] = {
+      a: o.armazem, c: limpo(o.nome), cc: limpo(o.cliente), dt: o.dt || null, l: o.itens || itens.length, q: o.qt || 0,
+      cf: limpo(o.conferente), sp: limpo(o.separador), fc: fimConf.get(k) || null, nf: limpo(o.nf),
+      tr: cod ? (TRANSP_NOMES[cod] || `Código ${cod}`) : limpo(o.transportadora), it: itens,
+    };
+  }
+  const nomesUsados = {};
+  for (const pr of usados) if (nomes.has(pr)) nomesUsados[pr] = nomes.get(pr);
+  return { savedAt: p.savedAt, pedidos, nomes: nomesUsados };
+}
+let indiceCache = null;
+async function indiceCarregar() {
+  if (indiceCache && Date.now() - indiceCache.at < 60000) return indiceCache.data;
+  try { indiceCache = { at: Date.now(), data: await objLoad(INDICE_OBJ) }; }
+  catch (e) { if (indiceCache) return indiceCache.data; throw e; }
+  return indiceCache.data;
+}
+function infoDoPedido(indice, ped) {
+  const r = indice && indice.pedidos ? indice.pedidos[ped] : null;
+  if (!r) return null;
+  return {
+    pedido: ped, armazem: r.a, cliente: r.c, codCliente: r.cc, liberadoEm: r.dt, linhas: r.l, pecas: r.q, conferente: r.cf, separador: r.sp,
+    fimConferencia: r.fc, nf: r.nf, transportadora: r.tr,
+    itens: (r.it || []).map(([prod, qt]) => ({ produto: prod, nome: (indice.nomes && indice.nomes[prod]) || "", qt })),
+  };
+}
+const resumoInfo = (i) => (i ? { armazem: i.armazem, cliente: i.cliente, transportadora: i.transportadora, linhas: i.linhas, pecas: i.pecas, conferente: i.conferente, nf: i.nf, liberadoEm: i.liberadoEm, fimConferencia: i.fimConferencia } : null);
+function normalizarPedido(x) {
+  const d = String(x === null || x === undefined ? "" : x).replace(/\D/g, "").replace(/^0+/, "");
+  return d.length >= 4 && d.length <= 10 ? d : null;
+}
+
+// um arquivo por dia (fica pequeno e rápido); o dia é o do Brasil, não o do servidor
+const diaSP = (d = new Date()) => new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(d);
+const diaAnterior = (dia, n) => { const d = new Date(`${dia}T12:00:00-03:00`); d.setUTCDate(d.getUTCDate() - n); return diaSP(d); };
+const saidaObj = (dia) => `saida-pv-${dia}.json`;
+const saidaCache = new Map();
+async function saidaCarregar(dia) {
+  if (saidaCache.has(dia)) return saidaCache.get(dia);
+  const data = await objLoad(saidaObj(dia));
+  const v = data && Array.isArray(data.entries) ? data : { dia, versao: 0, entries: [], removidos: [] };
+  if (!Array.isArray(v.removidos)) v.removidos = [];
+  saidaCache.set(dia, v);
+  return v;
+}
+// grava numa cópia; só troca a memória DEPOIS de gravar (se falhar, nada fica pela metade)
+async function saidaGravar(dia, novo) {
+  novo.versao = (novo.versao || 0) + 1;
+  await objSave(saidaObj(dia), novo);
+  saidaCache.set(dia, novo);
+}
+
 const LOGIN_RE = /^[a-z0-9._-]{3,30}$/;
 const CAMPOS_IDENTIDADE = ["criadoPorUsuario", "criadoPorNome", "criadoEm", "confirmadoPorUsuario", "confirmadoPorNome", "confirmadoEm"];
 
@@ -259,7 +347,7 @@ async function handleApi(req, res, pathname) {
   const method = req.method;
 
   if (pathname === "/api/health" && method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v1", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v2", saida: "v1", time: new Date().toISOString() });
   }
 
   if (pathname === "/api/debug-fs" && method === "GET") {
@@ -271,7 +359,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/session" && method === "GET") {
     const s = await getSession(req);
-    return sendJson(res, 200, { needsPassword: Boolean(APP_PASSWORD), authed: Boolean(s), role: s ? s.role : null, usuario: s ? s.usuario : "", nome: s ? s.nome : "" });
+    return sendJson(res, 200, { needsPassword: Boolean(APP_PASSWORD), authed: Boolean(s), role: s ? s.role : null, usuario: s ? s.usuario : "", nome: s ? s.nome : "", perfis: s ? (s.perfis || []) : [] });
   }
 
   if (pathname === "/api/login" && method === "POST") {
@@ -288,14 +376,14 @@ async function handleApi(req, res, pathname) {
         if (timingSafeEqualStr(password, APP_PASSWORD)) sess = ADMIN();
       } else {
         const u = await achaUsuario(usuario);
-        if (u && u.ativo !== false) { if (await verificaSenha(password, u)) { sess = { usuario: u.usuario, nome: u.nome, role: "operador" }; sv = u.sv || 0; } }
+        if (u && u.ativo !== false) { if (await verificaSenha(password, u)) { sess = { usuario: u.usuario, nome: u.nome, role: "operador", perfis: perfisDe(u) }; sv = u.sv || 0; } }
         else await hashSenha(password, "00".repeat(16)); // gasta o mesmo tempo, não revela se o usuário existe
       }
     }
     if (!sess) { registraFalha(chave); return sendJson(res, 401, { ok: false, error: "Usuário ou senha incorretos." }); }
     falhas.delete(chave);
     colocarCookie(res, sess, sv);
-    return sendJson(res, 200, { ok: true, role: sess.role, usuario: sess.usuario, nome: sess.nome });
+    return sendJson(res, 200, { ok: true, role: sess.role, usuario: sess.usuario, nome: sess.nome, perfis: sess.perfis || [] });
   }
 
   if (pathname === "/api/logout" && method === "POST") {
@@ -330,13 +418,20 @@ async function handleApi(req, res, pathname) {
           const nome = String(body.nome || "").trim();
           if (nome.length < 2 || nome.length > 60) throw new ErroHttp(400, "Informe o nome da pessoa (2 a 60 letras).");
           if (idx >= 0) throw new ErroHttp(409, "Já existe um acesso com esse usuário.");
-          const u = { usuario: login, nome, ativo: true, sv: 0, criadoEm: new Date().toISOString() };
+          const perfis = Array.isArray(body.perfis) ? body.perfis.filter((x) => PERFIS.includes(x)) : ["controle0201"];
+          if (!perfis.length) throw new ErroHttp(400, "Escolha pelo menos uma tela para essa pessoa usar.");
+          const u = { usuario: login, nome, perfis, ativo: true, sv: 0, criadoEm: new Date().toISOString() };
           await novaSenha(u); u.sv = 0;
           users.push(u);
           return users;
         }
         if (idx < 0) throw new ErroHttp(404, "Usuário não encontrado.");
         if (body.acao === "senha") { await novaSenha(users[idx]); return users; }
+        if (body.acao === "perfis") {
+          const perfis = Array.isArray(body.perfis) ? body.perfis.filter((x) => PERFIS.includes(x)) : [];
+          if (!perfis.length) throw new ErroHttp(400, "Escolha pelo menos uma tela para essa pessoa usar.");
+          users[idx].perfis = perfis; return users;
+        }
         if (body.acao === "desativar") { users[idx].ativo = false; users[idx].sv = (users[idx].sv || 0) + 1; return users; }
         if (body.acao === "ativar") { users[idx].ativo = true; return users; }
         if (body.acao === "apagar") { users.splice(idx, 1); return users; }
@@ -366,6 +461,11 @@ async function handleApi(req, res, pathname) {
         try { await objSave(SALDO_OBJ, { saldoPorLote: payload.saldoPorLote, savedAt: payload.savedAt }); }
         catch (e) { console.error("Erro ao salvar saldo por lote:", e); }
       }
+      try { // índice de pedidos (é o que o conferente consulta ao bipar)
+        const idx = montarIndicePedidos(payload);
+        await objSave(INDICE_OBJ, idx);
+        indiceCache = { at: Date.now(), data: idx };
+      } catch (e) { console.error("Erro ao montar índice de pedidos:", e); }
       return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length });
     } catch (e) {
       console.error("Erro ao salvar snapshot:", e);
@@ -386,7 +486,7 @@ async function handleApi(req, res, pathname) {
 
   // ---- saldo por lote (administrador e operador) ----
   if (pathname === "/api/saldo" && method === "GET") {
-    if (!(await exigir(req, res, ["admin", "operador"]))) return;
+    if (!(await exigir(req, res, ["admin", "operador"], "controle0201"))) return;
     try {
       const data = await objLoad(SALDO_OBJ);
       res.setHeader("Cache-Control", "no-store");
@@ -399,7 +499,7 @@ async function handleApi(req, res, pathname) {
   // que já existe: { upserts, removeIds, reset, seedIfEmpty }. Quem fez cada coisa
   // é carimbado AQUI, a partir da sessão (o navegador não consegue assinar por outro).
   if (pathname === "/api/controle" && method === "GET") {
-    if (!(await exigir(req, res, ["admin", "operador"]))) return;
+    if (!(await exigir(req, res, ["admin", "operador"], "controle0201"))) return;
     try {
       const data = await loadControle();
       res.setHeader("Cache-Control", "no-store");
@@ -411,7 +511,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/controle" && method === "POST") {
-    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
+    const sess = await exigir(req, res, ["admin", "operador"], "controle0201"); if (!sess) return;
     const ehAdmin = sess.role === "admin";
     let body;
     try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
@@ -468,6 +568,92 @@ async function handleApi(req, res, pathname) {
       console.error("Erro ao salvar controle:", e);
       return sendJson(res, 500, { error: e.message || "erro ao salvar controle" });
     }
+  }
+
+  // ---- Saída para expedição (administrador e operador com o perfil "saida") ----
+  if (pathname === "/api/saida/bipar" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    body = body || {};
+    const ped = normalizarPedido(body.pedido);
+    if (!ped) return sendJson(res, 400, { error: "Código inválido: leia só o número do pedido." });
+    let indice = null;
+    try { indice = await indiceCarregar(); } catch { /* sem índice: registra mesmo assim, sinalizado */ }
+    const info = infoDoPedido(indice, ped);
+    const hoje = diaSP();
+    try {
+      const r = await comFila("saida", async () => {
+        let existente = null;
+        for (let n = 0; n < SAIDA_DIAS_DUP && !existente; n++) {
+          const d = await saidaCarregar(n === 0 ? hoje : diaAnterior(hoje, n));
+          existente = d.entries.find((e) => e.pedido === ped) || null; // mais novo primeiro
+        }
+        if (existente && body.reenvio !== true) return { duplicado: existente };
+        const atual = await saidaCarregar(hoje);
+        const novo = JSON.parse(JSON.stringify(atual));
+        const entry = {
+          id: `sp_${ped}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`, pedido: ped,
+          registradoPorUsuario: sess.usuario, registradoPorNome: sess.nome, registradoEm: new Date().toISOString(),
+          semDadoSC9: !info, baseSavedAt: indice ? indice.savedAt || null : null,
+          reenvio: Boolean(existente), reenvioDe: existente ? existente.id : null, info: resumoInfo(info),
+        };
+        novo.entries.unshift(entry);
+        await saidaGravar(hoje, novo);
+        return { entry, total: novo.entries.length };
+      });
+      if (r.duplicado) return sendJson(res, 409, { error: "duplicado", duplicado: r.duplicado, info });
+      return sendJson(res, 200, { ok: true, entry: r.entry, info, totalHoje: r.total, baseSavedAt: indice ? indice.savedAt || null : null });
+    } catch (e) {
+      console.error("Erro ao bipar:", e);
+      return sendJson(res, 500, { error: e.message || "erro ao registrar o pedido" });
+    }
+  }
+
+  if (pathname === "/api/saida" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    const q = new URL(req.url, "http://localhost").searchParams;
+    const hoje = diaSP();
+    const dia = q.get("dia") || hoje;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return sendJson(res, 400, { error: "dia inválido" });
+    if (sess.role !== "admin" && dia !== hoje && dia !== diaAnterior(hoje, 1)) return sendJson(res, 403, { error: "seu acesso só mostra hoje e ontem" });
+    try {
+      const d = await saidaCarregar(dia);
+      res.setHeader("Cache-Control", "no-store");
+      if (q.get("v") !== null && Number(q.get("v")) === (d.versao || 0)) return sendJson(res, 200, { igual: true, versao: d.versao || 0, hoje });
+      let baseSavedAt = null;
+      try { const ix = await indiceCarregar(); baseSavedAt = ix ? ix.savedAt || null : null; } catch { /* sem índice */ }
+      return sendJson(res, 200, { dia, hoje, versao: d.versao || 0, entries: d.entries, removidos: sess.role === "admin" ? d.removidos : d.removidos.length, baseSavedAt });
+    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar a saída" }); }
+  }
+
+  if (pathname === "/api/saida/desfazer" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const id = body && typeof body.id === "string" ? body.id : "";
+    const hoje = diaSP();
+    try {
+      const r = await comFila("saida", async () => {
+        for (const dia of [hoje, diaAnterior(hoje, 1)]) {
+          const atual = await saidaCarregar(dia);
+          const e = atual.entries.find((x) => x.id === id);
+          if (!e) continue;
+          if (sess.role !== "admin") {
+            if (e.registradoPorUsuario !== sess.usuario) return { erro: 403, msg: "Só quem bipou consegue desfazer o próprio bipe." };
+            if (Date.now() - new Date(e.registradoEm).getTime() > DESFAZER_MS) return { erro: 403, msg: "O prazo pra desfazer acabou. Fale com o administrador." };
+          }
+          const novo = JSON.parse(JSON.stringify(atual));
+          novo.entries = novo.entries.filter((x) => x.id !== id);
+          novo.removidos.push({ id: e.id, pedido: e.pedido, removidoPorUsuario: sess.usuario, removidoPorNome: sess.nome, removidoEm: new Date().toISOString(), registradoPorUsuario: e.registradoPorUsuario, registradoEm: e.registradoEm });
+          await saidaGravar(dia, novo);
+          return { ok: true, versao: novo.versao };
+        }
+        return { erro: 404, msg: "Registro não encontrado (talvez já tenha sido desfeito)." };
+      });
+      if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+      return sendJson(res, 200, r);
+    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao desfazer" }); }
   }
 
   return sendJson(res, 404, { error: "rota não encontrada" });
