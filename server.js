@@ -4,7 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { saveSnapshot, loadSnapshot, saveControle, loadControle, usingSupabase } = require("./storage");
+const { saveSnapshot, loadSnapshot, usingSupabase } = require("./storage");
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || ""; // vazio = sem senha (não recomendado em produção)
@@ -13,6 +13,52 @@ const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pas
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
 // (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
 const SERVABLE = new Set(["index.html", "bundle.js"]);
+// ---- Armazenamento do Controle 02->01 (AUTOSSUFICIENTE, não depende do storage.js) ----
+// Fica num arquivo próprio ("controle-0201.json"), separado do snapshot do SC9,
+// pra atualizar o SC9 todo dia nunca apagar esses registros. Usa o mesmo
+// Supabase do resto (mesmas variáveis de ambiente); sem Supabase, cai num
+// arquivo local.
+const SB_URL = process.env.SUPABASE_URL;
+const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
+const SB_BUCKET = process.env.SUPABASE_BUCKET || "sc9-data";
+const CONTROLE_OBJ = "controle-0201.json";
+const CONTROLE_LOCAL_DIR = path.join(__dirname, "data");
+const controleUrl = () => `${SB_URL.replace(/\/$/, "")}/storage/v1/object/${SB_BUCKET}/${CONTROLE_OBJ}`;
+
+async function loadControle() {
+  if (SB_URL && SB_KEY) {
+    const res = await fetch(controleUrl(), { headers: { Authorization: `Bearer ${SB_KEY}`, apikey: SB_KEY } });
+    if (res.ok) return await res.json();
+    const txt = await res.text().catch(() => "");
+    let code = "";
+    try { code = String(JSON.parse(txt).statusCode || ""); } catch { /* corpo não é JSON */ }
+    // objeto ainda não existe (o Supabase responde 404, ou 400 com statusCode 404 no corpo)
+    if (res.status === 404 || code === "404" || /not.?found|does not exist|no such/i.test(txt)) return null;
+    throw new Error(`Supabase Storage (leitura do controle) falhou (${res.status}): ${txt}`);
+  }
+  const file = path.join(CONTROLE_LOCAL_DIR, CONTROLE_OBJ);
+  if (!fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+async function saveControle(obj) {
+  const body = JSON.stringify(obj);
+  if (SB_URL && SB_KEY) {
+    const res = await fetch(controleUrl() + "?upsert=true", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${SB_KEY}`, apikey: SB_KEY, "Content-Type": "application/json", "x-upsert": "true" },
+      body,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`Supabase Storage (gravação do controle) falhou (${res.status}): ${txt}`);
+    }
+    return;
+  }
+  fs.mkdirSync(CONTROLE_LOCAL_DIR, { recursive: true });
+  fs.writeFileSync(path.join(CONTROLE_LOCAL_DIR, CONTROLE_OBJ), body, "utf8");
+}
+
 const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20MB — dá folga pro JSON de um mês inteiro de pedidos
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".ico": "image/x-icon" };
@@ -110,7 +156,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/health" && req.method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", time: new Date().toISOString() });
   }
 
   if (pathname === "/api/session" && req.method === "GET") {
