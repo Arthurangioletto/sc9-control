@@ -4,7 +4,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { saveSnapshot, loadSnapshot, usingSupabase } = require("./storage");
+const { saveSnapshot, loadSnapshot, saveControle, loadControle, usingSupabase } = require("./storage");
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || ""; // vazio = sem senha (não recomendado em produção)
@@ -62,6 +62,15 @@ function readJsonBody(req) {
   });
 }
 
+// Fila simples: dois salvamentos do controle ao mesmo tempo não se atropelam
+// (cada um lê, junta e grava um de cada vez).
+let controleFila = Promise.resolve();
+function comFilaControle(fn) {
+  const run = controleFila.then(fn, fn);
+  controleFila = run.catch(() => {});
+  return run;
+}
+
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
@@ -75,13 +84,13 @@ function serveStatic(req, res, urlPath) {
     // cai no index.html — é o comportamento normal de uma SPA
     return fs.readFile(path.join(PUBLIC_DIR, "index.html"), (err, data) => {
       if (err) { res.writeHead(404); return res.end("não encontrado"); }
-      res.writeHead(200, { "Content-Type": MIME[".html"] });
+      res.writeHead(200, { "Content-Type": MIME[".html"], "Cache-Control": "no-cache, no-store, must-revalidate" });
       res.end(data);
     });
   }
   fs.readFile(path.join(PUBLIC_DIR, name), (err, data) => {
     if (err) { res.writeHead(404); return res.end("não encontrado"); }
-    res.writeHead(200, { "Content-Type": MIME[path.extname(name)] || "application/octet-stream" });
+    res.writeHead(200, { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache, no-store, must-revalidate" });
     res.end(data);
   });
 }
@@ -135,6 +144,55 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       console.error("Erro ao salvar snapshot:", e);
       return sendJson(res, 500, { error: e.message || "erro ao salvar" });
+    }
+  }
+
+  // Controle 02->01: guardado À PARTE do snapshot do SC9. Atualizar o SC9
+  // (/api/save) nunca toca nisso. O POST recebe só a diferença e junta com o
+  // que já existe: { upserts: [...], removeIds: [...], reset: bool, seedIfEmpty: [...] }
+  if (pathname === "/api/controle" && req.method === "GET") {
+    if (!isAuthed(req)) return sendJson(res, 401, { error: "não autenticado" });
+    try {
+      const data = await loadControle();
+      res.setHeader("Cache-Control", "no-store");
+      return sendJson(res, 200, { entries: (data && Array.isArray(data.entries)) ? data.entries : [], savedAt: data ? data.savedAt || null : null });
+    } catch (e) {
+      console.error("Erro ao carregar controle:", e);
+      return sendJson(res, 500, { error: e.message || "erro ao carregar controle" });
+    }
+  }
+
+  if (pathname === "/api/controle" && req.method === "POST") {
+    if (!isAuthed(req)) return sendJson(res, 401, { error: "não autenticado" });
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    body = body || {};
+    try {
+      const entries = await comFilaControle(async () => {
+        const atual = await loadControle();
+        let lista = (atual && Array.isArray(atual.entries)) ? atual.entries : [];
+        if (!lista.length && Array.isArray(body.seedIfEmpty)) lista = body.seedIfEmpty.filter((x) => x && typeof x.id === "string");
+        if (body.reset === true) lista = [];
+        if (Array.isArray(body.removeIds) && body.removeIds.length) {
+          const rm = new Set(body.removeIds);
+          lista = lista.filter((x) => !rm.has(x.id));
+        }
+        if (Array.isArray(body.upserts)) {
+          const novos = [];
+          for (const u of body.upserts) {
+            if (!u || typeof u.id !== "string") continue;
+            const i = lista.findIndex((x) => x.id === u.id);
+            if (i >= 0) lista[i] = u; else novos.push(u);
+          }
+          lista = [...novos, ...lista]; // mais novo na frente
+        }
+        await saveControle({ entries: lista, savedAt: new Date().toISOString() });
+        return lista;
+      });
+      return sendJson(res, 200, { ok: true, entries });
+    } catch (e) {
+      console.error("Erro ao salvar controle:", e);
+      return sendJson(res, 500, { error: e.message || "erro ao salvar controle" });
     }
   }
 
