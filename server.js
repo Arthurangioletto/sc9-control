@@ -9,8 +9,6 @@ const { saveSnapshot, loadSnapshot, usingSupabase } = require("./storage");
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || ""; // vazio = sem senha (não recomendado em produção)
-console.log(`DIAGNÓSTICO TEMPORÁRIO: APP_PASSWORD configurada com ${APP_PASSWORD.length} caractere(s)` +
-  (APP_PASSWORD !== APP_PASSWORD.trim() ? " — ATENÇÃO: tem espaço ou quebra de linha no início/fim!" : " (sem espaço sobrando nas pontas)."));
 const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
@@ -403,6 +401,7 @@ function montarDashboardLive(p, bipadosHoje) {
   let semNf = 0, atrasados = 0, pecasHoje = 0, pedidosHoje = 0, pecasExpedidasHoje = 0;
   const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
   const paradosSeparar = [], paradosConferir = [], paradosExpedicao = [], paradosFaturamento = [];
+  const listaAtrasados = [];
   const slaSepEstourado = [], slaConfEstourado = [], slaExpEstourado = [], slaFatEstourado = [];
   const turnoDe = (h) => (h < 6 ? "noite" : h < 14 ? "manha" : h < 22 ? "tarde" : "noite");
   const ordersCambuci = p.orders || []; // já vem só com Cambuci (filtrado na hora de salvar)
@@ -448,7 +447,15 @@ function montarDashboardLive(p, bipadosHoje) {
     }
     if (!o.nf) semNf++;
     const estaAtrasado = o.status === "Atrasado" && naoExpedido;
-    if (estaAtrasado) atrasados++;
+    if (estaAtrasado) {
+      atrasados++;
+      // esse é o "atrasado" que já vinha do próprio SC9 (regra de NF/Entrega/corte),
+      // diferente do "estourou o tempo na etapa" acima — critério diferente, então
+      // precisa da sua PRÓPRIA lista, senão o número do KPI nunca bate com o que
+      // aparece na tela de "pedidos parados"/Modo TV.
+      const idadeMs = o.dt ? agora - new Date(o.dt).getTime() : null;
+      listaAtrasados.push({ pedido: o.pedido, cliente, transportadora: tr, horasParado: idadeMs !== null ? r1(idadeMs) : null, etapa, atrasoSC9: true });
+    }
     porTransp[tr] = porTransp[tr] || novoTransp();
     const pt = porTransp[tr];
     pt.total++;
@@ -498,6 +505,7 @@ function montarDashboardLive(p, bipadosHoje) {
       separarHoras: SLA_SEPARAR_H, conferirHoras: SLA_CONFERIR_H, expedicaoHoras: SLA_EXPEDICAO_H, faturarHoras: SLA_FATURAR_H,
       separarEstourado: slaSepEstourado.length, conferirEstourado: slaConfEstourado.length, expedicaoEstourado: slaExpEstourado.length, faturarEstourado: slaFatEstourado.length,
       listaSeparar: ordenaPior(slaSepEstourado), listaConferir: ordenaPior(slaConfEstourado), listaExpedicao: ordenaPior(slaExpEstourado), listaFaturar: ordenaPior(slaFatEstourado),
+      listaAtrasados: ordenaPior(listaAtrasados),
     },
   };
 }
@@ -744,7 +752,6 @@ async function handleApi(req, res, pathname) {
     let sess = null, sv = 0;
     if (password) {
       if (!usuario || usuario === "admin") {
-        console.log(`DIAGNÓSTICO TEMPORÁRIO: tentativa de login admin — senha recebida com ${password.length} caractere(s) (a configurada tem ${APP_PASSWORD.length}).`);
         if (timingSafeEqualStr(password, APP_PASSWORD)) sess = ADMIN();
       } else {
         const u = await achaUsuario(usuario);
