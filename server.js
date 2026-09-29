@@ -98,7 +98,12 @@ function parseCookies(header) {
 // forjar nem trocar de pessoa.
 // ---------------------------------------------------------------------------
 const SESSION_COOKIE = "sc9_sess";
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.createHash("sha256").update("sc9-sessao|" + APP_PASSWORD).digest("hex");
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+if (!process.env.SESSION_SECRET) {
+  console.warn("AVISO DE SEGURANÇA: SESSION_SECRET não configurada — usando uma chave gerada agora, que muda a cada reinício " +
+    "(derruba sessões abertas). Configure SESSION_SECRET no Render (Environment) com um valor aleatório fixo pra evitar isso " +
+    "e pra não depender de nada derivado da senha do administrador.");
+}
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
@@ -196,8 +201,9 @@ async function exigir(req, res, papeis, perfil) {
   if (perfil && sess.role !== "admin" && !(sess.perfis || []).includes(perfil)) { sendJson(res, 403, { error: "seu acesso não permite isso" }); return null; }
   return sess;
 }
-function colocarCookie(res, sess, sv) {
-  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+function colocarCookie(req, res, sess, sv) {
+  const https = req.headers["x-forwarded-proto"] === "https" || process.env.NODE_ENV === "production" || req.socket.encrypted;
+  const secure = https ? "; Secure" : "";
   const ttl = sess.role === "admin" ? TTL_ADMIN_S : TTL_OPERADOR_S;
   const token = assinarToken({ u: sess.usuario, r: sess.role, sv: sv || 0, exp: Math.floor(Date.now() / 1000) + ttl });
   res.setHeader("Set-Cookie", [
@@ -238,6 +244,10 @@ function comFilaControle(fn) {
   return run;
 }
 
+function erroPublico(e, mensagemGenerica) {
+  console.error(mensagemGenerica + ":", e); // detalhe completo só no log do servidor
+  return { error: mensagemGenerica };
+}
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
@@ -399,6 +409,9 @@ function montarDashboardLive(p, bipadosHoje) {
     totalPedidos++;
     const bipe = bipadosHoje ? bipadosHoje.get(o.pedido) : null;
     const etapa = classificarEtapa(o, bipe);
+    const cod = sc5.get(String(o.pedido));
+    const tr = cod ? (TRANSP_NOMES[cod] || `Código ${cod}`) : (o.transportadora || "Sem transportadora definida");
+    const cliente = o.nome || "";
     const dtLib = o.dt ? new Date(o.dt) : null;
     const ehDeHoje = dtLib && diaSP(dtLib) === hojeStr;
     const naoExpedido = etapa !== "expedido";
@@ -410,32 +423,30 @@ function montarDashboardLive(p, bipadosHoje) {
     if (etapa === "a_separar" && o.dtLiberacaoHora) {
       const ms = agora - new Date(o.dtLiberacaoHora).getTime();
       paradosSeparar.push(ms);
-      if (ms > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, horasParado: r1(ms), liberadoEm: o.dtLiberacaoHora, etapa });
+      if (ms > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, cliente, transportadora: tr, horasParado: r1(ms), liberadoEm: o.dtLiberacaoHora, etapa });
     } else if (etapa === "em_separacao" && o.pickStart) {
       const ms = agora - new Date(o.pickStart).getTime();
       paradosSeparar.push(ms);
-      if (ms > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, horasParado: r1(ms), liberadoEm: o.pickStart, etapa });
+      if (ms > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, cliente, transportadora: tr, horasParado: r1(ms), liberadoEm: o.pickStart, etapa });
     } else if (etapa === "a_conferir" && o.pickEnd) {
       const ms = agora - new Date(o.pickEnd).getTime();
       paradosConferir.push(ms);
-      if (ms > SLA_CONFERIR_H * 3600000) slaConfEstourado.push({ pedido: o.pedido, horasParado: r1(ms), separadoEm: o.pickEnd, etapa });
+      if (ms > SLA_CONFERIR_H * 3600000) slaConfEstourado.push({ pedido: o.pedido, cliente, transportadora: tr, horasParado: r1(ms), separadoEm: o.pickEnd, etapa });
     } else if (etapa === "aguardando_expedicao" && o.confEnd) {
       const ms = agora - new Date(o.confEnd).getTime();
       paradosExpedicao.push(ms);
-      if (ms > SLA_EXPEDICAO_H * 3600000) slaExpEstourado.push({ pedido: o.pedido, horasParado: r1(ms), conferidoEm: o.confEnd, etapa });
+      if (ms > SLA_EXPEDICAO_H * 3600000) slaExpEstourado.push({ pedido: o.pedido, cliente, transportadora: tr, horasParado: r1(ms), conferidoEm: o.confEnd, etapa });
     } else if (etapa === "aguardando_faturamento" && bipe) {
       // "espera" desde que ENTROU na expedição (bipe) — o SC9 não diz quando a
       // NF foi emitida, só SE ela existe; então isso mede "tempo na fila de
       // faturamento", não a duração do faturamento em si.
       const ms = agora - new Date(bipe).getTime();
       paradosFaturamento.push(ms);
-      if (ms > SLA_FATURAR_H * 3600000) slaFatEstourado.push({ pedido: o.pedido, horasParado: r1(ms), entrouExpedicaoEm: bipe, etapa });
+      if (ms > SLA_FATURAR_H * 3600000) slaFatEstourado.push({ pedido: o.pedido, cliente, transportadora: tr, horasParado: r1(ms), entrouExpedicaoEm: bipe, etapa });
     }
     if (!o.nf) semNf++;
     const estaAtrasado = o.status === "Atrasado" && naoExpedido;
     if (estaAtrasado) atrasados++;
-    const cod = sc5.get(String(o.pedido));
-    const tr = cod ? (TRANSP_NOMES[cod] || `Código ${cod}`) : (o.transportadora || "Sem transportadora definida");
     porTransp[tr] = porTransp[tr] || novoTransp();
     const pt = porTransp[tr];
     pt.total++;
@@ -669,11 +680,43 @@ async function saidaReconciliar(indice) {
 const LOGIN_RE = /^[a-z0-9._-]{3,30}$/;
 const CAMPOS_IDENTIDADE = ["criadoPorUsuario", "criadoPorNome", "criadoEm", "confirmadoPorUsuario", "confirmadoPorNome", "confirmadoEm"];
 
+// Rate limit geral: além do bloqueio específico do login (mais rígido), toda a
+// API tem um teto por IP — evita um script (ou uma conta comprometida) martelar
+// o servidor sem limite. Generoso o bastante pra uso normal (vários navegadores
+// no mesmo IP da empresa, polling do dashboard a cada poucos segundos).
+const RATE_LIMIT_JANELA_MS = 60 * 1000;
+const RATE_LIMIT_MAX = 240; // por IP, por minuto — ampla margem pra várias pessoas atrás do mesmo IP
+const rateLimitPorIp = new Map();
+function rateLimitExcedido(ip) {
+  const agora = Date.now();
+  const reg = rateLimitPorIp.get(ip);
+  if (!reg || agora - reg.inicio > RATE_LIMIT_JANELA_MS) { rateLimitPorIp.set(ip, { inicio: agora, n: 1 }); return false; }
+  reg.n++;
+  return reg.n > RATE_LIMIT_MAX;
+}
+setInterval(() => { // limpeza periódica, senão o mapa cresce pra sempre
+  const agora = Date.now();
+  for (const [ip, reg] of rateLimitPorIp) if (agora - reg.inicio > RATE_LIMIT_JANELA_MS * 2) rateLimitPorIp.delete(ip);
+}, 5 * 60 * 1000).unref();
+
 async function handleApi(req, res, pathname) {
   const method = req.method;
 
+  if (pathname !== "/api/health" && rateLimitExcedido(ipDe(req))) {
+    return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
+  }
+
+  if (method === "POST" && req.headers["x-sc9-app"] !== "1") {
+    // reforço contra CSRF: um <form> ou <img> de outro site não consegue
+    // mandar esse cabeçalho customizado, e um fetch() de outra origem cairia
+    // no bloqueio de CORS antes mesmo de chegar aqui (o servidor não libera
+    // Access-Control-Allow-Origin pra ninguém). Cookie SameSite=Lax já ajuda
+    // bastante; isso é uma segunda camada.
+    return sendJson(res, 403, { error: "requisição rejeitada (cabeçalho esperado ausente)" });
+  }
+
   if (pathname === "/api/health" && method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v5", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v6", time: new Date().toISOString() });
   }
 
   if (pathname === "/api/debug-fs" && method === "GET") {
@@ -708,7 +751,7 @@ async function handleApi(req, res, pathname) {
     }
     if (!sess) { registraFalha(chave); return sendJson(res, 401, { ok: false, error: "Usuário ou senha incorretos." }); }
     falhas.delete(chave);
-    colocarCookie(res, sess, sv);
+    colocarCookie(req, res, sess, sv);
     return sendJson(res, 200, { ok: true, role: sess.role, usuario: sess.usuario, nome: sess.nome, perfis: sess.perfis || [] });
   }
 
@@ -721,7 +764,7 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/usuarios" && method === "GET") {
     if (!(await exigir(req, res, ["admin"]))) return;
     try { return sendJson(res, 200, { usuarios: (await carregarUsuarios(true)).map(usuarioPublico) }); }
-    catch (e) { return sendJson(res, 500, { error: e.message }); }
+    catch (e) { return sendJson(res, 500, erroPublico(e, "erro interno")); }
   }
   if (pathname === "/api/usuarios" && method === "POST") {
     const sess = await exigir(req, res, ["admin"]); if (!sess) return;
@@ -767,7 +810,7 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       if (e instanceof ErroHttp) return sendJson(res, e.status, { error: e.message });
       console.error("Erro em /api/usuarios:", e);
-      return sendJson(res, 500, { error: e.message || "erro ao salvar usuários" });
+      return sendJson(res, 500, erroPublico(e, "erro ao salvar usuários"));
     }
   }
 
@@ -804,7 +847,7 @@ async function handleApi(req, res, pathname) {
         // pedido em si mudar de verdade (separou, conferiu, saiu NF).
         const ordersCambuci = (payload.orders || [])
           .filter((o) => o.armazem === "Cambuci")
-          .map((o) => ({ pedido: o.pedido, dt: o.dt, dtLiberacaoHora: o.dtLiberacaoHora, pickStart: o.pickStart, pickEnd: o.pickEnd, confEnd: o.confEnd, nf: o.nf, status: o.status, qt: o.qt, transportadora: o.transportadora }));
+          .map((o) => ({ pedido: o.pedido, dt: o.dt, dtLiberacaoHora: o.dtLiberacaoHora, pickStart: o.pickStart, pickEnd: o.pickEnd, confEnd: o.confEnd, nf: o.nf, status: o.status, qt: o.qt, transportadora: o.transportadora, nome: o.nome }));
         await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci });
         dashboardOrdersCache = null; // força reler na próxima consulta
         dashboardCache = null; // força recalcular o dashboard já com a base nova
@@ -813,7 +856,7 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length, saida });
     } catch (e) {
       console.error("Erro ao salvar snapshot:", e);
-      return sendJson(res, 500, { error: e.message || "erro ao salvar" });
+      return sendJson(res, 500, erroPublico(e, "erro ao salvar"));
     }
   }
   if (pathname === "/api/load" && method === "GET") {
@@ -824,7 +867,7 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, data);
     } catch (e) {
       console.error("Erro ao carregar snapshot:", e);
-      return sendJson(res, 500, { error: e.message || "erro ao carregar" });
+      return sendJson(res, 500, erroPublico(e, "erro ao carregar"));
     }
   }
 
@@ -835,7 +878,7 @@ async function handleApi(req, res, pathname) {
       const data = await objLoad(SALDO_OBJ);
       res.setHeader("Cache-Control", "no-store");
       return sendJson(res, 200, { saldoPorLote: data ? data.saldoPorLote : null, savedAt: data ? data.savedAt || null : null });
-    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar saldo" }); }
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar saldo")); }
   }
 
   // ---- Controle 02->01 (administrador e operador) ----
@@ -850,7 +893,7 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, { entries: (data && Array.isArray(data.entries)) ? data.entries : [], savedAt: data ? data.savedAt || null : null });
     } catch (e) {
       console.error("Erro ao carregar controle:", e);
-      return sendJson(res, 500, { error: e.message || "erro ao carregar controle" });
+      return sendJson(res, 500, erroPublico(e, "erro ao carregar controle"));
     }
   }
 
@@ -910,7 +953,7 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, { ok: true, entries, ignorados });
     } catch (e) {
       console.error("Erro ao salvar controle:", e);
-      return sendJson(res, 500, { error: e.message || "erro ao salvar controle" });
+      return sendJson(res, 500, erroPublico(e, "erro ao salvar controle"));
     }
   }
 
@@ -936,7 +979,11 @@ async function handleApi(req, res, pathname) {
         }
         if (existente && body.reenvio !== true) return { duplicado: existente };
         const atual = await saidaCarregar(hoje);
-        const novo = JSON.parse(JSON.stringify(atual));
+        // cópia RASA (não JSON.parse(JSON.stringify(...)) do dia inteiro) — só
+        // estamos adicionando 1 registro no topo, não precisamos clonar em
+        // profundidade os que já existem. Com vários bipes seguidos, a
+        // clonagem funda do dia inteiro pesava memória à toa.
+        const novo = { ...atual, entries: [...atual.entries], removidos: atual.removidos };
         const entry = {
           id: `sp_${ped}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`, pedido: ped,
           registradoPorUsuario: sess.usuario, registradoPorNome: sess.nome, registradoEm: new Date().toISOString(),
@@ -952,7 +999,7 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, { ok: true, entry: r.entry, info, totalHoje: r.total, baseSavedAt: indice ? indice.savedAt || null : null });
     } catch (e) {
       console.error("Erro ao bipar:", e);
-      return sendJson(res, 500, { error: e.message || "erro ao registrar o pedido" });
+      return sendJson(res, 500, erroPublico(e, "erro ao registrar o pedido"));
     }
   }
 
@@ -981,7 +1028,7 @@ async function handleApi(req, res, pathname) {
         };
       }
       return sendJson(res, 200, { dia, hoje, versao: d.versao || 0, entries: d.entries, removidos: sess.role === "admin" ? d.removidos : d.removidos.length, baseSavedAt, retencao });
-    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar a saída" }); }
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar a saída")); }
   }
 
   if (pathname === "/api/saida/desfazer" && method === "POST") {
@@ -1011,7 +1058,7 @@ async function handleApi(req, res, pathname) {
       });
       if (r.erro) return sendJson(res, r.erro, { error: r.msg });
       return sendJson(res, 200, r);
-    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao desfazer" }); }
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao desfazer")); }
   }
 
   // buscar um pedido em todos os dias guardados: "esse pedido já saiu? quem bipou e quando?"
@@ -1027,7 +1074,7 @@ async function handleApi(req, res, pathname) {
         for (const e of d.entries) if (e.pedido === ped) resultados.push({ dia, entry: e });
       }
       return sendJson(res, 200, { pedido: ped, resultados, diasPesquisados: dias.length, retencaoDias: SAIDA_RETENCAO_DIAS });
-    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao buscar" }); }
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao buscar")); }
   }
 
   // exportar vários dias (só administrador). Com marcar=1 o servidor anota que esses dias foram exportados.
@@ -1035,7 +1082,7 @@ async function handleApi(req, res, pathname) {
     const sess = await exigir(req, res, ["admin"]); if (!sess) return;
     const q = new URL(req.url, "http://localhost").searchParams;
     try { return sendJson(res, 200, { dias: await saidaExportar(q.get("de") || "0000-00-00", q.get("ate") || "9999-99-99", q.get("marcar") === "1", sess) }); }
-    catch (e) { return sendJson(res, 500, { error: e.message || "erro ao exportar" }); }
+    catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao exportar")); }
   }
 
   // apagar dias JÁ EXPORTADOS (só administrador)
@@ -1054,7 +1101,7 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, r.pendentes.some((p) => p.motivo === "hoje") ? 400 : 409, { error: msg, pendentes: r.pendentes });
       }
       return sendJson(res, 200, { ok: true, ...r });
-    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao apagar" }); }
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao apagar")); }
   }
 
   // Dashboard ao vivo: quem tem QUALQUER acesso vê (é o "geral" — sem separador/conferente)
@@ -1064,14 +1111,32 @@ async function handleApi(req, res, pathname) {
       const d = await dashboardAoVivo();
       res.setHeader("Cache-Control", "no-store");
       return sendJson(res, 200, d || { totalPedidos: 0, emProcesso: 0, liberadosHoje: 0, pendenciasAntigas: 0, concluidosHoje: 0, armazem: "Cambuci", porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: [], porHora: {}, porHoraPecas: {}, porHoraLiberados: {}, porHoraExpedidos: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, ontem: null, savedAt: null });
-    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar o dashboard" }); }
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o dashboard")); }
   }
 
   return sendJson(res, 404, { error: "rota não encontrada" });
 }
 
+// Rede de segurança: sem isso, QUALQUER exceção não tratada em qualquer lugar
+// (um bug meu, uma resposta inesperada do Supabase, o que for) derruba o
+// processo Node inteiro — tirando o site do ar pra TODO MUNDO até o Render
+// reiniciar sozinho. É exatamente o "fica caindo, tem que apertar F5" quando
+// várias pessoas usam ao mesmo tempo (mais chance de bater numa borda rara).
+// Agora: loga o erro e o servidor continua de pé pras outras pessoas.
+process.on("uncaughtException", (err) => {
+  console.error("ERRO NÃO TRATADO (o servidor continua no ar):", err);
+});
+process.on("unhandledRejection", (err) => {
+  console.error("PROMISE REJEITADA SEM CATCH (o servidor continua no ar):", err);
+});
+
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  let url;
+  try {
+    url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  } catch {
+    res.writeHead(400); res.end("URL inválida"); return;
+  }
   if (url.pathname.startsWith("/api/")) {
     handleApi(req, res, url.pathname).catch((e) => {
       console.error("Erro inesperado:", e);
