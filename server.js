@@ -102,7 +102,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.createHash("sha256")
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["controle0201", "saida"];
+const PERFIS = ["geral", "controle0201", "saida"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -138,6 +138,12 @@ function comFila(chave, fn) {
   const run = anterior.then(fn, fn);
   filas.set(chave, run.catch(() => {}));
   return run;
+}
+async function dashboardCarregar() {
+  if (dashboardCache && Date.now() - dashboardCache.at < 15000) return dashboardCache.data;
+  try { dashboardCache = { at: Date.now(), data: await objLoad(DASHBOARD_OBJ) }; }
+  catch (e) { if (dashboardCache) return dashboardCache.data; throw e; }
+  return dashboardCache.data;
 }
 let usuariosCache = { at: 0, lista: null };
 async function carregarUsuarios(force) {
@@ -264,12 +270,17 @@ function serveStatic(req, res, urlPath) {
 // sem querer (o 2º recebe "já bipado por Fulano às hh:mm").
 // ---------------------------------------------------------------------------
 const INDICE_OBJ = "pedidos-indice.json";
+const DASHBOARD_OBJ = "dashboard-live.json";
 const TRANSP_NOMES = { "2": "Brasil", "4": "Retira 01", "5": "Retira 02", "6": "Retira 03", "7": "Retira 04", "10057": "Emergência", "10023": "São Paulo" };
 const DESFAZER_MS = Number(process.env.SAIDA_DESFAZER_MS) || 5 * 60 * 1000;
-const SAIDA_DIAS_DUP = 3;
+const SAIDA_RETENCAO_DIAS = Number(process.env.SAIDA_RETENCAO_DIAS) || 30; // passou disso: o administrador exporta e apaga
+const SAIDA_AVISO_DIAS = 5; // o administrador é avisado quando faltam até 5 dias pra completar 30
 
 // Só o que o conferente precisa pra conferir o bipe. Pedidos/itens completos do SC9
 // continuam só com o administrador.
+// MESMA normalização usada ao bipar (remove tudo que não é dígito e zeros à
+// esquerda) — assim, um pedido do SC9 guardado com zero à esquerda como texto
+// ("0099999") ou com espaço bate certinho com o que o leitor bipa.
 function montarIndicePedidos(p) {
   const nomes = new Map((p.itemNames || []).map(([k, v]) => [String(k), String(v)]));
   const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
@@ -283,8 +294,10 @@ function montarIndicePedidos(p) {
   }
   const pedidos = {}, usados = new Set();
   const limpo = (v) => (v === null || v === undefined || String(v).trim() === "0" ? "" : String(v).trim());
+  let semChaveValida = 0;
   for (const o of p.orders || []) {
-    const k = String(o.pedido);
+    const k = normalizarPedido(o.pedido);
+    if (!k) { semChaveValida++; continue; } // pedido sem número reconhecível (não deveria acontecer, mas não trava o índice)
     const itens = Array.from((itensPorPed.get(k) || new Map()).entries());
     itens.forEach(([prod]) => usados.add(prod));
     const cod = sc5.get(k);
@@ -296,8 +309,44 @@ function montarIndicePedidos(p) {
   }
   const nomesUsados = {};
   for (const pr of usados) if (nomes.has(pr)) nomesUsados[pr] = nomes.get(pr);
-  return { savedAt: p.savedAt, pedidos, nomes: nomesUsados };
+  if (semChaveValida) console.warn(`Índice de pedidos: ${semChaveValida} pedido(s) do SC9 com código não reconhecível, ficaram fora do índice.`);
+  return { savedAt: p.savedAt, pedidos, nomes: nomesUsados, totalOrders: (p.orders || []).length };
 }
+// Dashboard ao vivo: só contadores e agregados (por armazém, por transportadora,
+// por hora, pedidos parados). NUNCA leva nome de separador/conferente — é isso
+// que todo mundo com o perfil "geral" enxerga, sem virar ranking de pessoas.
+function montarDashboardLive(p) {
+  const agora = Date.now();
+  const porArmazem = {}, porTransp = {}, porHora = {};
+  let totalPedidos = 0, aSeparar = 0, aConferir = 0, prontos = 0, semNf = 0, atrasados = 0, pecasHoje = 0;
+  const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
+  const paradosSeparar = [], paradosConferir = [];
+  for (const o of p.orders || []) {
+    totalPedidos++;
+    const arm = o.armazem || "?";
+    porArmazem[arm] = porArmazem[arm] || { total: 0, aSeparar: 0, aConferir: 0, prontos: 0 };
+    porArmazem[arm].total++;
+    const separado = Boolean(o.pickEnd), conferido = Boolean(o.confEnd);
+    if (!separado) { aSeparar++; porArmazem[arm].aSeparar++; if (o.dtLiberacaoHora) paradosSeparar.push(agora - new Date(o.dtLiberacaoHora).getTime()); }
+    else if (!conferido) { aConferir++; porArmazem[arm].aConferir++; if (o.pickEnd) paradosConferir.push(agora - new Date(o.pickEnd).getTime()); }
+    else { prontos++; porArmazem[arm].prontos++; }
+    if (!o.nf) semNf++;
+    if (o.status === "Atrasado") atrasados++;
+    const cod = sc5.get(String(o.pedido));
+    const tr = cod ? (TRANSP_NOMES[cod] || `Código ${cod}`) : (o.transportadora || "Sem transportadora");
+    porTransp[tr] = porTransp[tr] || { total: 0, aSeparar: 0, aConferir: 0, prontos: 0 };
+    porTransp[tr].total++;
+    if (!separado) porTransp[tr].aSeparar++; else if (!conferido) porTransp[tr].aConferir++; else porTransp[tr].prontos++;
+    if (o.confEnd) { const h = new Date(o.confEnd); if (diaSP(h) === diaSP()) { const hh = h.getHours(); porHora[hh] = (porHora[hh] || 0) + 1; pecasHoje += o.qt || 0; } }
+  }
+  const maiorEspera = (arr) => (arr.length ? Math.max(...arr) : null);
+  return {
+    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), totalPedidos, aSeparar, aConferir, prontos, semNf, atrasados, pecasHoje,
+    porArmazem, porTransp, porHora, maiorEsperaSeparar: maiorEspera(paradosSeparar), maiorEsperaConferir: maiorEspera(paradosConferir),
+  };
+}
+
+let dashboardCache = null;
 let indiceCache = null;
 async function indiceCarregar() {
   if (indiceCache && Date.now() - indiceCache.at < 60000) return indiceCache.data;
@@ -340,6 +389,109 @@ async function saidaGravar(dia, novo) {
   saidaCache.set(dia, novo);
 }
 
+async function objDelete(name) {
+  if (SB_URL && SB_KEY) {
+    const res = await fetch(objUrl(name), { method: "DELETE", headers: { Authorization: `Bearer ${SB_KEY}`, apikey: SB_KEY } });
+    if (!res.ok && res.status !== 404 && res.status !== 400) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`Supabase Storage (apagar ${name}) falhou (${res.status}): ${txt}`);
+    }
+    return;
+  }
+  const file = path.join(LOCAL_DIR, name);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+}
+
+// Índice dos dias que têm bipe guardado (a gente mesmo mantém) + quais já foram EXPORTADOS.
+// Regra combinada: passou de 30 dias -> o administrador EXPORTA e só então APAGA. Nada é apagado sozinho,
+// e o servidor só apaga um dia que já foi exportado (e que não mudou depois da exportação).
+const SAIDA_DIAS_OBJ = "saida-dias.json";
+let saidaIdx = null; // { dias: [...], exportados: { "AAAA-MM-DD": { em, por, versao, pedidos } } }
+async function saidaIdxCarregar() {
+  if (saidaIdx) return saidaIdx;
+  const d = await objLoad(SAIDA_DIAS_OBJ);
+  saidaIdx = { dias: Array.isArray(d && d.dias) ? d.dias.slice() : [], exportados: d && d.exportados && typeof d.exportados === "object" ? { ...d.exportados } : {} };
+  return saidaIdx;
+}
+async function saidaIdxSalvar(novo) { await objSave(SAIDA_DIAS_OBJ, novo); saidaIdx = novo; }
+const saidaDiasCarregar = async () => (await saidaIdxCarregar()).dias;
+async function saidaDiasAdicionar(dia) {
+  const i = await saidaIdxCarregar();
+  if (i.dias.includes(dia)) return;
+  await saidaIdxSalvar({ ...i, dias: [...i.dias, dia].sort() });
+}
+const diasRecentesPrimeiro = async (hoje) => [...new Set([hoje, ...[...(await saidaDiasCarregar())].sort().reverse()])];
+
+// exporta (e, se pedido, MARCA como exportado) — o que vai pro Excel é exatamente o que ficou marcado
+async function saidaExportar(de, ate, marcar, sess) {
+  return comFila("saida", async () => {
+    const idx = await saidaIdxCarregar();
+    const lista = idx.dias.slice().sort().filter((d) => d >= de && d <= ate);
+    const dias = [], exportados = { ...idx.exportados };
+    for (const dia of lista) {
+      const d = await saidaCarregar(dia);
+      dias.push({ dia, entries: d.entries });
+      if (marcar) exportados[dia] = { em: new Date().toISOString(), por: sess.usuario, versao: d.versao || 0, pedidos: d.entries.length };
+    }
+    if (marcar && lista.length) await saidaIdxSalvar({ ...idx, exportados });
+    return dias;
+  });
+}
+// apaga os dias pedidos — tudo ou nada: se algum não foi exportado (ou mudou depois), não apaga NENHUM
+async function saidaApagar(diasPedidos) {
+  return comFila("saida", async () => {
+    const idx = await saidaIdxCarregar();
+    const hoje = diaSP();
+    const pendentes = [];
+    for (const dia of diasPedidos) {
+      if (dia === hoje) { pendentes.push({ dia, motivo: "hoje" }); continue; }
+      if (!idx.dias.includes(dia)) { pendentes.push({ dia, motivo: "nao_existe" }); continue; }
+      const mk = idx.exportados[dia];
+      if (!mk) { pendentes.push({ dia, motivo: "nao_exportado" }); continue; }
+      const d = await saidaCarregar(dia);
+      if ((d.versao || 0) !== mk.versao) pendentes.push({ dia, motivo: "mudou_depois" });
+    }
+    if (pendentes.length) return { pendentes };
+    let pedidos = 0;
+    for (const dia of diasPedidos) {
+      pedidos += (await saidaCarregar(dia)).entries.length;
+      await objDelete(saidaObj(dia));
+      saidaCache.delete(dia);
+    }
+    const restantes = idx.dias.filter((d) => !diasPedidos.includes(d));
+    const exportados = { ...idx.exportados };
+    for (const dia of diasPedidos) delete exportados[dia];
+    await saidaIdxSalvar({ dias: restantes, exportados });
+    console.log(`Saída: administrador apagou ${diasPedidos.length} dia(s) já exportado(s): ${diasPedidos.join(", ")}`);
+    return { apagados: diasPedidos, pedidos };
+  });
+}
+
+// Quando o administrador sobe um SC9 novo: rever TODOS os bipes guardados com o que o SC9 mostra agora.
+// Pedido que "não existia no SC9" e agora existe é resolvido; NF, conferente e fim da conferência
+// que apareceram depois também são atualizados. Bipe cujo pedido não está no SC9 novo fica como estava.
+async function saidaReconciliar(indice) {
+  return comFila("saida", async () => {
+    const lista = await saidaDiasCarregar();
+    let resolvidos = 0, atualizados = 0;
+    for (const dia of lista) {
+      const atual = await saidaCarregar(dia);
+      const novo = JSON.parse(JSON.stringify(atual));
+      let mudou = false;
+      for (const e of novo.entries) {
+        const info = infoDoPedido(indice, e.pedido);
+        if (!info) continue;
+        const resumo = resumoInfo(info);
+        if (JSON.stringify(resumo) === JSON.stringify(e.info)) continue;
+        if (e.semDadoSC9) { e.semDadoSC9 = false; e.resolvidoEm = new Date().toISOString(); resolvidos++; } else atualizados++;
+        e.info = resumo; e.infoAtualizadaEm = indice.savedAt || null; mudou = true;
+      }
+      if (mudou) await saidaGravar(dia, novo);
+    }
+    return { resolvidos, atualizados };
+  });
+}
+
 const LOGIN_RE = /^[a-z0-9._-]{3,30}$/;
 const CAMPOS_IDENTIDADE = ["criadoPorUsuario", "criadoPorNome", "criadoEm", "confirmadoPorUsuario", "confirmadoPorNome", "confirmadoEm"];
 
@@ -347,7 +499,7 @@ async function handleApi(req, res, pathname) {
   const method = req.method;
 
   if (pathname === "/api/health" && method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v2", saida: "v1", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v1", time: new Date().toISOString() });
   }
 
   if (pathname === "/api/debug-fs" && method === "GET") {
@@ -461,12 +613,19 @@ async function handleApi(req, res, pathname) {
         try { await objSave(SALDO_OBJ, { saldoPorLote: payload.saldoPorLote, savedAt: payload.savedAt }); }
         catch (e) { console.error("Erro ao salvar saldo por lote:", e); }
       }
+      let saida = null;
       try { // índice de pedidos (é o que o conferente consulta ao bipar)
         const idx = montarIndicePedidos(payload);
         await objSave(INDICE_OBJ, idx);
         indiceCache = { at: Date.now(), data: idx };
-      } catch (e) { console.error("Erro ao montar índice de pedidos:", e); }
-      return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length });
+        saida = await saidaReconciliar(idx); // e revê os bipes já guardados com o SC9 novo
+      } catch (e) { console.error("Erro ao montar índice / reconciliar a saída:", e); }
+      try {
+        const dash = montarDashboardLive(payload);
+        await objSave(DASHBOARD_OBJ, dash);
+        dashboardCache = { at: Date.now(), data: dash };
+      } catch (e) { console.error("Erro ao montar o dashboard ao vivo:", e); }
+      return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length, saida });
     } catch (e) {
       console.error("Erro ao salvar snapshot:", e);
       return sendJson(res, 500, { error: e.message || "erro ao salvar" });
@@ -585,9 +744,10 @@ async function handleApi(req, res, pathname) {
     try {
       const r = await comFila("saida", async () => {
         let existente = null;
-        for (let n = 0; n < SAIDA_DIAS_DUP && !existente; n++) {
-          const d = await saidaCarregar(n === 0 ? hoje : diaAnterior(hoje, n));
+        for (const dia of await diasRecentesPrimeiro(hoje)) {
+          const d = await saidaCarregar(dia);
           existente = d.entries.find((e) => e.pedido === ped) || null; // mais novo primeiro
+          if (existente) break;
         }
         if (existente && body.reenvio !== true) return { duplicado: existente };
         const atual = await saidaCarregar(hoje);
@@ -599,6 +759,7 @@ async function handleApi(req, res, pathname) {
           reenvio: Boolean(existente), reenvioDe: existente ? existente.id : null, info: resumoInfo(info),
         };
         novo.entries.unshift(entry);
+        await saidaDiasAdicionar(hoje);
         await saidaGravar(hoje, novo);
         return { entry, total: novo.entries.length };
       });
@@ -623,7 +784,18 @@ async function handleApi(req, res, pathname) {
       if (q.get("v") !== null && Number(q.get("v")) === (d.versao || 0)) return sendJson(res, 200, { igual: true, versao: d.versao || 0, hoje });
       let baseSavedAt = null;
       try { const ix = await indiceCarregar(); baseSavedAt = ix ? ix.savedAt || null : null; } catch { /* sem índice */ }
-      return sendJson(res, 200, { dia, hoje, versao: d.versao || 0, entries: d.entries, removidos: sess.role === "admin" ? d.removidos : d.removidos.length, baseSavedAt });
+      let retencao = null;
+      if (sess.role === "admin") {
+        const idx = await saidaIdxCarregar();
+        const corte = diaAnterior(hoje, SAIDA_RETENCAO_DIAS), limite = diaAnterior(hoje, SAIDA_RETENCAO_DIAS - SAIDA_AVISO_DIAS);
+        const lista = idx.dias.slice().sort();
+        retencao = {
+          dias: SAIDA_RETENCAO_DIAS, diasGuardados: lista.length,
+          vencidos: lista.filter((x) => x < corte), venceEmBreve: lista.filter((x) => x >= corte && x <= limite),
+          exportados: Object.fromEntries(Object.entries(idx.exportados).map(([k, v]) => [k, { em: v.em, pedidos: v.pedidos }])),
+        };
+      }
+      return sendJson(res, 200, { dia, hoje, versao: d.versao || 0, entries: d.entries, removidos: sess.role === "admin" ? d.removidos : d.removidos.length, baseSavedAt, retencao });
     } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar a saída" }); }
   }
 
@@ -635,7 +807,8 @@ async function handleApi(req, res, pathname) {
     const hoje = diaSP();
     try {
       const r = await comFila("saida", async () => {
-        for (const dia of [hoje, diaAnterior(hoje, 1)]) {
+        const diasBusca = sess.role === "admin" ? await diasRecentesPrimeiro(hoje) : [hoje, diaAnterior(hoje, 1)];
+        for (const dia of diasBusca) {
           const atual = await saidaCarregar(dia);
           const e = atual.entries.find((x) => x.id === id);
           if (!e) continue;
@@ -656,6 +829,59 @@ async function handleApi(req, res, pathname) {
     } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao desfazer" }); }
   }
 
+  // buscar um pedido em todos os dias guardados: "esse pedido já saiu? quem bipou e quando?"
+  if (pathname === "/api/saida/buscar" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    const ped = normalizarPedido(new URL(req.url, "http://localhost").searchParams.get("pedido"));
+    if (!ped) return sendJson(res, 400, { error: "Digite só o número do pedido." });
+    try {
+      const dias = await diasRecentesPrimeiro(diaSP());
+      const resultados = [];
+      for (const dia of dias) {
+        const d = await saidaCarregar(dia);
+        for (const e of d.entries) if (e.pedido === ped) resultados.push({ dia, entry: e });
+      }
+      return sendJson(res, 200, { pedido: ped, resultados, diasPesquisados: dias.length, retencaoDias: SAIDA_RETENCAO_DIAS });
+    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao buscar" }); }
+  }
+
+  // exportar vários dias (só administrador). Com marcar=1 o servidor anota que esses dias foram exportados.
+  if (pathname === "/api/saida/periodo" && method === "GET") {
+    const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+    const q = new URL(req.url, "http://localhost").searchParams;
+    try { return sendJson(res, 200, { dias: await saidaExportar(q.get("de") || "0000-00-00", q.get("ate") || "9999-99-99", q.get("marcar") === "1", sess) }); }
+    catch (e) { return sendJson(res, 500, { error: e.message || "erro ao exportar" }); }
+  }
+
+  // apagar dias JÁ EXPORTADOS (só administrador)
+  if (pathname === "/api/saida/apagar" && method === "POST") {
+    if (!(await exigir(req, res, ["admin"]))) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const dias = Array.isArray(body && body.dias) ? [...new Set(body.dias.filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d))))] : [];
+    if (!dias.length) return sendJson(res, 400, { error: "Nenhum dia informado." });
+    try {
+      const r = await saidaApagar(dias);
+      if (r.pendentes) {
+        const msg = r.pendentes.some((p) => p.motivo === "hoje") ? "Não dá pra apagar o dia de hoje."
+          : r.pendentes.some((p) => p.motivo === "mudou_depois") ? "Esse dia mudou depois de exportado: exporte de novo antes de apagar."
+          : "Exporte antes de apagar: o servidor só apaga o que já foi exportado.";
+        return sendJson(res, r.pendentes.some((p) => p.motivo === "hoje") ? 400 : 409, { error: msg, pendentes: r.pendentes });
+      }
+      return sendJson(res, 200, { ok: true, ...r });
+    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao apagar" }); }
+  }
+
+  // Dashboard ao vivo: quem tem QUALQUER acesso vê (é o "geral" — sem separador/conferente)
+  if (pathname === "/api/dashboard" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"]))) return;
+    try {
+      const d = await dashboardCarregar();
+      res.setHeader("Cache-Control", "no-store");
+      return sendJson(res, 200, d || { totalPedidos: 0, aSeparar: 0, aConferir: 0, prontos: 0, porArmazem: {}, porTransp: {}, porHora: {}, savedAt: null });
+    } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar o dashboard" }); }
+  }
+
   return sendJson(res, 404, { error: "rota não encontrada" });
 }
 
@@ -674,5 +900,8 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`SC9 Control rodando na porta ${PORT} | storage: ${usingSupabase ? "Supabase" : "arquivo local"} | senha: ${APP_PASSWORD ? "ativada" : "DESATIVADA"}`);
 });
+
+// na subida: já carrega os dias guardados na memória (NADA é apagado sozinho — quem apaga é o administrador, depois de exportar)
+saidaDiasCarregar().then(async (l) => { for (const d of l) await saidaCarregar(d); }).catch(() => {});
 
 module.exports = server;
