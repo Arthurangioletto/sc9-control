@@ -379,9 +379,14 @@ function classificarEtapa(o, bipadoEm) {
   if (o.status === "Enviado") return "expedido";
   if (!o.pickEnd) return o.pickStart ? "em_separacao" : "a_separar";
   if (!o.confEnd) return "a_conferir";
+  // ter Nota Fiscal já PROVA que passou pela expedição e foi faturado — não dá
+  // pra faturar sem isso. Não pode depender só do bipe do app pra reconhecer
+  // isso, senão todo pedido de ANTES da função de bipar existir (ou faturado
+  // sem passar pelo app) fica preso pra sempre em "aguardando expedição",
+  // mesmo já tendo NF há semanas.
+  if (o.nf) return "aguardando_coleta";
   if (!bipadoEm) return "aguardando_expedicao";
-  if (!o.nf) return "aguardando_faturamento";
-  return "aguardando_coleta"; // tem NF e foi bipado, mas a Entrega ainda não confirmou
+  return "aguardando_faturamento"; // bipado, ainda sem NF
 }
 
 function montarDashboardLive(p, bipadosHoje) {
