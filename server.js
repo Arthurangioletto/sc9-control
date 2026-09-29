@@ -530,8 +530,14 @@ async function dashboardAoVivo() {
   if (!base) return null;
   const bipadosHoje = new Map();
   try {
-    const dSaida = await saidaCarregar(diaSP());
-    for (const e of dSaida.entries) if (!bipadosHoje.has(e.pedido)) bipadosHoje.set(e.pedido, e.registradoEm);
+    // "bipadosHoje" é o nome histórico, mas pra CLASSIFICAR a etapa certo, um
+    // pedido bipado há dias/semanas continua contando como "já foi pra
+    // expedição" — só as métricas de HOJE (concluidosHoje, porHoraExpedidos)
+    // é que filtram por data depois, dentro de montarDashboardLive.
+    for (const dia of await saidaDiasCarregar()) {
+      const dSaida = await saidaCarregar(dia);
+      for (const e of dSaida.entries) if (!bipadosHoje.has(e.pedido)) bipadosHoje.set(e.pedido, e.registradoEm);
+    }
   } catch { /* segue sem cruzar, só com o que o SC9 já mostra */ }
   const dash = montarDashboardLive(base, bipadosHoje);
   try {
