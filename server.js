@@ -275,6 +275,10 @@ const TRANSP_NOMES = { "2": "Brasil", "4": "Retira 01", "5": "Retira 02", "6": "
 const DESFAZER_MS = Number(process.env.SAIDA_DESFAZER_MS) || 5 * 60 * 1000;
 const SAIDA_RETENCAO_DIAS = Number(process.env.SAIDA_RETENCAO_DIAS) || 30; // passou disso: o administrador exporta e apaga
 const SAIDA_AVISO_DIAS = 5; // o administrador é avisado quando faltam até 5 dias pra completar 30
+// SLA do galpão: quantas horas um pedido pode ficar esperando pra separar, e depois pra conferir,
+// antes de contar como estourado no dashboard. Ajustável por variável de ambiente sem precisar mexer no código.
+const SLA_SEPARAR_H = Number(process.env.SLA_SEPARAR_HORAS) || 4;
+const SLA_CONFERIR_H = Number(process.env.SLA_CONFERIR_HORAS) || 2;
 
 // Só o que o conferente precisa pra conferir o bipe. Pedidos/itens completos do SC9
 // continuam só com o administrador.
@@ -317,19 +321,35 @@ function montarIndicePedidos(p) {
 // que todo mundo com o perfil "geral" enxerga, sem virar ranking de pessoas.
 function montarDashboardLive(p) {
   const agora = Date.now();
-  const porArmazem = {}, porTransp = {}, porHora = {};
-  let totalPedidos = 0, aSeparar = 0, aConferir = 0, prontos = 0, semNf = 0, atrasados = 0, pecasHoje = 0;
+  const porArmazem = {}, porTransp = {}, porHora = {}, porHoraPecas = {};
+  const porTurno = { manha: { pedidos: 0, pecas: 0 }, tarde: { pedidos: 0, pecas: 0 }, noite: { pedidos: 0, pecas: 0 } };
+  let totalPedidos = 0, aSeparar = 0, aConferir = 0, prontos = 0, semNf = 0, atrasados = 0, pecasHoje = 0, pedidosHoje = 0;
   const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
   const paradosSeparar = [], paradosConferir = [];
+  // SLA: pedidos parados além do limite — sem separador/conferente, só pra localizar onde apertar
+  const slaSepEstourado = [], slaConfEstourado = [];
+  const turnoDe = (h) => (h < 6 ? "noite" : h < 14 ? "manha" : h < 22 ? "tarde" : "noite");
   for (const o of p.orders || []) {
     totalPedidos++;
     const arm = o.armazem || "?";
     porArmazem[arm] = porArmazem[arm] || { total: 0, aSeparar: 0, aConferir: 0, prontos: 0 };
     porArmazem[arm].total++;
     const separado = Boolean(o.pickEnd), conferido = Boolean(o.confEnd);
-    if (!separado) { aSeparar++; porArmazem[arm].aSeparar++; if (o.dtLiberacaoHora) paradosSeparar.push(agora - new Date(o.dtLiberacaoHora).getTime()); }
-    else if (!conferido) { aConferir++; porArmazem[arm].aConferir++; if (o.pickEnd) paradosConferir.push(agora - new Date(o.pickEnd).getTime()); }
-    else { prontos++; porArmazem[arm].prontos++; }
+    if (!separado) {
+      aSeparar++; porArmazem[arm].aSeparar++;
+      if (o.dtLiberacaoHora) {
+        const esperaMs = agora - new Date(o.dtLiberacaoHora).getTime();
+        paradosSeparar.push(esperaMs);
+        if (esperaMs > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, armazem: arm, horasParado: Math.round(esperaMs / 3600000 * 10) / 10, liberadoEm: o.dtLiberacaoHora });
+      }
+    } else if (!conferido) {
+      aConferir++; porArmazem[arm].aConferir++;
+      if (o.pickEnd) {
+        const esperaMs = agora - new Date(o.pickEnd).getTime();
+        paradosConferir.push(esperaMs);
+        if (esperaMs > SLA_CONFERIR_H * 3600000) slaConfEstourado.push({ pedido: o.pedido, armazem: arm, horasParado: Math.round(esperaMs / 3600000 * 10) / 10, separadoEm: o.pickEnd });
+      }
+    } else porArmazem[arm].prontos++, prontos++;
     if (!o.nf) semNf++;
     if (o.status === "Atrasado") atrasados++;
     const cod = sc5.get(String(o.pedido));
@@ -337,12 +357,23 @@ function montarDashboardLive(p) {
     porTransp[tr] = porTransp[tr] || { total: 0, aSeparar: 0, aConferir: 0, prontos: 0 };
     porTransp[tr].total++;
     if (!separado) porTransp[tr].aSeparar++; else if (!conferido) porTransp[tr].aConferir++; else porTransp[tr].prontos++;
-    if (o.confEnd) { const h = new Date(o.confEnd); if (diaSP(h) === diaSP()) { const hh = h.getHours(); porHora[hh] = (porHora[hh] || 0) + 1; pecasHoje += o.qt || 0; } }
+    if (o.confEnd) {
+      const h = new Date(o.confEnd);
+      if (diaSP(h) === diaSP()) {
+        const hh = h.getHours(), pc = o.qt || 0;
+        porHora[hh] = (porHora[hh] || 0) + 1; porHoraPecas[hh] = (porHoraPecas[hh] || 0) + pc;
+        pecasHoje += pc; pedidosHoje++;
+        const t = porTurno[turnoDe(hh)]; t.pedidos++; t.pecas += pc;
+      }
+    }
   }
   const maiorEspera = (arr) => (arr.length ? Math.max(...arr) : null);
+  const ordenaPior = (arr) => arr.sort((a, b) => b.horasParado - a.horasParado).slice(0, 30);
   return {
-    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), totalPedidos, aSeparar, aConferir, prontos, semNf, atrasados, pecasHoje,
-    porArmazem, porTransp, porHora, maiorEsperaSeparar: maiorEspera(paradosSeparar), maiorEsperaConferir: maiorEspera(paradosConferir),
+    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), totalPedidos, aSeparar, aConferir, prontos, semNf, atrasados, pecasHoje, pedidosHoje,
+    porArmazem, porTransp, porHora, porHoraPecas, porTurno,
+    maiorEsperaSeparar: maiorEspera(paradosSeparar), maiorEsperaConferir: maiorEspera(paradosConferir),
+    sla: { separarHoras: SLA_SEPARAR_H, conferirHoras: SLA_CONFERIR_H, separarEstourado: slaSepEstourado.length, conferirEstourado: slaConfEstourado.length, listaSeparar: ordenaPior(slaSepEstourado), listaConferir: ordenaPior(slaConfEstourado) },
   };
 }
 
@@ -499,7 +530,7 @@ async function handleApi(req, res, pathname) {
   const method = req.method;
 
   if (pathname === "/api/health" && method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v1", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v2", time: new Date().toISOString() });
   }
 
   if (pathname === "/api/debug-fs" && method === "GET") {
