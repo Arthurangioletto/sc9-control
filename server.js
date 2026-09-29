@@ -271,6 +271,21 @@ function serveStatic(req, res, urlPath) {
 // ---------------------------------------------------------------------------
 const INDICE_OBJ = "pedidos-indice.json";
 const DASHBOARD_OBJ = "dashboard-live.json";
+const DASHBOARD_HIST_OBJ = "dashboard-historico.json"; // {dias: {"AAAA-MM-DD": {pedidosHoje, pecasHoje, atualizacoes}}}
+async function dashboardHistCarregar() {
+  try { const d = await objLoad(DASHBOARD_HIST_OBJ); return d && d.dias ? d.dias : {}; } catch { return {}; }
+}
+async function dashboardHistAtualizar(dash) {
+  const dias = await dashboardHistCarregar();
+  const hoje = diaSP();
+  const atualizacoes = ((dias[hoje] && dias[hoje].atualizacoes) || 0) + 1;
+  dias[hoje] = { pedidosHoje: dash.pedidosHoje, pecasHoje: dash.pecasHoje, pecasExpedidasHoje: dash.pecasExpedidasHoje, atualizacoes, ultimaEm: dash.atualizadoEm };
+  // guarda só os últimos 14 dias, pra não crescer pra sempre
+  const chaves = Object.keys(dias).sort();
+  for (const k of chaves.slice(0, Math.max(0, chaves.length - 14))) delete dias[k];
+  await objSave(DASHBOARD_HIST_OBJ, { dias });
+  return dias;
+}
 const TRANSP_NOMES = { "2": "Brasil", "4": "Retira 01", "5": "Retira 02", "6": "Retira 03", "7": "Retira 04", "10057": "Emergência", "10023": "São Paulo" };
 const DESFAZER_MS = Number(process.env.SAIDA_DESFAZER_MS) || 5 * 60 * 1000;
 const SAIDA_RETENCAO_DIAS = Number(process.env.SAIDA_RETENCAO_DIAS) || 30; // passou disso: o administrador exporta e apaga
@@ -279,6 +294,8 @@ const SAIDA_AVISO_DIAS = 5; // o administrador é avisado quando faltam até 5 d
 // antes de contar como estourado no dashboard. Ajustável por variável de ambiente sem precisar mexer no código.
 const SLA_SEPARAR_H = Number(process.env.SLA_SEPARAR_HORAS) || 4;
 const SLA_CONFERIR_H = Number(process.env.SLA_CONFERIR_HORAS) || 2;
+const SLA_EXPEDICAO_H = Number(process.env.SLA_EXPEDICAO_HORAS) || 1;
+const SLA_FATURAR_H = Number(process.env.SLA_FATURAR_HORAS) || 3;
 
 // Só o que o conferente precisa pra conferir o bipe. Pedidos/itens completos do SC9
 // continuam só com o administrador.
@@ -319,44 +336,72 @@ function montarIndicePedidos(p) {
 // Dashboard ao vivo: só contadores e agregados (por armazém, por transportadora,
 // por hora, pedidos parados). NUNCA leva nome de separador/conferente — é isso
 // que todo mundo com o perfil "geral" enxerga, sem virar ranking de pessoas.
-function montarDashboardLive(p) {
+// As 6 etapas são construídas só com dado que o SC9 realmente entrega (nunca
+// inventado): liberação, fim de separação, fim de conferência, NF, o próprio
+// bipe da Saída p/ Expedição (que é o "entrou na expedição, aguardando
+// faturar" que o usuário descreveu) e a confirmação na aba Entrega.
+// Hoje o dashboard ao vivo olha SÓ o Cambuci — é onde a separação/conferência/
+// expedição acontece de fato; as filiais ficam de fora daqui por enquanto.
+const ETAPA_ORDEM = ["a_separar", "a_conferir", "aguardando_expedicao", "aguardando_faturamento", "aguardando_coleta", "expedido"];
+const ETAPA_LABEL = {
+  a_separar: "A separar", a_conferir: "A conferir", aguardando_expedicao: "Conferido, aguardando ir p/ expedição",
+  aguardando_faturamento: "Na expedição, aguardando faturar", aguardando_coleta: "Faturado, aguardando coleta", expedido: "Expedido",
+};
+
+function classificarEtapa(o, bipadoEm) {
+  if (!o.pickEnd) return "a_separar";
+  if (!o.confEnd) return "a_conferir";
+  if (!bipadoEm) return "aguardando_expedicao";
+  if (!o.nf) return "aguardando_faturamento";
+  if (o.status !== "Enviado") return "aguardando_coleta"; // tem NF mas a Entrega ainda não confirmou
+  return "expedido";
+}
+
+function montarDashboardLive(p, bipadosHoje) {
   const agora = Date.now();
-  const porArmazem = {}, porTransp = {}, porHora = {}, porHoraPecas = {};
+  const porTransp = {}, porHora = {}, porHoraPecas = {}, porHoraLiberados = {}, porHoraExpedidos = {};
   const porTurno = { manha: { pedidos: 0, pecas: 0 }, tarde: { pedidos: 0, pecas: 0 }, noite: { pedidos: 0, pecas: 0 } };
-  let totalPedidos = 0, aSeparar = 0, aConferir = 0, prontos = 0, semNf = 0, atrasados = 0, pecasHoje = 0, pedidosHoje = 0;
+  const porEtapa = {}; for (const e of ETAPA_ORDEM) porEtapa[e] = 0;
+  let totalPedidos = 0, semNf = 0, atrasados = 0, pecasHoje = 0, pedidosHoje = 0, pecasExpedidasHoje = 0;
   const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
-  const paradosSeparar = [], paradosConferir = [];
-  // SLA: pedidos parados além do limite — sem separador/conferente, só pra localizar onde apertar
-  const slaSepEstourado = [], slaConfEstourado = [];
+  const paradosSeparar = [], paradosConferir = [], paradosExpedicao = [], paradosFaturamento = [];
+  const slaSepEstourado = [], slaConfEstourado = [], slaExpEstourado = [], slaFatEstourado = [];
   const turnoDe = (h) => (h < 6 ? "noite" : h < 14 ? "manha" : h < 22 ? "tarde" : "noite");
-  for (const o of p.orders || []) {
+  const ordersCambuci = (p.orders || []).filter((o) => o.armazem === "Cambuci");
+  for (const o of ordersCambuci) {
     totalPedidos++;
-    const arm = o.armazem || "?";
-    porArmazem[arm] = porArmazem[arm] || { total: 0, aSeparar: 0, aConferir: 0, prontos: 0 };
-    porArmazem[arm].total++;
-    const separado = Boolean(o.pickEnd), conferido = Boolean(o.confEnd);
-    if (!separado) {
-      aSeparar++; porArmazem[arm].aSeparar++;
-      if (o.dtLiberacaoHora) {
-        const esperaMs = agora - new Date(o.dtLiberacaoHora).getTime();
-        paradosSeparar.push(esperaMs);
-        if (esperaMs > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, armazem: arm, horasParado: Math.round(esperaMs / 3600000 * 10) / 10, liberadoEm: o.dtLiberacaoHora });
-      }
-    } else if (!conferido) {
-      aConferir++; porArmazem[arm].aConferir++;
-      if (o.pickEnd) {
-        const esperaMs = agora - new Date(o.pickEnd).getTime();
-        paradosConferir.push(esperaMs);
-        if (esperaMs > SLA_CONFERIR_H * 3600000) slaConfEstourado.push({ pedido: o.pedido, armazem: arm, horasParado: Math.round(esperaMs / 3600000 * 10) / 10, separadoEm: o.pickEnd });
-      }
-    } else porArmazem[arm].prontos++, prontos++;
+    const bipe = bipadosHoje ? bipadosHoje.get(o.pedido) : null;
+    const etapa = classificarEtapa(o, bipe);
+    porEtapa[etapa]++;
+    if (o.dtLiberacaoHora) { const hl = new Date(o.dtLiberacaoHora); if (diaSP(hl) === diaSP()) porHoraLiberados[hl.getHours()] = (porHoraLiberados[hl.getHours()] || 0) + 1; }
+    if (etapa === "expedido" && bipe) { const he = new Date(bipe); if (diaSP(he) === diaSP()) porHoraExpedidos[he.getHours()] = (porHoraExpedidos[he.getHours()] || 0) + 1; }
+    if (etapa === "a_separar" && o.dtLiberacaoHora) {
+      const ms = agora - new Date(o.dtLiberacaoHora).getTime();
+      paradosSeparar.push(ms);
+      if (ms > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, horasParado: r1(ms), liberadoEm: o.dtLiberacaoHora, etapa });
+    } else if (etapa === "a_conferir" && o.pickEnd) {
+      const ms = agora - new Date(o.pickEnd).getTime();
+      paradosConferir.push(ms);
+      if (ms > SLA_CONFERIR_H * 3600000) slaConfEstourado.push({ pedido: o.pedido, horasParado: r1(ms), separadoEm: o.pickEnd, etapa });
+    } else if (etapa === "aguardando_expedicao" && o.confEnd) {
+      const ms = agora - new Date(o.confEnd).getTime();
+      paradosExpedicao.push(ms);
+      if (ms > SLA_EXPEDICAO_H * 3600000) slaExpEstourado.push({ pedido: o.pedido, horasParado: r1(ms), conferidoEm: o.confEnd, etapa });
+    } else if (etapa === "aguardando_faturamento" && bipe) {
+      // aqui a "espera" é desde que ENTROU na expedição (bipe) — o SC9 não diz
+      // quando a NF foi emitida, só SE ela existe; então isso mede "tempo na
+      // fila de faturamento", não a duração do faturamento em si.
+      const ms = agora - new Date(bipe).getTime();
+      paradosFaturamento.push(ms);
+      if (ms > SLA_FATURAR_H * 3600000) slaFatEstourado.push({ pedido: o.pedido, horasParado: r1(ms), entrouExpedicaoEm: bipe, etapa });
+    }
     if (!o.nf) semNf++;
     if (o.status === "Atrasado") atrasados++;
     const cod = sc5.get(String(o.pedido));
     const tr = cod ? (TRANSP_NOMES[cod] || `Código ${cod}`) : (o.transportadora || "Sem transportadora");
-    porTransp[tr] = porTransp[tr] || { total: 0, aSeparar: 0, aConferir: 0, prontos: 0 };
+    porTransp[tr] = porTransp[tr] || { total: 0, etapas: {} };
     porTransp[tr].total++;
-    if (!separado) porTransp[tr].aSeparar++; else if (!conferido) porTransp[tr].aConferir++; else porTransp[tr].prontos++;
+    porTransp[tr].etapas[etapa] = (porTransp[tr].etapas[etapa] || 0) + 1;
     if (o.confEnd) {
       const h = new Date(o.confEnd);
       if (diaSP(h) === diaSP()) {
@@ -366,16 +411,33 @@ function montarDashboardLive(p) {
         const t = porTurno[turnoDe(hh)]; t.pedidos++; t.pecas += pc;
       }
     }
+    if (etapa === "expedido" && bipe && diaSP(new Date(bipe)) === diaSP()) pecasExpedidasHoje += o.qt || 0;
   }
   const maiorEspera = (arr) => (arr.length ? Math.max(...arr) : null);
+  const medianaEspera = (arr) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
   const ordenaPior = (arr) => arr.sort((a, b) => b.horasParado - a.horasParado).slice(0, 30);
+  const rankingEtapas = [
+    { etapa: "a_separar", label: ETAPA_LABEL.a_separar, medioMs: medianaEspera(paradosSeparar), pedidos: porEtapa.a_separar },
+    { etapa: "a_conferir", label: ETAPA_LABEL.a_conferir, medioMs: medianaEspera(paradosConferir), pedidos: porEtapa.a_conferir },
+    { etapa: "aguardando_expedicao", label: ETAPA_LABEL.aguardando_expedicao, medioMs: medianaEspera(paradosExpedicao), pedidos: porEtapa.aguardando_expedicao },
+    { etapa: "aguardando_faturamento", label: ETAPA_LABEL.aguardando_faturamento, medioMs: medianaEspera(paradosFaturamento), pedidos: porEtapa.aguardando_faturamento },
+  ].filter((x) => x.medioMs !== null).sort((a, b) => b.medioMs - a.medioMs);
   return {
-    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), totalPedidos, aSeparar, aConferir, prontos, semNf, atrasados, pecasHoje, pedidosHoje,
-    porArmazem, porTransp, porHora, porHoraPecas, porTurno,
+    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), armazem: "Cambuci", totalPedidos,
+    porEtapa, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL,
+    semNf, atrasados, pecasHoje, pedidosHoje, pecasExpedidasHoje,
+    porTransp, porHora, porHoraPecas, porHoraLiberados, porHoraExpedidos, porTurno,
     maiorEsperaSeparar: maiorEspera(paradosSeparar), maiorEsperaConferir: maiorEspera(paradosConferir),
-    sla: { separarHoras: SLA_SEPARAR_H, conferirHoras: SLA_CONFERIR_H, separarEstourado: slaSepEstourado.length, conferirEstourado: slaConfEstourado.length, listaSeparar: ordenaPior(slaSepEstourado), listaConferir: ordenaPior(slaConfEstourado) },
+    maiorEsperaExpedicao: maiorEspera(paradosExpedicao), maiorEsperaFaturamento: maiorEspera(paradosFaturamento),
+    rankingEtapas,
+    sla: {
+      separarHoras: SLA_SEPARAR_H, conferirHoras: SLA_CONFERIR_H, expedicaoHoras: SLA_EXPEDICAO_H, faturarHoras: SLA_FATURAR_H,
+      separarEstourado: slaSepEstourado.length, conferirEstourado: slaConfEstourado.length, expedicaoEstourado: slaExpEstourado.length, faturarEstourado: slaFatEstourado.length,
+      listaSeparar: ordenaPior(slaSepEstourado), listaConferir: ordenaPior(slaConfEstourado), listaExpedicao: ordenaPior(slaExpEstourado), listaFaturar: ordenaPior(slaFatEstourado),
+    },
   };
 }
+function r1(ms) { return Math.round(ms / 3600000 * 10) / 10; }
 
 let dashboardCache = null;
 let indiceCache = null;
@@ -530,7 +592,7 @@ async function handleApi(req, res, pathname) {
   const method = req.method;
 
   if (pathname === "/api/health" && method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v2", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v3", time: new Date().toISOString() });
   }
 
   if (pathname === "/api/debug-fs" && method === "GET") {
@@ -652,7 +714,18 @@ async function handleApi(req, res, pathname) {
         saida = await saidaReconciliar(idx); // e revê os bipes já guardados com o SC9 novo
       } catch (e) { console.error("Erro ao montar índice / reconciliar a saída:", e); }
       try {
-        const dash = montarDashboardLive(payload);
+        // cruza com quem já foi bipado hoje na Saída p/ Expedição — é o sinal
+        // real de "entrou na expedição, aguardando faturar" que dá pra usar
+        // sem inventar nada.
+        const bipadosHoje = new Map();
+        try {
+          const dSaida = await saidaCarregar(diaSP());
+          for (const e of dSaida.entries) if (!bipadosHoje.has(e.pedido)) bipadosHoje.set(e.pedido, e.registradoEm);
+        } catch { /* segue sem cruzar, só com o que o SC9 já mostra */ }
+        const dash = montarDashboardLive(payload, bipadosHoje);
+        const dias = await dashboardHistAtualizar(dash);
+        dash.historico = dias;
+        dash.ontem = dias[diaAnterior(diaSP(), 1)] || null;
         await objSave(DASHBOARD_OBJ, dash);
         dashboardCache = { at: Date.now(), data: dash };
       } catch (e) { console.error("Erro ao montar o dashboard ao vivo:", e); }
@@ -909,7 +982,7 @@ async function handleApi(req, res, pathname) {
     try {
       const d = await dashboardCarregar();
       res.setHeader("Cache-Control", "no-store");
-      return sendJson(res, 200, d || { totalPedidos: 0, aSeparar: 0, aConferir: 0, prontos: 0, porArmazem: {}, porTransp: {}, porHora: {}, savedAt: null });
+      return sendJson(res, 200, d || { totalPedidos: 0, armazem: "Cambuci", porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: {}, porHora: {}, porHoraPecas: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, ontem: null, savedAt: null });
     } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar o dashboard" }); }
   }
 
