@@ -9,6 +9,8 @@ const { saveSnapshot, loadSnapshot, usingSupabase } = require("./storage");
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || ""; // vazio = sem senha (não recomendado em produção)
+console.log(`DIAGNÓSTICO TEMPORÁRIO: APP_PASSWORD configurada com ${APP_PASSWORD.length} caractere(s)` +
+  (APP_PASSWORD !== APP_PASSWORD.trim() ? " — ATENÇÃO: tem espaço ou quebra de linha no início/fim!" : " (sem espaço sobrando nas pontas)."));
 const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
@@ -742,6 +744,7 @@ async function handleApi(req, res, pathname) {
     let sess = null, sv = 0;
     if (password) {
       if (!usuario || usuario === "admin") {
+        console.log(`DIAGNÓSTICO TEMPORÁRIO: tentativa de login admin — senha recebida com ${password.length} caractere(s) (a configurada tem ${APP_PASSWORD.length}).`);
         if (timingSafeEqualStr(password, APP_PASSWORD)) sess = ADMIN();
       } else {
         const u = await achaUsuario(usuario);
