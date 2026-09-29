@@ -270,21 +270,35 @@ function serveStatic(req, res, urlPath) {
 // sem querer (o 2º recebe "já bipado por Fulano às hh:mm").
 // ---------------------------------------------------------------------------
 const INDICE_OBJ = "pedidos-indice.json";
-const DASHBOARD_OBJ = "dashboard-live.json";
+const DASHBOARD_OBJ = "dashboard-live.json";      // cache leve, recalculado sob demanda — não é mais a fonte de verdade
+const DASHBOARD_ORDERS_OBJ = "dashboard-orders.json"; // só os pedidos do Cambuci (fonte de verdade pro dashboard)
 const DASHBOARD_HIST_OBJ = "dashboard-historico.json"; // {dias: {"AAAA-MM-DD": {pedidosHoje, pecasHoje, atualizacoes}}}
 async function dashboardHistCarregar() {
   try { const d = await objLoad(DASHBOARD_HIST_OBJ); return d && d.dias ? d.dias : {}; } catch { return {}; }
 }
+// Atualiza os NÚMEROS do dia (pedidosHoje/pecasHoje/pecasExpedidasHoje) com o
+// que acabou de ser calculado. Roda a cada consulta ao dashboard — é assim
+// que a produtividade do dia fica sempre atual sem depender de subir o SC9 de
+// novo. NÃO mexe no contador de sincronizações (isso é outra coisa, ver
+// dashboardRegistrarSincronizacao).
 async function dashboardHistAtualizar(dash) {
   const dias = await dashboardHistCarregar();
   const hoje = diaSP();
-  const atualizacoes = ((dias[hoje] && dias[hoje].atualizacoes) || 0) + 1;
+  const atualizacoes = (dias[hoje] && dias[hoje].atualizacoes) || 0;
   dias[hoje] = { pedidosHoje: dash.pedidosHoje, pecasHoje: dash.pecasHoje, pecasExpedidasHoje: dash.pecasExpedidasHoje, atualizacoes, ultimaEm: dash.atualizadoEm };
-  // guarda só os últimos 14 dias, pra não crescer pra sempre
   const chaves = Object.keys(dias).sort();
   for (const k of chaves.slice(0, Math.max(0, chaves.length - 14))) delete dias[k];
   await objSave(DASHBOARD_HIST_OBJ, { dias });
   return dias;
+}
+// Essa sim conta "quantas vezes sincronizamos o SC9 hoje" — chamada só no
+// /api/save, nunca no recálculo automático do dashboard.
+async function dashboardRegistrarSincronizacao() {
+  const dias = await dashboardHistCarregar();
+  const hoje = diaSP();
+  const atual = dias[hoje] || { pedidosHoje: 0, pecasHoje: 0, pecasExpedidasHoje: 0 };
+  dias[hoje] = { ...atual, atualizacoes: (atual.atualizacoes || 0) + 1 };
+  await objSave(DASHBOARD_HIST_OBJ, { dias });
 }
 const TRANSP_NOMES = { "2": "Brasil", "4": "Retira 01", "5": "Retira 02", "6": "Retira 03", "7": "Retira 04", "10057": "Emergência", "10023": "São Paulo" };
 const DESFAZER_MS = Number(process.env.SAIDA_DESFAZER_MS) || 5 * 60 * 1000;
@@ -342,43 +356,65 @@ function montarIndicePedidos(p) {
 // faturar" que o usuário descreveu) e a confirmação na aba Entrega.
 // Hoje o dashboard ao vivo olha SÓ o Cambuci — é onde a separação/conferência/
 // expedição acontece de fato; as filiais ficam de fora daqui por enquanto.
-const ETAPA_ORDEM = ["a_separar", "a_conferir", "aguardando_expedicao", "aguardando_faturamento", "aguardando_coleta", "expedido"];
+const ETAPA_ORDEM = ["a_separar", "em_separacao", "a_conferir", "aguardando_expedicao", "aguardando_faturamento", "aguardando_coleta", "expedido"];
 const ETAPA_LABEL = {
-  a_separar: "A separar", a_conferir: "A conferir", aguardando_expedicao: "Conferido, aguardando ir p/ expedição",
+  a_separar: "A separar", em_separacao: "Em separação", a_conferir: "A conferir", aguardando_expedicao: "Conferido, aguardando ir p/ expedição",
   aguardando_faturamento: "Na expedição, aguardando faturar", aguardando_coleta: "Faturado, aguardando coleta", expedido: "Expedido",
 };
 
 function classificarEtapa(o, bipadoEm) {
-  if (!o.pickEnd) return "a_separar";
+  // a Entrega (ou NF confirmada, nas filiais) é a confirmação DEFINITIVA de
+  // que saiu — vale mesmo sem ter passado pelo bipe do app (pedido antigo, de
+  // antes dessa função existir, ou bipado por outra pessoa/sistema).
+  if (o.status === "Enviado") return "expedido";
+  if (!o.pickEnd) return o.pickStart ? "em_separacao" : "a_separar";
   if (!o.confEnd) return "a_conferir";
   if (!bipadoEm) return "aguardando_expedicao";
   if (!o.nf) return "aguardando_faturamento";
-  if (o.status !== "Enviado") return "aguardando_coleta"; // tem NF mas a Entrega ainda não confirmou
-  return "expedido";
+  return "aguardando_coleta"; // tem NF e foi bipado, mas a Entrega ainda não confirmou
 }
 
 function montarDashboardLive(p, bipadosHoje) {
   const agora = Date.now();
+  const hojeStr = diaSP();
   const porTransp = {}, porHora = {}, porHoraPecas = {}, porHoraLiberados = {}, porHoraExpedidos = {};
   const porTurno = { manha: { pedidos: 0, pecas: 0 }, tarde: { pedidos: 0, pecas: 0 }, noite: { pedidos: 0, pecas: 0 } };
   const porEtapa = {}; for (const e of ETAPA_ORDEM) porEtapa[e] = 0;
-  let totalPedidos = 0, semNf = 0, atrasados = 0, pecasHoje = 0, pedidosHoje = 0, pecasExpedidasHoje = 0;
+  // ATENÇÃO: totalPedidos é o histórico BRUTO do que veio no SC9 (pode incluir
+  // semanas de pedidos já concluídos há muito tempo) — nunca mostrar isso como
+  // "pedidos de hoje". O que importa pra operação são os três de baixo:
+  //   emProcesso        = ainda não expedido, de QUALQUER dia (a fila real de trabalho)
+  //   liberadosHoje     = chegaram hoje (novos, independente de já terem andado ou não)
+  //   pendenciasAntigas = ainda não expedido E liberado ANTES de hoje (fila acumulada)
+  //   concluidosHoje    = terminaram (conferência ou expedição) hoje
+  let totalPedidos = 0, emProcesso = 0, liberadosHoje = 0, pendenciasAntigas = 0, concluidosHoje = 0;
+  let semNf = 0, atrasados = 0, pecasHoje = 0, pedidosHoje = 0, pecasExpedidasHoje = 0;
   const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
   const paradosSeparar = [], paradosConferir = [], paradosExpedicao = [], paradosFaturamento = [];
   const slaSepEstourado = [], slaConfEstourado = [], slaExpEstourado = [], slaFatEstourado = [];
   const turnoDe = (h) => (h < 6 ? "noite" : h < 14 ? "manha" : h < 22 ? "tarde" : "noite");
-  const ordersCambuci = (p.orders || []).filter((o) => o.armazem === "Cambuci");
+  const ordersCambuci = p.orders || []; // já vem só com Cambuci (filtrado na hora de salvar)
+  const novoTransp = () => ({ total: 0, liberadosHoje: 0, aSeparar: 0, emSeparacaoOuConferencia: 0, aguardandoFaturamento: 0, aguardandoColeta: 0, expedidoHoje: 0, atrasados: 0, pecasPendentes: 0, pecasExpedidas: 0, etapas: {} });
   for (const o of ordersCambuci) {
     totalPedidos++;
     const bipe = bipadosHoje ? bipadosHoje.get(o.pedido) : null;
     const etapa = classificarEtapa(o, bipe);
+    const dtLib = o.dt ? new Date(o.dt) : null;
+    const ehDeHoje = dtLib && diaSP(dtLib) === hojeStr;
+    const naoExpedido = etapa !== "expedido";
+    if (naoExpedido) { emProcesso++; if (!ehDeHoje) pendenciasAntigas++; }
+    if (ehDeHoje) liberadosHoje++;
     porEtapa[etapa]++;
-    if (o.dtLiberacaoHora) { const hl = new Date(o.dtLiberacaoHora); if (diaSP(hl) === diaSP()) porHoraLiberados[hl.getHours()] = (porHoraLiberados[hl.getHours()] || 0) + 1; }
-    if (etapa === "expedido" && bipe) { const he = new Date(bipe); if (diaSP(he) === diaSP()) porHoraExpedidos[he.getHours()] = (porHoraExpedidos[he.getHours()] || 0) + 1; }
+    if (o.dtLiberacaoHora) { const hl = new Date(o.dtLiberacaoHora); if (diaSP(hl) === hojeStr) porHoraLiberados[hl.getHours()] = (porHoraLiberados[hl.getHours()] || 0) + 1; }
+    if (etapa === "expedido" && bipe) { const he = new Date(bipe); if (diaSP(he) === hojeStr) { porHoraExpedidos[he.getHours()] = (porHoraExpedidos[he.getHours()] || 0) + 1; concluidosHoje++; } }
     if (etapa === "a_separar" && o.dtLiberacaoHora) {
       const ms = agora - new Date(o.dtLiberacaoHora).getTime();
       paradosSeparar.push(ms);
       if (ms > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, horasParado: r1(ms), liberadoEm: o.dtLiberacaoHora, etapa });
+    } else if (etapa === "em_separacao" && o.pickStart) {
+      const ms = agora - new Date(o.pickStart).getTime();
+      paradosSeparar.push(ms);
+      if (ms > SLA_SEPARAR_H * 3600000) slaSepEstourado.push({ pedido: o.pedido, horasParado: r1(ms), liberadoEm: o.pickStart, etapa });
     } else if (etapa === "a_conferir" && o.pickEnd) {
       const ms = agora - new Date(o.pickEnd).getTime();
       paradosConferir.push(ms);
@@ -388,45 +424,60 @@ function montarDashboardLive(p, bipadosHoje) {
       paradosExpedicao.push(ms);
       if (ms > SLA_EXPEDICAO_H * 3600000) slaExpEstourado.push({ pedido: o.pedido, horasParado: r1(ms), conferidoEm: o.confEnd, etapa });
     } else if (etapa === "aguardando_faturamento" && bipe) {
-      // aqui a "espera" é desde que ENTROU na expedição (bipe) — o SC9 não diz
-      // quando a NF foi emitida, só SE ela existe; então isso mede "tempo na
-      // fila de faturamento", não a duração do faturamento em si.
+      // "espera" desde que ENTROU na expedição (bipe) — o SC9 não diz quando a
+      // NF foi emitida, só SE ela existe; então isso mede "tempo na fila de
+      // faturamento", não a duração do faturamento em si.
       const ms = agora - new Date(bipe).getTime();
       paradosFaturamento.push(ms);
       if (ms > SLA_FATURAR_H * 3600000) slaFatEstourado.push({ pedido: o.pedido, horasParado: r1(ms), entrouExpedicaoEm: bipe, etapa });
     }
     if (!o.nf) semNf++;
-    if (o.status === "Atrasado") atrasados++;
+    const estaAtrasado = o.status === "Atrasado" && naoExpedido;
+    if (estaAtrasado) atrasados++;
     const cod = sc5.get(String(o.pedido));
-    const tr = cod ? (TRANSP_NOMES[cod] || `Código ${cod}`) : (o.transportadora || "Sem transportadora");
-    porTransp[tr] = porTransp[tr] || { total: 0, etapas: {} };
-    porTransp[tr].total++;
-    porTransp[tr].etapas[etapa] = (porTransp[tr].etapas[etapa] || 0) + 1;
+    const tr = cod ? (TRANSP_NOMES[cod] || `Código ${cod}`) : (o.transportadora || "Sem transportadora definida");
+    porTransp[tr] = porTransp[tr] || novoTransp();
+    const pt = porTransp[tr];
+    pt.total++;
+    pt.etapas[etapa] = (pt.etapas[etapa] || 0) + 1;
+    if (ehDeHoje) pt.liberadosHoje++;
+    if (estaAtrasado) pt.atrasados++;
+    if (etapa === "a_separar") pt.aSeparar++;
+    else if (etapa === "em_separacao" || etapa === "a_conferir") pt.emSeparacaoOuConferencia++;
+    else if (etapa === "aguardando_expedicao" || etapa === "aguardando_faturamento") pt.aguardandoFaturamento++;
+    else if (etapa === "aguardando_coleta") pt.aguardandoColeta++;
+    if (naoExpedido) pt.pecasPendentes += o.qt || 0;
+    if (etapa === "expedido" && bipe && diaSP(new Date(bipe)) === hojeStr) { pt.expedidoHoje++; pt.pecasExpedidas += o.qt || 0; }
     if (o.confEnd) {
       const h = new Date(o.confEnd);
-      if (diaSP(h) === diaSP()) {
+      if (diaSP(h) === hojeStr) {
         const hh = h.getHours(), pc = o.qt || 0;
         porHora[hh] = (porHora[hh] || 0) + 1; porHoraPecas[hh] = (porHoraPecas[hh] || 0) + pc;
         pecasHoje += pc; pedidosHoje++;
         const t = porTurno[turnoDe(hh)]; t.pedidos++; t.pecas += pc;
       }
     }
-    if (etapa === "expedido" && bipe && diaSP(new Date(bipe)) === diaSP()) pecasExpedidasHoje += o.qt || 0;
+    if (etapa === "expedido" && bipe && diaSP(new Date(bipe)) === hojeStr) pecasExpedidasHoje += o.qt || 0;
   }
   const maiorEspera = (arr) => (arr.length ? Math.max(...arr) : null);
   const medianaEspera = (arr) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
   const ordenaPior = (arr) => arr.sort((a, b) => b.horasParado - a.horasParado).slice(0, 30);
   const rankingEtapas = [
-    { etapa: "a_separar", label: ETAPA_LABEL.a_separar, medioMs: medianaEspera(paradosSeparar), pedidos: porEtapa.a_separar },
+    { etapa: "a_separar", label: ETAPA_LABEL.a_separar, medioMs: medianaEspera(paradosSeparar), pedidos: porEtapa.a_separar + porEtapa.em_separacao },
     { etapa: "a_conferir", label: ETAPA_LABEL.a_conferir, medioMs: medianaEspera(paradosConferir), pedidos: porEtapa.a_conferir },
     { etapa: "aguardando_expedicao", label: ETAPA_LABEL.aguardando_expedicao, medioMs: medianaEspera(paradosExpedicao), pedidos: porEtapa.aguardando_expedicao },
     { etapa: "aguardando_faturamento", label: ETAPA_LABEL.aguardando_faturamento, medioMs: medianaEspera(paradosFaturamento), pedidos: porEtapa.aguardando_faturamento },
   ].filter((x) => x.medioMs !== null).sort((a, b) => b.medioMs - a.medioMs);
+  // transportadoras ordenadas por prioridade operacional: quem tem mais atraso primeiro, depois maior fila pendente
+  const transpOrdenado = Object.entries(porTransp)
+    .map(([nome, v]) => ({ nome, ...v, pendentes: v.total - (v.etapas.expedido || 0) }))
+    .sort((a, b) => b.atrasados - a.atrasados || b.pendentes - a.pendentes);
   return {
-    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), armazem: "Cambuci", totalPedidos,
+    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), armazem: "Cambuci",
+    totalPedidos, emProcesso, liberadosHoje, pendenciasAntigas, concluidosHoje,
     porEtapa, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL,
     semNf, atrasados, pecasHoje, pedidosHoje, pecasExpedidasHoje,
-    porTransp, porHora, porHoraPecas, porHoraLiberados, porHoraExpedidos, porTurno,
+    porTransp: transpOrdenado, porHora, porHoraPecas, porHoraLiberados, porHoraExpedidos, porTurno,
     maiorEsperaSeparar: maiorEspera(paradosSeparar), maiorEsperaConferir: maiorEspera(paradosConferir),
     maiorEsperaExpedicao: maiorEspera(paradosExpedicao), maiorEsperaFaturamento: maiorEspera(paradosFaturamento),
     rankingEtapas,
@@ -440,6 +491,36 @@ function montarDashboardLive(p, bipadosHoje) {
 function r1(ms) { return Math.round(ms / 3600000 * 10) / 10; }
 
 let dashboardCache = null;
+let dashboardOrdersCache = null;
+async function dashboardOrdersCarregar() {
+  if (dashboardOrdersCache && Date.now() - dashboardOrdersCache.at < 5000) return dashboardOrdersCache.data;
+  try { dashboardOrdersCache = { at: Date.now(), data: await objLoad(DASHBOARD_ORDERS_OBJ) }; }
+  catch (e) { if (dashboardOrdersCache) return dashboardOrdersCache.data; throw e; }
+  return dashboardOrdersCache.data;
+}
+// Monta o dashboard NA HORA, cruzando o último SC9 salvo com os bipes de HOJE
+// (lidos ao vivo — não um retrato do momento do save). Cacheado por poucos
+// segundos só pra não bater no storage a cada poll de cada usuário; qualquer
+// bipe novo aparece pra todo mundo em, no máximo, esses poucos segundos —
+// sem precisar subir um SC9 de novo.
+async function dashboardAoVivo() {
+  if (dashboardCache && Date.now() - dashboardCache.at < 4000) return dashboardCache.data;
+  const base = await dashboardOrdersCarregar();
+  if (!base) return null;
+  const bipadosHoje = new Map();
+  try {
+    const dSaida = await saidaCarregar(diaSP());
+    for (const e of dSaida.entries) if (!bipadosHoje.has(e.pedido)) bipadosHoje.set(e.pedido, e.registradoEm);
+  } catch { /* segue sem cruzar, só com o que o SC9 já mostra */ }
+  const dash = montarDashboardLive(base, bipadosHoje);
+  try {
+    const dias = await dashboardHistAtualizar(dash);
+    dash.historico = dias;
+    dash.ontem = dias[diaAnterior(diaSP(), 1)] || null;
+  } catch (e) { console.error("Erro ao atualizar o histórico do dashboard:", e); dash.historico = {}; dash.ontem = null; }
+  dashboardCache = { at: Date.now(), data: dash };
+  return dash;
+}
 let indiceCache = null;
 async function indiceCarregar() {
   if (indiceCache && Date.now() - indiceCache.at < 60000) return indiceCache.data;
@@ -592,7 +673,7 @@ async function handleApi(req, res, pathname) {
   const method = req.method;
 
   if (pathname === "/api/health" && method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v3", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v5", time: new Date().toISOString() });
   }
 
   if (pathname === "/api/debug-fs" && method === "GET") {
@@ -714,21 +795,21 @@ async function handleApi(req, res, pathname) {
         saida = await saidaReconciliar(idx); // e revê os bipes já guardados com o SC9 novo
       } catch (e) { console.error("Erro ao montar índice / reconciliar a saída:", e); }
       try {
-        // cruza com quem já foi bipado hoje na Saída p/ Expedição — é o sinal
-        // real de "entrou na expedição, aguardando faturar" que dá pra usar
-        // sem inventar nada.
-        const bipadosHoje = new Map();
-        try {
-          const dSaida = await saidaCarregar(diaSP());
-          for (const e of dSaida.entries) if (!bipadosHoje.has(e.pedido)) bipadosHoje.set(e.pedido, e.registradoEm);
-        } catch { /* segue sem cruzar, só com o que o SC9 já mostra */ }
-        const dash = montarDashboardLive(payload, bipadosHoje);
-        const dias = await dashboardHistAtualizar(dash);
-        dash.historico = dias;
-        dash.ontem = dias[diaAnterior(diaSP(), 1)] || null;
-        await objSave(DASHBOARD_OBJ, dash);
-        dashboardCache = { at: Date.now(), data: dash };
-      } catch (e) { console.error("Erro ao montar o dashboard ao vivo:", e); }
+        // Só os pedidos do Cambuci, com o que o dashboard precisa (liberação,
+        // pickEnd, confEnd, nf, status, transportadora, peças). Guardado à
+        // parte do resto — é a base que o /api/dashboard usa, recalculando NA
+        // HORA a cada consulta (não só quando alguém sobe um SC9 novo). Assim,
+        // quem bipa um pedido na Saída p/ Expedição vê o dashboard reagir
+        // na hora, mesmo sem um SC9 novo — sobe o SC9 de novo só quando o
+        // pedido em si mudar de verdade (separou, conferiu, saiu NF).
+        const ordersCambuci = (payload.orders || [])
+          .filter((o) => o.armazem === "Cambuci")
+          .map((o) => ({ pedido: o.pedido, dt: o.dt, dtLiberacaoHora: o.dtLiberacaoHora, pickStart: o.pickStart, pickEnd: o.pickEnd, confEnd: o.confEnd, nf: o.nf, status: o.status, qt: o.qt, transportadora: o.transportadora }));
+        await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci });
+        dashboardOrdersCache = null; // força reler na próxima consulta
+        dashboardCache = null; // força recalcular o dashboard já com a base nova
+        await dashboardRegistrarSincronizacao();
+      } catch (e) { console.error("Erro ao salvar a base do dashboard:", e); }
       return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length, saida });
     } catch (e) {
       console.error("Erro ao salvar snapshot:", e);
@@ -980,9 +1061,9 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/dashboard" && method === "GET") {
     if (!(await exigir(req, res, ["admin", "operador"]))) return;
     try {
-      const d = await dashboardCarregar();
+      const d = await dashboardAoVivo();
       res.setHeader("Cache-Control", "no-store");
-      return sendJson(res, 200, d || { totalPedidos: 0, armazem: "Cambuci", porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: {}, porHora: {}, porHoraPecas: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, ontem: null, savedAt: null });
+      return sendJson(res, 200, d || { totalPedidos: 0, emProcesso: 0, liberadosHoje: 0, pendenciasAntigas: 0, concluidosHoje: 0, armazem: "Cambuci", porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: [], porHora: {}, porHoraPecas: {}, porHoraLiberados: {}, porHoraExpedidos: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, ontem: null, savedAt: null });
     } catch (e) { return sendJson(res, 500, { error: e.message || "erro ao carregar o dashboard" }); }
   }
 
