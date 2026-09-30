@@ -283,6 +283,28 @@ const INDICE_OBJ = "pedidos-indice.json";
 const DASHBOARD_OBJ = "dashboard-live.json";      // cache leve, recalculado sob demanda — não é mais a fonte de verdade
 const DASHBOARD_ORDERS_OBJ = "dashboard-orders.json"; // só os pedidos do Cambuci (fonte de verdade pro dashboard)
 const DASHBOARD_HIST_OBJ = "dashboard-historico.json"; // {dias: {"AAAA-MM-DD": {pedidosHoje, pecasHoje, atualizacoes}}}
+const META_FATURAMENTO_OBJ = "meta-faturamento.json"; // {valor, mes: "AAAA-MM", atualizadoEm, atualizadoPor}
+const VALOR_GERAL_OBJ = "valor-faturado-geral.json"; // valor faturado do mês, TODOS os armazéns (não só Cambuci)
+// armazéns reconhecidos pra essa conta geral — o mesmo conjunto que o painel
+// já usa (ES nunca entra em lugar nenhum, nem chega a existir como opção).
+const ARMAZENS_GERAL = new Set(["Cambuci", "Tambore", "DF", "RJ", "BH", "CE"]);
+// mês corrente no fuso de São Paulo, no formato "AAAA-MM"
+const mesSP = (d = new Date()) => diaSP(d).slice(0, 7);
+
+async function metaFaturamentoCarregar() {
+  try { return (await objLoad(META_FATURAMENTO_OBJ)) || { valor: null, mes: null }; }
+  catch { return { valor: null, mes: null }; }
+}
+async function metaFaturamentoSalvar(valor, usuario) {
+  const registro = { valor, mes: mesSP(), atualizadoEm: new Date().toISOString(), atualizadoPor: usuario };
+  await objSave(META_FATURAMENTO_OBJ, registro);
+  return registro;
+}
+
+async function valorGeralCarregar() {
+  try { return await objLoad(VALOR_GERAL_OBJ); } catch { return null; }
+}
+
 async function dashboardHistCarregar() {
   try { const d = await objLoad(DASHBOARD_HIST_OBJ); return d && d.dias ? d.dias : {}; } catch { return {}; }
 }
@@ -404,7 +426,12 @@ function montarDashboardLive(p, bipadosHoje) {
   //   concluidosHoje    = terminaram (conferência ou expedição) hoje
   let totalPedidos = 0, emProcesso = 0, liberadosHoje = 0, pendenciasAntigas = 0, concluidosHoje = 0;
   let semNf = 0, atrasados = 0, pecasHoje = 0, pedidosHoje = 0, pecasExpedidasHoje = 0;
+  let valorFaturadoHoje = 0, valorFaturadoTotal = 0, pedidosComValor = 0;
   const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
+  // valor e data de emissão de cada Nota Fiscal, vindos da aba SF2 do SC9 —
+  // sem isso (arquivo sem SF2), o valor simplesmente fica de fora, sem inventar nada.
+  const valoresPorNF = new Map((p.valoresPorNF || []).map(([k, v]) => [String(k), v]));
+  const faturamentoPorNF = new Map((p.faturamentoPorNF || []).map(([k, v]) => [String(k), v]));
   const paradosSeparar = [], paradosConferir = [], paradosExpedicao = [], paradosFaturamento = [];
   const listaAtrasados = [];
   const slaSepEstourado = [], slaConfEstourado = [], slaExpEstourado = [], slaFatEstourado = [];
@@ -451,6 +478,15 @@ function montarDashboardLive(p, bipadosHoje) {
       if (ms > SLA_FATURAR_H * 3600000) slaFatEstourado.push({ pedido: o.pedido, cliente, transportadora: tr, horasParado: r1(ms), entrouExpedicaoEm: bipe, etapa });
     }
     if (!o.nf) semNf++;
+    else {
+      const v = valoresPorNF.get(String(o.nf));
+      const valor = v ? (v.fatura ?? v.mercad) : null;
+      if (typeof valor === "number" && !isNaN(valor)) {
+        valorFaturadoTotal += valor; pedidosComValor++;
+        const emissao = faturamentoPorNF.get(String(o.nf));
+        if (emissao && diaSP(new Date(emissao)) === hojeStr) valorFaturadoHoje += valor;
+      }
+    }
     const estaAtrasado = o.status === "Atrasado" && naoExpedido;
     if (estaAtrasado) {
       atrasados++;
@@ -502,6 +538,7 @@ function montarDashboardLive(p, bipadosHoje) {
     totalPedidos, emProcesso, liberadosHoje, pendenciasAntigas, concluidosHoje,
     porEtapa, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL,
     semNf, atrasados, pecasHoje, pedidosHoje, pecasExpedidasHoje,
+    valorFaturadoHoje: pedidosComValor > 0 ? valorFaturadoHoje : null, valorFaturadoTotal: pedidosComValor > 0 ? valorFaturadoTotal : null,
     porTransp: transpOrdenado, porHora, porHoraPecas, porHoraLiberados, porHoraExpedidos, porTurno,
     maiorEsperaSeparar: maiorEspera(paradosSeparar), maiorEsperaConferir: maiorEspera(paradosConferir),
     maiorEsperaExpedicao: maiorEspera(paradosExpedicao), maiorEsperaFaturamento: maiorEspera(paradosFaturamento),
@@ -926,25 +963,56 @@ async function handleApi(req, res, pathname) {
         // quem bipa um pedido na Saída p/ Expedição vê o dashboard reagir
         // na hora, mesmo sem um SC9 novo — sobe o SC9 de novo só quando o
         // pedido em si mudar de verdade (separou, conferiu, saiu NF).
+        // "IMPLACIL" no nome do cliente é transferência interna entre unidades
+        // da própria empresa, não venda de verdade — mesma regra já usada nos
+        // consolidados em Excel. Fica de fora de todo o dashboard/TV.
+        const ehTransferenciaInterna = (nome) => /IMPLACIL/i.test(String(nome || ""));
+        const pedidosExcluidos = new Set(
+          (payload.orders || []).filter((o) => o.armazem === "Cambuci" && ehTransferenciaInterna(o.nome)).map((o) => String(o.pedido))
+        );
         const ordersCambuci = (payload.orders || [])
-          .filter((o) => o.armazem === "Cambuci")
+          .filter((o) => o.armazem === "Cambuci" && !ehTransferenciaInterna(o.nome))
           .map((o) => ({ pedido: o.pedido, dt: o.dt, dtLiberacaoHora: o.dtLiberacaoHora, pickStart: o.pickStart, pickEnd: o.pickEnd, confEnd: o.confEnd, nf: o.nf, status: o.status, qt: o.qt, transportadora: o.transportadora, nome: o.nome }));
         // top itens do Cambuci por quantidade liberada — só o suficiente pro
         // ranking (top 10, guarda uma folga além do top 5 mostrado na tela),
         // não a lista de itens inteira (isso pesaria o payload à toa).
         const qtdPorProduto = new Map();
         for (const it of payload.items || []) {
-          if (it.armazem !== "Cambuci") continue;
+          if (it.armazem !== "Cambuci" || pedidosExcluidos.has(String(it.pedido))) continue;
           qtdPorProduto.set(it.produto, (qtdPorProduto.get(it.produto) || 0) + (Number(it.qt) || 0));
         }
         const nomesItem = new Map((payload.itemNames || []).map(([k, v]) => [String(k), String(v)]));
         const topItens = [...qtdPorProduto.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
           .map(([produto, qtd]) => ({ produto, nome: nomesItem.get(String(produto)) || "", qtd }));
-        await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci, topItens });
+        await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci, topItens, valoresPorNF: payload.valores || [], faturamentoPorNF: payload.faturamento || [] });
         dashboardOrdersCache = null; // força reler na próxima consulta
         dashboardCache = null; // força recalcular o dashboard já com a base nova
         await dashboardRegistrarSincronizacao();
       } catch (e) { console.error("Erro ao salvar a base do dashboard:", e); }
+      try {
+        // Valor faturado GERAL do mês — TODOS os armazéns juntos (Cambuci,
+        // Tamboré, BH, RJ, DF, CE), não só Cambuci, e não só hoje: é o mês
+        // inteiro, pra comparar com a meta mensal. Mesma exclusão da
+        // transferência interna (Implacil) aplicada aqui também.
+        const valoresPorNF = new Map((payload.valores || []).map(([k, v]) => [String(k), v]));
+        const faturamentoPorNF = new Map((payload.faturamento || []).map(([k, v]) => [String(k), v]));
+        const mesAtual = mesSP();
+        let valorMes = 0, pedidosComValorMes = 0;
+        const vistos = new Set(); // uma NF só conta uma vez, mesmo com várias linhas/itens do mesmo pedido
+        for (const o of payload.orders || []) {
+          if (!ARMAZENS_GERAL.has(o.armazem)) continue;
+          if (/IMPLACIL/i.test(String(o.nome || ""))) continue;
+          if (!o.nf || vistos.has(String(o.nf))) continue;
+          const emissao = faturamentoPorNF.get(String(o.nf));
+          if (!emissao || mesSP(new Date(emissao)) !== mesAtual) continue;
+          const v = valoresPorNF.get(String(o.nf));
+          const valor = v ? (v.fatura ?? v.mercad) : null;
+          if (typeof valor !== "number" || isNaN(valor)) continue;
+          vistos.add(String(o.nf));
+          valorMes += valor; pedidosComValorMes++;
+        }
+        await objSave(VALOR_GERAL_OBJ, { mes: mesAtual, valorMes: pedidosComValorMes > 0 ? valorMes : null, notasContadas: pedidosComValorMes, atualizadoEm: new Date().toISOString() });
+      } catch (e) { console.error("Erro ao calcular o valor faturado geral:", e); }
       return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length, saida });
     } catch (e) {
       console.error("Erro ao salvar snapshot:", e);
@@ -1201,9 +1269,34 @@ async function handleApi(req, res, pathname) {
     if (!(await exigir(req, res, ["admin", "operador"]))) return;
     try {
       const d = await dashboardAoVivo();
+      const base = d || { totalPedidos: 0, emProcesso: 0, liberadosHoje: 0, pendenciasAntigas: 0, concluidosHoje: 0, valorFaturadoHoje: null, valorFaturadoTotal: null, armazem: "Cambuci", topItens: [], porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: [], porHora: {}, porHoraPecas: {}, porHoraLiberados: {}, porHoraExpedidos: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, tendenciaDiaria: [], ontem: null, savedAt: null };
+      // meta mensal de faturamento — geral, somando todos os armazéns (não é
+      // por armazém). Só vale pro mês corrente; se o mês virou, a meta antiga
+      // não se aplica mais (fica null até alguém definir a do mês novo).
+      const [meta, geral] = await Promise.all([metaFaturamentoCarregar(), valorGeralCarregar()]);
+      const mesAtual = mesSP();
+      const metaValida = meta && meta.mes === mesAtual ? meta.valor : null;
+      const valorMesGeral = geral && geral.mes === mesAtual ? geral.valorMes : null;
+      base.metaFaturamentoMensal = metaValida;
+      base.valorFaturadoMesGeral = valorMesGeral;
+      base.faltaFaturar = (metaValida !== null && valorMesGeral !== null) ? Math.max(0, metaValida - valorMesGeral) : null;
+      base.pctMeta = (metaValida !== null && metaValida > 0 && valorMesGeral !== null) ? Math.min(100, Math.round((valorMesGeral / metaValida) * 100)) : null;
       res.setHeader("Cache-Control", "no-store");
-      return sendJson(res, 200, d || { totalPedidos: 0, emProcesso: 0, liberadosHoje: 0, pendenciasAntigas: 0, concluidosHoje: 0, armazem: "Cambuci", topItens: [], porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: [], porHora: {}, porHoraPecas: {}, porHoraLiberados: {}, porHoraExpedidos: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, tendenciaDiaria: [], ontem: null, savedAt: null });
+      return sendJson(res, 200, base);
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o dashboard")); }
+  }
+
+  if (pathname === "/api/meta-faturamento" && method === "POST") {
+    const sess = await exigir(req, res, ["admin"]);
+    if (!sess) return;
+    try {
+      const body = await readJsonBody(req);
+      const valor = Number(body.valor);
+      if (!body || isNaN(valor) || valor < 0) return sendJson(res, 400, { error: "informe um valor de meta válido (número, maior ou igual a zero)" });
+      const registro = await metaFaturamentoSalvar(valor, sess.usuario || "admin");
+      dashboardCache = null; // já reflete a meta nova na próxima consulta
+      return sendJson(res, 200, { ok: true, meta: registro });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar a meta")); }
   }
 
   return sendJson(res, 404, { error: "rota não encontrada" });
