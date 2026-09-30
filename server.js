@@ -498,7 +498,7 @@ function montarDashboardLive(p, bipadosHoje) {
     .map(([nome, v]) => ({ nome, ...v, pendentes: v.total - (v.etapas.expedido || 0) }))
     .sort((a, b) => b.atrasados - a.atrasados || b.pendentes - a.pendentes);
   return {
-    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), armazem: "Cambuci",
+    savedAt: p.savedAt, atualizadoEm: new Date().toISOString(), armazem: "Cambuci", topItens: p.topItens || [],
     totalPedidos, emProcesso, liberadosHoje, pendenciasAntigas, concluidosHoje,
     porEtapa, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL,
     semNf, atrasados, pecasHoje, pedidosHoje, pecasExpedidasHoje,
@@ -549,7 +549,11 @@ async function dashboardAoVivo() {
     const dias = await dashboardHistAtualizar(dash);
     dash.historico = dias;
     dash.ontem = dias[diaAnterior(diaSP(), 1)] || null;
-  } catch (e) { console.error("Erro ao atualizar o histórico do dashboard:", e); dash.historico = {}; dash.ontem = null; }
+    // mesma coisa, mas em lista ordenada por data — pronta pra virar gráfico
+    // de tendência diária, sem o front precisar reordenar chave de objeto.
+    dash.tendenciaDiaria = Object.entries(dias).sort(([a], [b]) => a.localeCompare(b))
+      .map(([dia, v]) => ({ dia, pedidos: v.pedidosHoje || 0, pecas: v.pecasHoje || 0 }));
+  } catch (e) { console.error("Erro ao atualizar o histórico do dashboard:", e); dash.historico = {}; dash.ontem = null; dash.tendenciaDiaria = []; }
   dashboardCache = { at: Date.now(), data: dash };
   return dash;
 }
@@ -740,6 +744,26 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v6", time: new Date().toISOString() });
   }
 
+  // DIAGNÓSTICO TEMPORÁRIO: mostra exatamente o que está guardado no servidor
+  // pra um pedido específico, em cada etapa do caminho — só administrador.
+  if (pathname === "/api/debug-pedido" && method === "GET") {
+    if (!(await exigir(req, res, ["admin"]))) return;
+    const ped = new URL(req.url, "http://localhost").searchParams.get("pedido");
+    if (!ped) return sendJson(res, 400, { error: "informe ?pedido=NUMERO" });
+    try {
+      const base = await dashboardOrdersCarregar();
+      const noBanco = base ? (base.orders || []).find((o) => String(o.pedido) === String(ped)) : null;
+      const idx = await indiceCarregar().catch(() => null);
+      const noIndice = idx && idx.pedidos ? idx.pedidos[String(ped).replace(/\D/g, "").replace(/^0+/, "")] : null;
+      return sendJson(res, 200, {
+        pedidoBuscado: ped,
+        baseTemDados: Boolean(base), baseSavedAt: base ? base.savedAt : null, totalPedidosNaBase: base ? (base.orders || []).length : 0,
+        encontradoNaBaseDoDashboard: Boolean(noBanco), noBanco,
+        encontradoNoIndiceDeBipar: Boolean(noIndice), noIndice,
+      });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro no diagnóstico")); }
+  }
+
   if (pathname === "/api/debug-fs" && method === "GET") {
     if (!(await exigir(req, res, ["admin"]))) return;
     let listing = [];
@@ -869,7 +893,18 @@ async function handleApi(req, res, pathname) {
         const ordersCambuci = (payload.orders || [])
           .filter((o) => o.armazem === "Cambuci")
           .map((o) => ({ pedido: o.pedido, dt: o.dt, dtLiberacaoHora: o.dtLiberacaoHora, pickStart: o.pickStart, pickEnd: o.pickEnd, confEnd: o.confEnd, nf: o.nf, status: o.status, qt: o.qt, transportadora: o.transportadora, nome: o.nome }));
-        await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci });
+        // top itens do Cambuci por quantidade liberada — só o suficiente pro
+        // ranking (top 10, guarda uma folga além do top 5 mostrado na tela),
+        // não a lista de itens inteira (isso pesaria o payload à toa).
+        const qtdPorProduto = new Map();
+        for (const it of payload.items || []) {
+          if (it.armazem !== "Cambuci") continue;
+          qtdPorProduto.set(it.produto, (qtdPorProduto.get(it.produto) || 0) + (Number(it.qt) || 0));
+        }
+        const nomesItem = new Map((payload.itemNames || []).map(([k, v]) => [String(k), String(v)]));
+        const topItens = [...qtdPorProduto.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+          .map(([produto, qtd]) => ({ produto, nome: nomesItem.get(String(produto)) || "", qtd }));
+        await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci, topItens });
         dashboardOrdersCache = null; // força reler na próxima consulta
         dashboardCache = null; // força recalcular o dashboard já com a base nova
         await dashboardRegistrarSincronizacao();
@@ -1131,7 +1166,7 @@ async function handleApi(req, res, pathname) {
     try {
       const d = await dashboardAoVivo();
       res.setHeader("Cache-Control", "no-store");
-      return sendJson(res, 200, d || { totalPedidos: 0, emProcesso: 0, liberadosHoje: 0, pendenciasAntigas: 0, concluidosHoje: 0, armazem: "Cambuci", porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: [], porHora: {}, porHoraPecas: {}, porHoraLiberados: {}, porHoraExpedidos: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, ontem: null, savedAt: null });
+      return sendJson(res, 200, d || { totalPedidos: 0, emProcesso: 0, liberadosHoje: 0, pendenciasAntigas: 0, concluidosHoje: 0, armazem: "Cambuci", topItens: [], porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: [], porHora: {}, porHoraPecas: {}, porHoraLiberados: {}, porHoraExpedidos: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, tendenciaDiaria: [], ontem: null, savedAt: null });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o dashboard")); }
   }
 
