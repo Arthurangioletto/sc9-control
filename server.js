@@ -592,11 +592,31 @@ async function saidaCarregar(dia) {
   saidaCache.set(dia, v);
   return v;
 }
+// um pedido "pendente" é aquele que a reconciliação ainda pode precisar tocar
+// (ainda sem info do SC9, ou já tem info mas ainda sem NF — pode ganhar NF a
+// qualquer momento). Uma vez com NF, o pedido nunca mais muda.
+const entradaPendente = (e) => e.semDadoSC9 || !(e.info && e.info.nf);
 // grava numa cópia; só troca a memória DEPOIS de gravar (se falhar, nada fica pela metade)
 async function saidaGravar(dia, novo) {
   novo.versao = (novo.versao || 0) + 1;
   await objSave(saidaObj(dia), novo);
   saidaCache.set(dia, novo);
+  // marca no ÍNDICE COMPARTILHADO (arquivo pequeno) se esse dia ainda tem
+  // pendente — é essa marca que deixa a reconciliação pular um dia inteiro
+  // SEM BAIXAR NADA do Supabase, em vez de precisar abrir o dia só pra
+  // descobrir que já está tudo resolvido.
+  try {
+    const idx = await saidaIdxCarregar();
+    const temPendente = novo.entries.some(entradaPendente);
+    // atenção: "undefined" (nunca verificado) e "false" (já resolvido) são
+    // ESTADOS DIFERENTES, mesmo os dois sendo "falsy" — por isso a comparação
+    // é direta (!==), não via Boolean(), senão a primeira marcação nunca era
+    // gravada de verdade e todo dia continuava sendo baixado pra sempre.
+    if (idx.pendentes[dia] !== temPendente) {
+      const pendentes = { ...idx.pendentes, [dia]: temPendente };
+      await saidaIdxSalvar({ ...idx, pendentes });
+    }
+  } catch (e) { console.error(`Erro ao atualizar o índice de pendentes (dia ${dia}):`, e); }
 }
 
 async function objDelete(name) {
@@ -620,7 +640,11 @@ let saidaIdx = null; // { dias: [...], exportados: { "AAAA-MM-DD": { em, por, ve
 async function saidaIdxCarregar() {
   if (saidaIdx) return saidaIdx;
   const d = await objLoad(SAIDA_DIAS_OBJ);
-  saidaIdx = { dias: Array.isArray(d && d.dias) ? d.dias.slice() : [], exportados: d && d.exportados && typeof d.exportados === "object" ? { ...d.exportados } : {} };
+  saidaIdx = {
+    dias: Array.isArray(d && d.dias) ? d.dias.slice() : [],
+    exportados: d && d.exportados && typeof d.exportados === "object" ? { ...d.exportados } : {},
+    pendentes: d && d.pendentes && typeof d.pendentes === "object" ? { ...d.pendentes } : {},
+  };
   return saidaIdx;
 }
 async function saidaIdxSalvar(novo) { await objSave(SAIDA_DIAS_OBJ, novo); saidaIdx = novo; }
@@ -682,13 +706,20 @@ async function saidaApagar(diasPedidos) {
 // que apareceram depois também são atualizados. Bipe cujo pedido não está no SC9 novo fica como estava.
 async function saidaReconciliar(indice) {
   return comFila("saida", async () => {
-    const lista = await saidaDiasCarregar();
+    const idx = await saidaIdxCarregar();
+    // só baixa do Supabase os dias marcados como pendentes — os já resolvidos
+    // (NF emitida) nunca mais mudam, então nem precisam ser abertos de novo.
+    // Dia sem marca ainda (`undefined`, de antes dessa otimização existir, ou
+    // recém criado) é tratado como pendente por segurança — só até a primeira
+    // verificação, que já deixa ele marcado certinho daí pra frente.
+    const paraChecar = idx.dias.filter((dia) => idx.pendentes[dia] !== false);
     let resolvidos = 0, atualizados = 0;
-    for (const dia of lista) {
+    for (const dia of paraChecar) {
       const atual = await saidaCarregar(dia);
       const novo = JSON.parse(JSON.stringify(atual));
       let mudou = false;
       for (const e of novo.entries) {
+        if (!entradaPendente(e)) continue; // já resolvido, não muda mais
         const info = infoDoPedido(indice, e.pedido);
         if (!info) continue;
         const resumo = resumoInfo(info);
@@ -696,7 +727,12 @@ async function saidaReconciliar(indice) {
         if (e.semDadoSC9) { e.semDadoSC9 = false; e.resolvidoEm = new Date().toISOString(); resolvidos++; } else atualizados++;
         e.info = resumo; e.infoAtualizadaEm = indice.savedAt || null; mudou = true;
       }
-      if (mudou) await saidaGravar(dia, novo);
+      // só grava se mudou algo de verdade, OU se esse dia acabou de ficar 100%
+      // resolvido agora (pra marcar como tal e nunca mais precisar baixá-lo) —
+      // nunca grava (nem sobe a versão) à toa, senão atrapalha a regra de
+      // "só apaga o que já foi exportado e não mudou depois".
+      const aindaPendente = novo.entries.some(entradaPendente);
+      if (mudou || (idx.pendentes[dia] !== false && !aindaPendente)) await saidaGravar(dia, novo);
     }
     return { resolvidos, atualizados };
   });
