@@ -1,6 +1,7 @@
 // Servidor sem dependências externas (só Node puro) — mais rápido de instalar
 // no Render e mais fácil de eu testar aqui antes de te entregar.
 const http = require("http");
+const zlib = require("zlib");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -223,13 +224,19 @@ function readJsonBody(req) {
     const chunks = [];
     req.on("data", (chunk) => {
       size += chunk.length;
+      // o limite vale sobre o tamanho COMPRIMIDO recebido pela rede — gzip já
+      // tolera um JSON bem maior do que isso antes de descomprimir.
       if (size > MAX_BODY_BYTES) { reject(new Error("corpo da requisição excede o limite")); req.destroy(); return; }
       chunks.push(chunk);
     });
     req.on("end", () => {
       if (!chunks.length) return resolve(null);
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
-      catch (e) { reject(new Error("JSON inválido no corpo da requisição")); }
+      const buf = Buffer.concat(chunks);
+      const ehGzip = (req.headers["content-encoding"] || "").toLowerCase().includes("gzip");
+      try {
+        const texto = ehGzip ? zlib.gunzipSync(buf).toString("utf8") : buf.toString("utf8");
+        resolve(JSON.parse(texto));
+      } catch (e) { reject(new Error(ehGzip ? "não consegui descomprimir o corpo da requisição" : "JSON inválido no corpo da requisição")); }
     });
     req.on("error", reject);
   });
@@ -356,7 +363,7 @@ function montarIndicePedidos(p) {
     const k = String(it.pedido);
     if (!itensPorPed.has(k)) itensPorPed.set(k, new Map());
     const m = itensPorPed.get(k);
-    m.set(String(it.produto), (m.get(String(it.produto)) || 0) + (Number(it.qt) || 0));
+    m.set(String(it.produto), (m.get(String(it.produto)) || 0) + Math.max(0, Number(it.qt) || 0));
     if (it.confEnd && (!fimConf.has(k) || it.confEnd > fimConf.get(k))) fimConf.set(k, it.confEnd);
   }
   const pedidos = {}, usados = new Set();
@@ -974,21 +981,36 @@ async function handleApi(req, res, pathname) {
         const pedidosExcluidos = new Set(
           (payload.orders || []).filter((o) => o.armazem === "Cambuci" && ehTransferenciaInterna(o.nome)).map((o) => String(o.pedido))
         );
+        // pedido já expedido (status "Enviado") e liberado há mais de 7 dias
+        // nunca mais muda e não aparece em NADA do dashboard ao vivo (nem
+        // pendência, nem "hoje", nem gargalo) — só pesa a chamada de rede pro
+        // Supabase à toa, carregando/salvando o mesmo histórico morto a cada
+        // SC9 novo. Um SC9 real acumula meses de pedidos já resolvidos; sem
+        // esse corte, o objeto salvo cresce sem parar.
+        const SETE_DIAS_MS = 7 * 86400000;
+        const corteAntigo = Date.now() - SETE_DIAS_MS;
+        const relevante = (o) => o.status !== "Enviado" || !o.dt || new Date(o.dt).getTime() >= corteAntigo;
         const ordersCambuci = (payload.orders || [])
-          .filter((o) => o.armazem === "Cambuci" && !ehTransferenciaInterna(o.nome))
-          .map((o) => ({ pedido: o.pedido, dt: o.dt, dtLiberacaoHora: o.dtLiberacaoHora, pickStart: o.pickStart, pickEnd: o.pickEnd, confEnd: o.confEnd, nf: o.nf, status: o.status, qt: o.qt, transportadora: o.transportadora, nome: o.nome }));
+          .filter((o) => o.armazem === "Cambuci" && !ehTransferenciaInterna(o.nome) && relevante(o))
+          .map((o) => ({ pedido: o.pedido, dt: o.dt, dtLiberacaoHora: o.dtLiberacaoHora, pickStart: o.pickStart, pickEnd: o.pickEnd, confEnd: o.confEnd, nf: o.nf, status: o.status, qt: (typeof o.qt === "number" && !isNaN(o.qt) && o.qt > 0) ? o.qt : 0, transportadora: o.transportadora, nome: o.nome }));
         // top itens do Cambuci por quantidade liberada — só o suficiente pro
         // ranking (top 10, guarda uma folga além do top 5 mostrado na tela),
         // não a lista de itens inteira (isso pesaria o payload à toa).
         const qtdPorProduto = new Map();
         for (const it of payload.items || []) {
           if (it.armazem !== "Cambuci" || pedidosExcluidos.has(String(it.pedido))) continue;
-          qtdPorProduto.set(it.produto, (qtdPorProduto.get(it.produto) || 0) + (Number(it.qt) || 0));
+          qtdPorProduto.set(it.produto, (qtdPorProduto.get(it.produto) || 0) + Math.max(0, Number(it.qt) || 0));
         }
         const nomesItem = new Map((payload.itemNames || []).map(([k, v]) => [String(k), String(v)]));
         const topItens = [...qtdPorProduto.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
           .map(([produto, qtd]) => ({ produto, nome: nomesItem.get(String(produto)) || "", qtd }));
-        await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci, topItens, valoresPorNF: payload.valores || [], faturamentoPorNF: payload.faturamento || [] });
+        // só os valores/datas de NF dos pedidos que sobraram acima — guardar
+        // o histórico inteiro de notas (que pode ter milhares) à toa, pra
+        // pedidos que nem aparecem mais no dashboard, só pesava o objeto salvo.
+        const nfsRelevantes = new Set(ordersCambuci.filter((o) => o.nf).map((o) => String(o.nf)));
+        const valoresPorNFSlim = (payload.valores || []).filter(([k]) => nfsRelevantes.has(String(k)));
+        const faturamentoPorNFSlim = (payload.faturamento || []).filter(([k]) => nfsRelevantes.has(String(k)));
+        await objSave(DASHBOARD_ORDERS_OBJ, { savedAt: payload.savedAt, sc5PorPedido: payload.sc5PorPedido || [], orders: ordersCambuci, topItens, valoresPorNF: valoresPorNFSlim, faturamentoPorNF: faturamentoPorNFSlim });
         dashboardOrdersCache = null; // força reler na próxima consulta
         dashboardCache = null; // força recalcular o dashboard já com a base nova
         await dashboardRegistrarSincronizacao();
