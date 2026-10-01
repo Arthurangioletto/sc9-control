@@ -617,7 +617,7 @@ function infoDoPedido(indice, ped) {
     itens: (r.it || []).map(([prod, qt]) => ({ produto: prod, nome: (indice.nomes && indice.nomes[prod]) || "", qt })),
   };
 }
-const resumoInfo = (i) => (i ? { armazem: i.armazem, cliente: i.cliente, transportadora: i.transportadora, linhas: i.linhas, pecas: i.pecas, conferente: i.conferente, nf: i.nf, liberadoEm: i.liberadoEm, fimConferencia: i.fimConferencia } : null);
+const resumoInfo = (i) => (i ? { armazem: i.armazem, cliente: i.cliente, transportadora: i.transportadora, linhas: i.linhas, pecas: i.pecas, conferente: i.conferente, nf: i.nf, liberadoEm: i.liberadoEm, fimConferencia: i.fimConferencia, itens: i.itens || [] } : null);
 function normalizarPedido(x) {
   const d = String(x === null || x === undefined ? "" : x).replace(/\D/g, "").replace(/^0+/, "");
   return d.length >= 4 && d.length <= 10 ? d : null;
@@ -1257,6 +1257,93 @@ async function handleApi(req, res, pathname) {
       if (r.erro) return sendJson(res, r.erro, { error: r.msg });
       return sendJson(res, 200, r);
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao desfazer")); }
+  }
+
+  // Pedido de ALTERAÇÃO: no fechamento, quando falta lote/produto no pedido
+  // principal, a diferença sai num "pedido de complemento" à parte. Marcar um
+  // bipe como alteração tira ele da lista normal (fica pendente, à espera do
+  // número do complemento); confirmar com os dados do complemento devolve ele
+  // pra lista normal, já vinculado. Segue o MESMO padrão seguro do desfazer:
+  // localiza o registro exato por id, clona só aquele dia, muta só aquele
+  // registro — nunca mexe em nenhum outro bipe, de nenhum outro dia.
+  if (pathname === "/api/saida/alteracao" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const id = body && typeof body.id === "string" ? body.id : "";
+    const acao = body && body.acao;
+    if (!id) return sendJson(res, 400, { error: "informe o id do registro" });
+    if (!["marcar", "confirmar", "cancelar"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use marcar, confirmar ou cancelar)" });
+    const hoje = diaSP();
+    try {
+      const r = await comFila("saida", async () => {
+        const dias = await diasRecentesPrimeiro(hoje);
+        for (const dia of dias) {
+          const atual = await saidaCarregar(dia);
+          const idx = atual.entries.findIndex((x) => x.id === id);
+          if (idx === -1) continue;
+          // clona TUDO antes de mudar qualquer coisa — se der erro de
+          // validação no meio (ex.: campo faltando), nada foi salvo ainda.
+          const novo = JSON.parse(JSON.stringify(atual));
+          const e = novo.entries[idx];
+          if (acao === "marcar") {
+            // quem bipa é quem PERCEBE o problema (lote/produto faltando) — é
+            // essa pessoa que já sabe o item, a quantidade e o lote. Só o
+            // número do pedido de complemento ainda não existe nesse momento
+            // (é criado depois, em outro lugar) — isso fica pendente.
+            const item = String(body.item || "").trim();
+            const quantidade = Number(body.quantidade);
+            const lote = String(body.lote || "").trim();
+            if (!item) return { erro: 400, msg: "informe o item alterado" };
+            if (isNaN(quantidade) || quantidade <= 0) return { erro: 400, msg: "informe uma quantidade válida (maior que zero)" };
+            if (!lote) return { erro: 400, msg: "informe o lote" };
+            e.alteracao = {
+              status: "pendente", item, quantidade, lote,
+              marcadoEm: new Date().toISOString(), marcadoPorUsuario: sess.usuario, marcadoPorNome: sess.nome,
+            };
+          } else if (acao === "cancelar") {
+            e.alteracao = null;
+          } else {
+            // confirmar: só falta vincular o número do pedido de complemento,
+            // que foi criado depois — item/quantidade/lote já vieram do marcar.
+            if (!e.alteracao || e.alteracao.status !== "pendente") return { erro: 409, msg: "esse registro não está pendente de confirmação" };
+            const pedidoComplemento = normalizarPedido(body.pedidoComplemento || "");
+            if (!pedidoComplemento) return { erro: 400, msg: "informe o número do pedido de complemento" };
+            e.alteracao = {
+              ...e.alteracao, status: "confirmada", pedidoComplemento,
+              confirmadoEm: new Date().toISOString(), confirmadoPorUsuario: sess.usuario, confirmadoPorNome: sess.nome,
+            };
+          }
+          await saidaGravar(dia, novo);
+          return { ok: true, entry: e, dia };
+        }
+        return { erro: 404, msg: "registro não encontrado (talvez tenha saído da retenção)" };
+      });
+      if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+      return sendJson(res, 200, r);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao atualizar a alteração")); }
+  }
+
+  // lista, de TODOS os dias guardados, os bipes marcados "de alteração" ainda
+  // pendentes (esperando o número do pedido de complemento) — pra montar a
+  // aba separada, sem precisar o operador adivinhar em qual dia foi bipado.
+  if (pathname === "/api/saida/alteracoes" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    try {
+      const somenteConfirmadas = new URL(req.url, "http://localhost").searchParams.get("confirmadas") === "1";
+      const dias = await diasRecentesPrimeiro(diaSP());
+      const resultado = [];
+      for (const dia of dias) {
+        const d = await saidaCarregar(dia);
+        for (const e of d.entries) {
+          if (!e.alteracao) continue;
+          if (somenteConfirmadas ? e.alteracao.status === "confirmada" : e.alteracao.status === "pendente") {
+            resultado.push({ dia, ...e });
+          }
+        }
+      }
+      return sendJson(res, 200, { itens: resultado });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar alterações")); }
   }
 
   // buscar um pedido em todos os dias guardados: "esse pedido já saiu? quem bipou e quando?"
