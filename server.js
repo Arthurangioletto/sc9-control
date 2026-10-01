@@ -295,8 +295,8 @@ async function metaFaturamentoCarregar() {
   try { return (await objLoad(META_FATURAMENTO_OBJ)) || { valor: null, mes: null }; }
   catch { return { valor: null, mes: null }; }
 }
-async function metaFaturamentoSalvar(valor, usuario) {
-  const registro = { valor, mes: mesSP(), atualizadoEm: new Date().toISOString(), atualizadoPor: usuario };
+async function metaFaturamentoSalvar(valor, usuario, mes) {
+  const registro = { valor, mes: mes || mesSP(), atualizadoEm: new Date().toISOString(), atualizadoPor: usuario };
   await objSave(META_FATURAMENTO_OBJ, registro);
   return registro;
 }
@@ -617,7 +617,11 @@ function normalizarPedido(x) {
 }
 
 // um arquivo por dia (fica pequeno e rápido); o dia é o do Brasil, não o do servidor
-const diaSP = (d = new Date()) => new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(d);
+// Criar um Intl.DateTimeFormat novo a cada chamada é caro (~60x mais lento que
+// reaproveitar) — com milhares de pedidos processados por salvamento, isso
+// sozinho já somava segundos e contribuía pros 502 (tempo esgotado no Render).
+const FORMATADOR_DIA_SP = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" });
+const diaSP = (d = new Date()) => FORMATADOR_DIA_SP.format(d);
 const diaAnterior = (dia, n) => { const d = new Date(`${dia}T12:00:00-03:00`); d.setUTCDate(d.getUTCDate() - n); return diaSP(d); };
 const saidaObj = (dia) => `saida-pv-${dia}.json`;
 const saidaCache = new Map();
@@ -996,7 +1000,19 @@ async function handleApi(req, res, pathname) {
         // transferência interna (Implacil) aplicada aqui também.
         const valoresPorNF = new Map((payload.valores || []).map(([k, v]) => [String(k), v]));
         const faturamentoPorNF = new Map((payload.faturamento || []).map(([k, v]) => [String(k), v]));
-        const mesAtual = mesSP();
+        // mês de REFERÊNCIA: o mês com mais notas emitidas nesse SC9, não
+        // necessariamente o mês do calendário de hoje. Sem isso, no primeiro
+        // dia de um mês novo — antes do primeiro SC9 daquele mês ser subido —
+        // o valor faturado ficava vazio mesmo tendo dado real e válido do mês
+        // anterior, só porque "hoje" já virou a página do calendário.
+        const contagemPorMes = new Map();
+        for (const ts of faturamentoPorNF.values()) {
+          const mes = mesSP(new Date(ts));
+          contagemPorMes.set(mes, (contagemPorMes.get(mes) || 0) + 1);
+        }
+        let mesReferencia = mesSP();
+        let maiorContagem = 0;
+        for (const [mes, n] of contagemPorMes) if (n > maiorContagem) { maiorContagem = n; mesReferencia = mes; }
         let valorMes = 0, pedidosComValorMes = 0;
         const vistos = new Set(); // uma NF só conta uma vez, mesmo com várias linhas/itens do mesmo pedido
         for (const o of payload.orders || []) {
@@ -1004,14 +1020,14 @@ async function handleApi(req, res, pathname) {
           if (/IMPLACIL/i.test(String(o.nome || ""))) continue;
           if (!o.nf || vistos.has(String(o.nf))) continue;
           const emissao = faturamentoPorNF.get(String(o.nf));
-          if (!emissao || mesSP(new Date(emissao)) !== mesAtual) continue;
+          if (!emissao || mesSP(new Date(emissao)) !== mesReferencia) continue;
           const v = valoresPorNF.get(String(o.nf));
           const valor = v ? (v.fatura ?? v.mercad) : null;
           if (typeof valor !== "number" || isNaN(valor)) continue;
           vistos.add(String(o.nf));
           valorMes += valor; pedidosComValorMes++;
         }
-        await objSave(VALOR_GERAL_OBJ, { mes: mesAtual, valorMes: pedidosComValorMes > 0 ? valorMes : null, notasContadas: pedidosComValorMes, atualizadoEm: new Date().toISOString() });
+        await objSave(VALOR_GERAL_OBJ, { mes: mesReferencia, valorMes: pedidosComValorMes > 0 ? valorMes : null, notasContadas: pedidosComValorMes, atualizadoEm: new Date().toISOString() });
       } catch (e) { console.error("Erro ao calcular o valor faturado geral:", e); }
       return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length, saida });
     } catch (e) {
@@ -1274,9 +1290,15 @@ async function handleApi(req, res, pathname) {
       // por armazém). Só vale pro mês corrente; se o mês virou, a meta antiga
       // não se aplica mais (fica null até alguém definir a do mês novo).
       const [meta, geral] = await Promise.all([metaFaturamentoCarregar(), valorGeralCarregar()]);
-      const mesAtual = mesSP();
-      const metaValida = meta && meta.mes === mesAtual ? meta.valor : null;
-      const valorMesGeral = geral && geral.mes === mesAtual ? geral.valorMes : null;
+      // "mesReferencia" é o mês predominante nos dados REAIS do último SC9
+      // salvo (calculado no /api/save) — não necessariamente o mês do
+      // calendário de hoje. Isso evita o painel ficar vazio logo no início de
+      // um mês novo, antes do primeiro SC9 daquele mês ser subido: continua
+      // mostrando o último mês com dado de verdade, com a data deixada clara.
+      const mesReferencia = geral ? geral.mes : null;
+      const metaValida = meta && mesReferencia && meta.mes === mesReferencia ? meta.valor : null;
+      const valorMesGeral = geral ? geral.valorMes : null;
+      base.mesReferenciaFaturamento = mesReferencia;
       base.metaFaturamentoMensal = metaValida;
       base.valorFaturadoMesGeral = valorMesGeral;
       base.faltaFaturar = (metaValida !== null && valorMesGeral !== null) ? Math.max(0, metaValida - valorMesGeral) : null;
@@ -1293,7 +1315,10 @@ async function handleApi(req, res, pathname) {
       const body = await readJsonBody(req);
       const valor = Number(body.valor);
       if (!body || isNaN(valor) || valor < 0) return sendJson(res, 400, { error: "informe um valor de meta válido (número, maior ou igual a zero)" });
-      const registro = await metaFaturamentoSalvar(valor, sess.usuario || "admin");
+      // a meta vale pro mesmo mês de referência que os dados reais mostram —
+      // não "hoje" fixo, pelo mesmo motivo do cálculo do valor (ver /api/save).
+      const geralAtual = await valorGeralCarregar();
+      const registro = await metaFaturamentoSalvar(valor, sess.usuario || "admin", geralAtual ? geralAtual.mes : mesSP());
       dashboardCache = null; // já reflete a meta nova na próxima consulta
       return sendJson(res, 200, { ok: true, meta: registro });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar a meta")); }
