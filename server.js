@@ -108,7 +108,7 @@ if (!process.env.SESSION_SECRET) {
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["geral", "controle0201", "saida", "alteracoes"];
+const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -305,6 +305,21 @@ async function alteracaoSeparacaoCarregar() {
   return alteracaoSeparacaoCache;
 }
 async function alteracaoSeparacaoSalvar(dados) { await objSave(ALTERACAO_SEPARACAO_OBJ, dados); alteracaoSeparacaoCache = dados; }
+
+// Cadastro de Lotes (SB8) — o arquivo SB8 (pesado, pode ter todo o histórico
+// desde a implantação) é processado só no navegador e NUNCA chega aqui. Só
+// fica salvo um lembrete pequeno por achado (lote duplicado ou validade
+// vencida) — uma nota/status que a pessoa deixa pra lembrar o que já tratou,
+// já que o arquivo gigante não fica guardado entre uma sessão e outra.
+const CADASTRO_LEMBRETES_OBJ = "cadastro-lembretes.json"; // { lembretes: [...] }
+let cadastroLembretesCache = null;
+async function cadastroLembretesCarregar() {
+  if (cadastroLembretesCache) return cadastroLembretesCache;
+  try { const d = await objLoad(CADASTRO_LEMBRETES_OBJ); cadastroLembretesCache = { lembretes: Array.isArray(d && d.lembretes) ? d.lembretes : [] }; }
+  catch { cadastroLembretesCache = { lembretes: [] }; }
+  return cadastroLembretesCache;
+}
+async function cadastroLembretesSalvar(dados) { await objSave(CADASTRO_LEMBRETES_OBJ, dados); cadastroLembretesCache = dados; }
 const VALOR_GERAL_OBJ = "valor-faturado-geral.json"; // valor faturado do mês, TODOS os armazéns (não só Cambuci)
 // armazéns reconhecidos pra essa conta geral — o mesmo conjunto que o painel
 // já usa (ES nunca entra em lugar nenhum, nem chega a existir como opção).
@@ -372,12 +387,19 @@ const SLA_FATURAR_H = Number(process.env.SLA_FATURAR_HORAS) || 3;
 function montarIndicePedidos(p) {
   const nomes = new Map((p.itemNames || []).map(([k, v]) => [String(k), String(v)]));
   const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
+  // agrupa por produto+lote (não só produto) — um pedido pode ter o mesmo
+  // item vindo de lotes diferentes (atendimento parcial), e pra travar a
+  // alteração "com nota" pelo lote de verdade, precisa saber QUAL lote tem
+  // QUAL quantidade, não só o total do produto somado.
   const itensPorPed = new Map(), fimConf = new Map();
   for (const it of p.items || []) {
     const k = String(it.pedido);
     if (!itensPorPed.has(k)) itensPorPed.set(k, new Map());
     const m = itensPorPed.get(k);
-    m.set(String(it.produto), (m.get(String(it.produto)) || 0) + Math.max(0, Number(it.qt) || 0));
+    const lote = it.lote ? String(it.lote).trim() : "";
+    const chave = String(it.produto) + "|" + lote;
+    if (!m.has(chave)) m.set(chave, { produto: String(it.produto), lote, qt: 0 });
+    m.get(chave).qt += Math.max(0, Number(it.qt) || 0);
     if (it.confEnd && (!fimConf.has(k) || it.confEnd > fimConf.get(k))) fimConf.set(k, it.confEnd);
   }
   const pedidos = {}, usados = new Set();
@@ -386,8 +408,8 @@ function montarIndicePedidos(p) {
   for (const o of p.orders || []) {
     const k = normalizarPedido(o.pedido);
     if (!k) { semChaveValida++; continue; } // pedido sem número reconhecível (não deveria acontecer, mas não trava o índice)
-    const itens = Array.from((itensPorPed.get(k) || new Map()).entries());
-    itens.forEach(([prod]) => usados.add(prod));
+    const itens = Array.from((itensPorPed.get(k) || new Map()).values());
+    itens.forEach((i) => usados.add(i.produto));
     const cod = sc5.get(k);
     pedidos[k] = {
       a: o.armazem, c: limpo(o.nome), cc: limpo(o.cliente), dt: o.dt || null, l: o.itens || itens.length, q: o.qt || 0,
@@ -628,7 +650,7 @@ function infoDoPedido(indice, ped) {
   return {
     pedido: ped, armazem: r.a, cliente: r.c, codCliente: r.cc, liberadoEm: r.dt, linhas: r.l, pecas: r.q, conferente: r.cf, separador: r.sp,
     fimConferencia: r.fc, nf: r.nf, transportadora: r.tr,
-    itens: (r.it || []).map(([prod, qt]) => ({ produto: prod, nome: (indice.nomes && indice.nomes[prod]) || "", qt })),
+    itens: (r.it || []).map((i) => ({ produto: i.produto, nome: (indice.nomes && indice.nomes[i.produto]) || "", qt: i.qt, lote: i.lote || "" })),
   };
 }
 // NÃO inclui "itens" aqui de propósito — isso é guardado em TODO bipe (um
@@ -1331,6 +1353,22 @@ async function handleApi(req, res, pathname) {
               if (!String(it.lote || "").trim()) return { erro: 400, msg: "cada item precisa de um lote" };
             }
             const itens = itensEntrada.map((it) => ({ item: String(it.item).trim(), quantidade: Number(it.quantidade), lote: String(it.lote).trim() }));
+            // TRAVA DE VERDADE: alteração "com nota" já foi faturada, então o
+            // lote informado TEM que ser um lote real daquele pedido no SC9 —
+            // não dá pra aceitar um lote que não existe ali. Só valida quando
+            // o índice está disponível E o pedido foi encontrado nele (se não
+            // achar o pedido no índice carregado agora, não trava — pode ser
+            // só uma base desatualizada no momento, não um erro de verdade).
+            const indiceAgora = await indiceCarregar().catch(() => null);
+            const infoReal = infoDoPedido(indiceAgora, e.pedido);
+            if (infoReal && infoReal.itens && infoReal.itens.length) {
+              const reaisValidos = new Set(infoReal.itens.map((i) => `${i.produto}|${i.lote || ""}`));
+              for (const it of itens) {
+                if (!reaisValidos.has(`${it.item}|${it.lote}`)) {
+                  return { erro: 400, msg: `o produto "${it.item}" com o lote "${it.lote}" não está nesse pedido, segundo o SC9 carregado — confira o lote certo antes de confirmar` };
+                }
+              }
+            }
             e.alteracao = {
               status: "confirmada",
               marcadoEm: (e.alteracao && e.alteracao.marcadoEm) || new Date().toISOString(),
@@ -1427,7 +1465,11 @@ async function handleApi(req, res, pathname) {
             if (isNaN(Number(it.quantidade)) || Number(it.quantidade) <= 0) return { erro: 400, msg: "cada item precisa de uma quantidade válida (maior que zero)" };
             if (!String(it.lote || "").trim()) return { erro: 400, msg: "cada item precisa de um lote" };
           }
-          const itensLimpos = itens.map((it) => ({ item: String(it.item).trim(), quantidade: Number(it.quantidade), lote: String(it.lote).trim() }));
+          // achadoMovimentacao é opcional: um texto curto (gerado no navegador,
+          // a partir da movimentação que SÓ existe ali) com a hipótese
+          // encontrada pra esse lote. A movimentação inteira nunca chega até
+          // aqui — só esse resumo, quando existir.
+          const itensLimpos = itens.map((it) => ({ item: String(it.item).trim(), quantidade: Number(it.quantidade), lote: String(it.lote).trim(), achadoMovimentacao: it.achadoMovimentacao ? String(it.achadoMovimentacao).slice(0, 2000) : null }));
           registros[idx] = { ...r, status: "confirmada", motivo, itens: itensLimpos, confirmadoEm: new Date().toISOString(), confirmadoPorUsuario: sess.usuario, confirmadoPorNome: sess.nome };
         }
         await alteracaoSeparacaoSalvar({ registros });
@@ -1436,6 +1478,58 @@ async function handleApi(req, res, pathname) {
       if (resultado.erro) return sendJson(res, resultado.erro, { error: resultado.msg });
       return sendJson(res, 200, resultado);
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao atualizar a alteração")); }
+  }
+
+  // Lembretes do Cadastro de Lotes (SB8) — anotação curta por achado
+  // (lote duplicado entre produtos, ou validade vencida). O arquivo SB8 em
+  // si nunca passa por aqui.
+  if (pathname === "/api/cadastro-lembretes" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "cadastro"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const acao = body && body.acao;
+    if (!["salvar", "remover"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use salvar ou remover)" });
+    try {
+      const resultado = await comFila("cadastro-lembretes", async () => {
+        const dados = await cadastroLembretesCarregar();
+        if (acao === "remover") {
+          const id = body && typeof body.id === "string" ? body.id : "";
+          if (!id) return { erro: 400, msg: "informe o id do lembrete" };
+          const lembretes = dados.lembretes.filter((l) => l.id !== id);
+          await cadastroLembretesSalvar({ lembretes });
+          return { ok: true };
+        }
+        const chave = String(body.chave || "").trim();
+        const tipo = String(body.tipo || "").trim();
+        const nota = String(body.nota || "").trim();
+        const status = String(body.status || "pendente").trim();
+        const CORES_VALIDAS = ["vermelho", "amarelo", "verde", "azul", ""];
+        const cor = CORES_VALIDAS.includes(String(body.cor || "").trim()) ? String(body.cor || "").trim() : "";
+        if (!chave) return { erro: 400, msg: "informe a chave do achado (lote/produto)" };
+        if (!tipo) return { erro: 400, msg: "informe o tipo (duplicado ou validade)" };
+        const idx = dados.lembretes.findIndex((l) => l.chave === chave && l.tipo === tipo);
+        const lembretes = dados.lembretes.map((l) => ({ ...l }));
+        const agora = new Date().toISOString();
+        if (idx === -1) {
+          const novo = { id: `lemb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, chave, tipo, nota, status, cor, criadoEm: agora, criadoPorUsuario: sess.usuario, criadoPorNome: sess.nome, atualizadoEm: agora };
+          lembretes.push(novo);
+        } else {
+          lembretes[idx] = { ...lembretes[idx], nota, status, cor, atualizadoEm: agora };
+        }
+        await cadastroLembretesSalvar({ lembretes });
+        return { ok: true, lembrete: lembretes.find((l) => l.chave === chave && l.tipo === tipo) };
+      });
+      if (resultado.erro) return sendJson(res, resultado.erro, { error: resultado.msg });
+      return sendJson(res, 200, resultado);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar o lembrete")); }
+  }
+
+  if (pathname === "/api/cadastro-lembretes" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"], "cadastro"); if (!sess) return;
+    try {
+      const dados = await cadastroLembretesCarregar();
+      return sendJson(res, 200, { lembretes: dados.lembretes });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar lembretes")); }
   }
 
   // info de um pedido direto do índice do SC9 (cliente, itens/lotes/quantidade)
