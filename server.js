@@ -108,7 +108,7 @@ if (!process.env.SESSION_SECRET) {
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["geral", "controle0201", "saida"];
+const PERFIS = ["geral", "controle0201", "saida", "alteracoes"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -291,6 +291,20 @@ const DASHBOARD_OBJ = "dashboard-live.json";      // cache leve, recalculado sob
 const DASHBOARD_ORDERS_OBJ = "dashboard-orders.json"; // só os pedidos do Cambuci (fonte de verdade pro dashboard)
 const DASHBOARD_HIST_OBJ = "dashboard-historico.json"; // {dias: {"AAAA-MM-DD": {pedidosHoje, pecasHoje, atualizacoes}}}
 const META_FATURAMENTO_OBJ = "meta-faturamento.json"; // {valor, mes: "AAAA-MM", atualizadoEm, atualizadoPor}
+// Alteração do TIPO 2 — na separação, ANTES da conferência (não existe NF
+// ainda, não precisa de pedido de complemento, é só troca de lote/item). Fica
+// numa estrutura própria, nada a ver com os bipes da Saída p/ Expedição —
+// o pedido nem chegou lá ainda nesse ponto do processo.
+const ALTERACAO_SEPARACAO_OBJ = "alteracoes-separacao.json"; // { registros: [...] }
+const MOTIVOS_ALTERACAO = ["Peça não encontrada", "Erro sistêmico", "Lote vencido/bloqueado", "Divergência de estoque", "Outro"];
+let alteracaoSeparacaoCache = null;
+async function alteracaoSeparacaoCarregar() {
+  if (alteracaoSeparacaoCache) return alteracaoSeparacaoCache;
+  try { const d = await objLoad(ALTERACAO_SEPARACAO_OBJ); alteracaoSeparacaoCache = { registros: Array.isArray(d && d.registros) ? d.registros : [] }; }
+  catch { alteracaoSeparacaoCache = { registros: [] }; }
+  return alteracaoSeparacaoCache;
+}
+async function alteracaoSeparacaoSalvar(dados) { await objSave(ALTERACAO_SEPARACAO_OBJ, dados); alteracaoSeparacaoCache = dados; }
 const VALOR_GERAL_OBJ = "valor-faturado-geral.json"; // valor faturado do mês, TODOS os armazéns (não só Cambuci)
 // armazéns reconhecidos pra essa conta geral — o mesmo conjunto que o painel
 // já usa (ES nunca entra em lugar nenhum, nem chega a existir como opção).
@@ -617,7 +631,13 @@ function infoDoPedido(indice, ped) {
     itens: (r.it || []).map(([prod, qt]) => ({ produto: prod, nome: (indice.nomes && indice.nomes[prod]) || "", qt })),
   };
 }
-const resumoInfo = (i) => (i ? { armazem: i.armazem, cliente: i.cliente, transportadora: i.transportadora, linhas: i.linhas, pecas: i.pecas, conferente: i.conferente, nf: i.nf, liberadoEm: i.liberadoEm, fimConferencia: i.fimConferencia, itens: i.itens || [] } : null);
+// NÃO inclui "itens" aqui de propósito — isso é guardado em TODO bipe (um
+// pedido normal pode ter vários itens, cada um com produto/nome/quantidade),
+// e cada bipe REGRAVA o arquivo do dia inteiro. Num dia movimentado, com
+// centenas de bipes, isso engordava o arquivo rapidamente e pesava a cada
+// gravação. Quem precisa dos itens (a tela de marcar alteração) busca sob
+// demanda via /api/pedido-info, só pro pedido específico, na hora que precisa.
+const resumoInfo = (i) => (i ? { armazem: i.armazem, cliente: i.cliente, transportadora: i.transportadora, linhas: i.linhas, pecas: i.pecas, conferente: i.conferente, nf: i.nf, liberadoEm: i.liberadoEm, fimConferencia: i.fimConferencia } : null);
 function normalizarPedido(x) {
   const d = String(x === null || x === undefined ? "" : x).replace(/\D/g, "").replace(/^0+/, "");
   return d.length >= 4 && d.length <= 10 ? d : null;
@@ -1287,30 +1307,36 @@ async function handleApi(req, res, pathname) {
           const novo = JSON.parse(JSON.stringify(atual));
           const e = novo.entries[idx];
           if (acao === "marcar") {
-            // quem bipa é quem PERCEBE o problema (lote/produto faltando) — é
-            // essa pessoa que já sabe o item, a quantidade e o lote. Só o
-            // número do pedido de complemento ainda não existe nesse momento
-            // (é criado depois, em outro lugar) — isso fica pendente.
-            const item = String(body.item || "").trim();
-            const quantidade = Number(body.quantidade);
-            const lote = String(body.lote || "").trim();
-            if (!item) return { erro: 400, msg: "informe o item alterado" };
-            if (isNaN(quantidade) || quantidade <= 0) return { erro: 400, msg: "informe uma quantidade válida (maior que zero)" };
-            if (!lote) return { erro: 400, msg: "informe o lote" };
-            e.alteracao = {
-              status: "pendente", item, quantidade, lote,
-              marcadoEm: new Date().toISOString(), marcadoPorUsuario: sess.usuario, marcadoPorNome: sess.nome,
-            };
+            // quem bipa só avisa "isso precisa de alteração" — um clique, sem
+            // preencher nada. Item, quantidade, lote e o pedido de complemento
+            // ficam todos pra quem for de fato tratar a alteração depois
+            // (normalmente é essa pessoa quem cria o pedido de complemento,
+            // então só ela sabe o número dele).
+            e.alteracao = { status: "pendente", marcadoEm: new Date().toISOString(), marcadoPorUsuario: sess.usuario, marcadoPorNome: sess.nome };
           } else if (acao === "cancelar") {
             e.alteracao = null;
           } else {
-            // confirmar: só falta vincular o número do pedido de complemento,
-            // que foi criado depois — item/quantidade/lote já vieram do marcar.
-            if (!e.alteracao || e.alteracao.status !== "pendente") return { erro: 409, msg: "esse registro não está pendente de confirmação" };
             const pedidoComplemento = normalizarPedido(body.pedidoComplemento || "");
+            const motivo = String(body.motivo || "").trim();
+            // aceita tanto a lista nova (itens: [...]) quanto o formato antigo
+            // de item único, convertendo pro novo formato — um pedido pode
+            // precisar alterar mais de um item/lote de uma vez.
+            const itensEntrada = Array.isArray(body.itens) ? body.itens : (body.item ? [{ item: body.item, quantidade: body.quantidade, lote: body.lote }] : []);
             if (!pedidoComplemento) return { erro: 400, msg: "informe o número do pedido de complemento" };
+            if (!motivo) return { erro: 400, msg: "informe o motivo da alteração" };
+            if (!itensEntrada.length) return { erro: 400, msg: "informe ao menos um item alterado" };
+            for (const it of itensEntrada) {
+              if (!it || !String(it.item || "").trim()) return { erro: 400, msg: "cada item precisa de um produto/código" };
+              if (isNaN(Number(it.quantidade)) || Number(it.quantidade) <= 0) return { erro: 400, msg: "cada item precisa de uma quantidade válida (maior que zero)" };
+              if (!String(it.lote || "").trim()) return { erro: 400, msg: "cada item precisa de um lote" };
+            }
+            const itens = itensEntrada.map((it) => ({ item: String(it.item).trim(), quantidade: Number(it.quantidade), lote: String(it.lote).trim() }));
             e.alteracao = {
-              ...e.alteracao, status: "confirmada", pedidoComplemento,
+              status: "confirmada",
+              marcadoEm: (e.alteracao && e.alteracao.marcadoEm) || new Date().toISOString(),
+              marcadoPorUsuario: (e.alteracao && e.alteracao.marcadoPorUsuario) || sess.usuario,
+              marcadoPorNome: (e.alteracao && e.alteracao.marcadoPorNome) || sess.nome,
+              pedidoComplemento, itens, motivo,
               confirmadoEm: new Date().toISOString(), confirmadoPorUsuario: sess.usuario, confirmadoPorNome: sess.nome,
             };
           }
@@ -1344,6 +1370,101 @@ async function handleApi(req, res, pathname) {
       }
       return sendJson(res, 200, { itens: resultado });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar alterações")); }
+  }
+
+  // Alteração do TIPO 2 — na separação, antes da conferência. O separador só
+  // avisa "esse pedido precisa de alteração" (pedido + 1 clique, sem detalhe
+  // nenhum); quem tem o perfil "alteracoes" é quem vê, analisa e preenche o
+  // resto (itens, lotes, quantidades e o motivo). Não tem nada a ver com os
+  // bipes da Saída p/ Expedição — o pedido nem chegou lá ainda.
+  if (pathname === "/api/alteracao-separacao" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return; // qualquer um logado pode avisar
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const acao = body && body.acao;
+    if (!["marcar", "confirmar", "cancelar"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use marcar, confirmar ou cancelar)" });
+
+    if (acao === "marcar") {
+      const pedido = normalizarPedido(body.pedido || "");
+      if (!pedido) return sendJson(res, 400, { error: "informe o número do pedido" });
+      try {
+        const registro = await comFila("alteracao-separacao", async () => {
+          const dados = await alteracaoSeparacaoCarregar();
+          const r = {
+            id: `altsep_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            pedido, status: "pendente",
+            marcadoEm: new Date().toISOString(), marcadoPorUsuario: sess.usuario, marcadoPorNome: sess.nome,
+          };
+          await alteracaoSeparacaoSalvar({ registros: [r, ...dados.registros] });
+          return r;
+        });
+        return sendJson(res, 200, { ok: true, registro });
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao marcar a alteração")); }
+    }
+
+    // confirmar/cancelar: só quem tem o perfil "alteracoes" (ou admin) pode
+    // tratar — é a pessoa específica que faz essa análise.
+    if (sess.role !== "admin" && !(sess.perfis || []).includes("alteracoes")) return sendJson(res, 403, { error: "seu acesso não permite isso" });
+    const id = body && typeof body.id === "string" ? body.id : "";
+    if (!id) return sendJson(res, 400, { error: "informe o id do registro" });
+    try {
+      const resultado = await comFila("alteracao-separacao", async () => {
+        const dados = await alteracaoSeparacaoCarregar();
+        const idx = dados.registros.findIndex((r) => r.id === id);
+        if (idx === -1) return { erro: 404, msg: "registro não encontrado" };
+        const registros = dados.registros.map((r) => ({ ...r })); // cópia rasa: só o registro mutado abaixo troca de referência
+        const r = registros[idx];
+        if (acao === "cancelar") {
+          registros[idx] = { ...r, status: "cancelada", canceladoEm: new Date().toISOString(), canceladoPorUsuario: sess.usuario, canceladoPorNome: sess.nome };
+        } else {
+          if (r.status !== "pendente") return { erro: 409, msg: "esse registro não está pendente de confirmação" };
+          const motivo = String(body.motivo || "").trim();
+          const itens = Array.isArray(body.itens) ? body.itens : [];
+          if (!motivo) return { erro: 400, msg: "informe o motivo da alteração" };
+          if (!itens.length) return { erro: 400, msg: "informe ao menos um item alterado" };
+          for (const it of itens) {
+            if (!it || !String(it.item || "").trim()) return { erro: 400, msg: "cada item precisa de um produto/código" };
+            if (isNaN(Number(it.quantidade)) || Number(it.quantidade) <= 0) return { erro: 400, msg: "cada item precisa de uma quantidade válida (maior que zero)" };
+            if (!String(it.lote || "").trim()) return { erro: 400, msg: "cada item precisa de um lote" };
+          }
+          const itensLimpos = itens.map((it) => ({ item: String(it.item).trim(), quantidade: Number(it.quantidade), lote: String(it.lote).trim() }));
+          registros[idx] = { ...r, status: "confirmada", motivo, itens: itensLimpos, confirmadoEm: new Date().toISOString(), confirmadoPorUsuario: sess.usuario, confirmadoPorNome: sess.nome };
+        }
+        await alteracaoSeparacaoSalvar({ registros });
+        return { ok: true, registro: registros[idx] };
+      });
+      if (resultado.erro) return sendJson(res, resultado.erro, { error: resultado.msg });
+      return sendJson(res, 200, resultado);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao atualizar a alteração")); }
+  }
+
+  // info de um pedido direto do índice do SC9 (cliente, itens/lotes/quantidade)
+  // — usado na tela de alteração na separação, ANTES do pedido ser bipado
+  // (por isso não dá pra usar a busca da Saída, que só olha bipe já feito).
+  if (pathname === "/api/pedido-info" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
+    const ped = normalizarPedido(new URL(req.url, "http://localhost").searchParams.get("pedido"));
+    if (!ped) return sendJson(res, 400, { error: "informe o número do pedido" });
+    try {
+      const indice = await indiceCarregar().catch(() => null);
+      const info = infoDoPedido(indice, ped);
+      // aqui SIM inclui os itens — essa rota é consultada sob demanda, um
+      // pedido de cada vez, nunca guardada em massa (diferente do resumo que
+      // vai dentro de cada bipe, que fica salvo pra sempre no arquivo do dia).
+      return sendJson(res, 200, { pedido: ped, info: info ? { ...resumoInfo(info), itens: info.itens || [] } : null });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao buscar o pedido")); }
+  }
+
+  if (pathname === "/api/alteracao-separacao" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
+    const podeVerTudo = sess.role === "admin" || (sess.perfis || []).includes("alteracoes");
+    try {
+      const dados = await alteracaoSeparacaoCarregar();
+      // quem não é da equipe de alteração só vê o que ELA MESMA marcou (pra
+      // acompanhar o próprio pedido), nunca a fila inteira de todo mundo.
+      const registros = podeVerTudo ? dados.registros : dados.registros.filter((r) => r.marcadoPorUsuario === sess.usuario);
+      return sendJson(res, 200, { registros, motivos: MOTIVOS_ALTERACAO });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar alterações de separação")); }
   }
 
   // buscar um pedido em todos os dias guardados: "esse pedido já saiu? quem bipou e quando?"
