@@ -320,6 +320,22 @@ async function cadastroLembretesCarregar() {
   return cadastroLembretesCache;
 }
 async function cadastroLembretesSalvar(dados) { await objSave(CADASTRO_LEMBRETES_OBJ, dados); cadastroLembretesCache = dados; }
+
+// Achados do Cadastro SB8 (duplicidade/validade/vencimento) persistidos até a
+// pessoa apagar — o arquivo SB8 em si nunca é salvo, só o resultado já
+// identificado. Cada achado também guarda um pequeno histórico de saldo por
+// produto (snapshot a cada vez que o arquivo é recarregado), pra responder
+// "esse lote tinha saldo e zerou — saiu do produto certo?".
+const CADASTRO_ACHADOS_OBJ = "cadastro-achados.json"; // { achados: [...] }
+const HISTORICO_SALDO_MAX = 60; // snapshots guardados por achado (uns 2 meses se recarregar 1x/dia)
+let cadastroAchadosCache = null;
+async function cadastroAchadosCarregar() {
+  if (cadastroAchadosCache) return cadastroAchadosCache;
+  try { const d = await objLoad(CADASTRO_ACHADOS_OBJ); cadastroAchadosCache = { achados: Array.isArray(d && d.achados) ? d.achados : [] }; }
+  catch { cadastroAchadosCache = { achados: [] }; }
+  return cadastroAchadosCache;
+}
+async function cadastroAchadosSalvar(dados) { await objSave(CADASTRO_ACHADOS_OBJ, dados); cadastroAchadosCache = dados; }
 const VALOR_GERAL_OBJ = "valor-faturado-geral.json"; // valor faturado do mês, TODOS os armazéns (não só Cambuci)
 // armazéns reconhecidos pra essa conta geral — o mesmo conjunto que o painel
 // já usa (ES nunca entra em lugar nenhum, nem chega a existir como opção).
@@ -1530,6 +1546,79 @@ async function handleApi(req, res, pathname) {
       const dados = await cadastroLembretesCarregar();
       return sendJson(res, 200, { lembretes: dados.lembretes });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar lembretes")); }
+  }
+
+  // Achados do Cadastro SB8 — persistem até a pessoa apagar. Cada vez que o
+  // arquivo é recarregado, o navegador manda só os achados (compactos, sem o
+  // arquivo inteiro); aqui a gente funde com o que já tinha, atualizando o
+  // histórico de saldo quando o valor mudou desde a última vez.
+  if (pathname === "/api/cadastro-achados" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "cadastro"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const acao = body && body.acao;
+    if (!["sincronizar", "apagarTudo", "apagarUm"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use sincronizar, apagarUm ou apagarTudo)" });
+
+    if (acao === "apagarTudo") {
+      try { await comFila("cadastro-achados", async () => { await cadastroAchadosSalvar({ achados: [] }); }); return sendJson(res, 200, { ok: true }); }
+      catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao apagar os achados")); }
+    }
+
+    if (acao === "apagarUm") {
+      const chave = String(body.chave || "").trim(), tipo = String(body.tipo || "").trim();
+      if (!chave || !tipo) return sendJson(res, 400, { error: "informe chave e tipo" });
+      try {
+        await comFila("cadastro-achados", async () => {
+          const dados = await cadastroAchadosCarregar();
+          await cadastroAchadosSalvar({ achados: dados.achados.filter((a) => !(a.chave === chave && a.tipo === tipo)) });
+        });
+        return sendJson(res, 200, { ok: true });
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao apagar o achado")); }
+    }
+
+    // sincronizar: recebe uma LISTA compacta de achados vistos agora (cada um
+    // com {chave, tipo, dados, saldoPorProduto}) e funde com o que já existe.
+    const entrada = Array.isArray(body.achados) ? body.achados : [];
+    if (!entrada.length) return sendJson(res, 400, { error: "informe ao menos um achado pra sincronizar" });
+    if (entrada.length > 5000) return sendJson(res, 400, { error: "muitos achados de uma vez (máximo 5000 por sincronização)" });
+    try {
+      const resultado = await comFila("cadastro-achados", async () => {
+        const atual = await cadastroAchadosCarregar();
+        const porChaveTipo = new Map(atual.achados.map((a) => [`${a.chave}|${a.tipo}`, a]));
+        const agora = new Date().toISOString();
+        for (const nova of entrada) {
+          const chave = String(nova.chave || "").trim(), tipo = String(nova.tipo || "").trim();
+          if (!chave || !tipo) continue;
+          const k = `${chave}|${tipo}`;
+          const existente = porChaveTipo.get(k);
+          const saldoPorProduto = nova.saldoPorProduto && typeof nova.saldoPorProduto === "object" ? nova.saldoPorProduto : {};
+          let historicoSaldo = (existente && existente.historicoSaldo) || [];
+          const ultimoSnapshot = historicoSaldo[historicoSaldo.length - 1];
+          const mudou = !ultimoSnapshot || JSON.stringify(ultimoSnapshot.porProduto) !== JSON.stringify(saldoPorProduto);
+          if (mudou) {
+            historicoSaldo = [...historicoSaldo, { data: agora, porProduto: saldoPorProduto }].slice(-HISTORICO_SALDO_MAX);
+          }
+          porChaveTipo.set(k, {
+            chave, tipo, dados: nova.dados || (existente && existente.dados) || {},
+            historicoSaldo,
+            primeiraVezEm: (existente && existente.primeiraVezEm) || agora,
+            ultimaVezEm: agora,
+          });
+        }
+        const achados = Array.from(porChaveTipo.values());
+        await cadastroAchadosSalvar({ achados });
+        return { ok: true, total: achados.length };
+      });
+      return sendJson(res, 200, resultado);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao sincronizar achados")); }
+  }
+
+  if (pathname === "/api/cadastro-achados" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"], "cadastro"); if (!sess) return;
+    try {
+      const dados = await cadastroAchadosCarregar();
+      return sendJson(res, 200, { achados: dados.achados });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar achados")); }
   }
 
   // info de um pedido direto do índice do SC9 (cliente, itens/lotes/quantidade)
