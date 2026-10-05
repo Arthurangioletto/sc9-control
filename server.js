@@ -6,7 +6,6 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const util = require("util");
-const { saveSnapshot, loadSnapshot, usingSupabase } = require("./storage");
 
 const PORT = process.env.PORT || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD || ""; // vazio = sem senha (não recomendado em produção)
@@ -31,12 +30,35 @@ const LOCAL_DIR = path.join(__dirname, "data");
 const CONTROLE_OBJ = "controle-0201.json";
 const USUARIOS_OBJ = "usuarios-controle.json";
 const SALDO_OBJ = "saldo-lotes.json";
+const CONTROLE_SD3_OBJ = "controle-sd3.json"; // { coberturaAte, desde, semRegistro, atualizadoEm, atualizadoPor }
+const usingSupabase = Boolean(SB_URL && SB_KEY);
+const saveSnapshot = (d) => objSave("latest.json", d); // mesmo arquivo/bucket de antes (era do storage.js)
+const loadSnapshot = () => objLoad("latest.json");
 const objUrl = (name) => `${SB_URL.replace(/\/$/, "")}/storage/v1/object/${SB_BUCKET}/${name}`;
+
+// A Render cobra a banda que SAI do servidor — e cada gravação no Supabase é o arquivo
+// INTEIRO (a cada bipe, o dia todo de bipes: ~113 KB por bipe com 500 no dia, mais de
+// 55 MB por dia só nisso). Comprime antes de enviar (JSON encolhe ~10-15x). Na leitura,
+// aceita os dois formatos (gzip novo e JSON puro antigo, pelo cabeçalho "1f 8b"), então
+// os arquivos que já estão no Supabase continuam funcionando sem migração.
+// SUPABASE_GZIP=0 volta a gravar JSON puro (a leitura continua aceitando os dois).
+const SB_GZIP = process.env.SUPABASE_GZIP !== "0";
+const gzipAsync = util.promisify(zlib.gzip), gunzipAsync = util.promisify(zlib.gunzip);
+async function empacotarObj(obj) {
+  const raw = Buffer.from(JSON.stringify(obj), "utf8");
+  if (!SB_GZIP || raw.length < 1024) return raw;
+  try { const gz = await gzipAsync(raw, { level: 6 }); return gz.length < raw.length ? gz : raw; } catch { return raw; }
+}
+async function desempacotarObj(buf) {
+  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  const ehGzip = b.length > 2 && b[0] === 0x1f && b[1] === 0x8b;
+  return JSON.parse((ehGzip ? await gunzipAsync(b) : b).toString("utf8"));
+}
 
 async function objLoad(name) {
   if (SB_URL && SB_KEY) {
     const res = await fetch(objUrl(name), { headers: { Authorization: `Bearer ${SB_KEY}`, apikey: SB_KEY } });
-    if (res.ok) return await res.json();
+    if (res.ok) return await desempacotarObj(Buffer.from(await res.arrayBuffer()));
     const txt = await res.text().catch(() => "");
     let code = "";
     try { code = String(JSON.parse(txt).statusCode || ""); } catch { /* corpo não é JSON */ }
@@ -50,8 +72,8 @@ async function objLoad(name) {
 }
 
 async function objSave(name, obj) {
-  const body = JSON.stringify(obj);
   if (SB_URL && SB_KEY) {
+    const body = await empacotarObj(obj);
     const res = await fetch(objUrl(name) + "?upsert=true", {
       method: "POST",
       headers: { Authorization: `Bearer ${SB_KEY}`, apikey: SB_KEY, "Content-Type": "application/json", "x-upsert": "true" },
@@ -64,7 +86,7 @@ async function objSave(name, obj) {
     return;
   }
   fs.mkdirSync(LOCAL_DIR, { recursive: true });
-  fs.writeFileSync(path.join(LOCAL_DIR, name), body, "utf8");
+  fs.writeFileSync(path.join(LOCAL_DIR, name), JSON.stringify(obj), "utf8");
 }
 const loadControle = () => objLoad(CONTROLE_OBJ);
 const saveControle = (o) => objSave(CONTROLE_OBJ, o);
@@ -255,27 +277,64 @@ function erroPublico(e, mensagemGenerica) {
   console.error(mensagemGenerica + ":", e); // detalhe completo só no log do servidor
   return { error: mensagemGenerica };
 }
+// Respostas da API saem comprimidas (gzip) quando o navegador aceita — JSON comprime
+// ~15x (a lista da Saída com 500 bipes vai de 225 KB pra ~13 KB). A Render cobra a banda
+// de SAÍDA, e antes de comprimir isso era o que mais pesava. Respostas pequenas não
+// compensam o custo de comprimir, então saem como sempre.
+const GZIP_MIN_BYTES = 1024;
+function aceitaGzip(req) { return Boolean(req) && /\bgzip\b/i.test(String(req.headers["accept-encoding"] || "")); }
 function sendJson(res, status, obj) {
-  const body = JSON.stringify(obj);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
+  const body = Buffer.from(JSON.stringify(obj), "utf8");
+  const cabecalhos = { "Content-Type": "application/json; charset=utf-8", "Vary": "Accept-Encoding" };
+  if (body.length >= GZIP_MIN_BYTES && aceitaGzip(res.req)) {
+    return zlib.gzip(body, { level: 6 }, (err, gz) => {
+      if (res.writableEnded || res.destroyed) return; // o cliente já foi embora
+      if (err) { res.writeHead(status, { ...cabecalhos, "Content-Length": body.length }); return res.end(body); }
+      res.writeHead(status, { ...cabecalhos, "Content-Encoding": "gzip", "Content-Length": gz.length });
+      res.end(gz);
+    });
+  }
+  res.writeHead(status, { ...cabecalhos, "Content-Length": body.length });
   res.end(body);
 }
 
-function serveStatic(req, res, urlPath) {
-  const name = urlPath === "/" ? "index.html" : urlPath.replace(/^\//, "");
-  if (!SERVABLE.has(name)) {
-    // qualquer coisa fora da lista (inclusive rotas de navegação tipo /alguma-coisa)
-    // cai no index.html — é o comportamento normal de uma SPA
-    return fs.readFile(path.join(PUBLIC_DIR, "index.html"), (err, data) => {
-      if (err) { res.writeHead(404); return res.end("não encontrado"); }
-      res.writeHead(200, { "Content-Type": MIME[".html"], "Cache-Control": "no-cache, no-store, must-revalidate" });
-      res.end(data);
+// index.html e bundle.js: antes saíam inteiros (384 KB o bundle), sem compressão e com
+// "no-store", a CADA abertura de página. Agora: comprimidos uma vez só (guardados em
+// memória), com ETag — se o arquivo não mudou, o navegador recebe um "304 não mudou"
+// de poucos bytes em vez do arquivo de novo. Continua sempre atualizado: depois de um
+// deploy o ETag muda e todo mundo recebe o bundle novo na próxima abertura.
+const estaticoCache = new Map(); // nome -> { mtimeMs, size, buf, gz, etag }
+function carregarEstatico(name, cb) {
+  const arquivo = path.join(PUBLIC_DIR, name);
+  fs.stat(arquivo, (errStat, st) => {
+    if (errStat) return cb(errStat);
+    const c = estaticoCache.get(name);
+    if (c && c.mtimeMs === st.mtimeMs && c.size === st.size) return cb(null, c);
+    fs.readFile(arquivo, (err, buf) => {
+      if (err) return cb(err);
+      zlib.gzip(buf, { level: 9 }, (errGz, gz) => {
+        const novo = { mtimeMs: st.mtimeMs, size: st.size, buf, gz: errGz || gz.length >= buf.length ? null : gz, etag: `"${crypto.createHash("sha1").update(buf).digest("hex").slice(0, 20)}"` };
+        estaticoCache.set(name, novo);
+        cb(null, novo);
+      });
     });
-  }
-  fs.readFile(path.join(PUBLIC_DIR, name), (err, data) => {
+  });
+}
+function serveStatic(req, res, urlPath) {
+  // qualquer coisa fora da lista (inclusive rotas de navegação tipo /alguma-coisa)
+  // cai no index.html — é o comportamento normal de uma SPA
+  const pedido = urlPath === "/" ? "index.html" : urlPath.replace(/^\//, "");
+  const name = SERVABLE.has(pedido) ? pedido : "index.html";
+  carregarEstatico(name, (err, e) => {
     if (err) { res.writeHead(404); return res.end("não encontrado"); }
-    res.writeHead(200, { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache, no-store, must-revalidate" });
-    res.end(data);
+    const cabecalhos = { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache", "ETag": e.etag, "Vary": "Accept-Encoding" };
+    if (String(req.headers["if-none-match"] || "").split(",").map((x) => x.trim()).includes(e.etag)) {
+      res.writeHead(304, { "ETag": e.etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding" });
+      return res.end();
+    }
+    if (e.gz && aceitaGzip(req)) { res.writeHead(200, { ...cabecalhos, "Content-Encoding": "gzip", "Content-Length": e.gz.length }); return res.end(e.gz); }
+    res.writeHead(200, { ...cabecalhos, "Content-Length": e.buf.length });
+    res.end(e.buf);
   });
 }
 
@@ -845,6 +904,39 @@ async function saidaReconciliar(indice) {
 }
 
 const LOGIN_RE = /^[a-z0-9._-]{3,30}$/;
+const SD3_STATUS_VALIDOS = ["ok", "atencao", "divergente", "sem_dado"];
+const SD3_TRANSF_VALIDOS = ["completa", "so_saida", "destino_diferente"];
+const sd3Txt = (v, max) => String(v === null || v === undefined ? "" : v).slice(0, max);
+const sd3Iso = (v) => { if (!v) return null; const t = new Date(v); return isNaN(t.getTime()) ? null : t.toISOString(); };
+const sd3Num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+function sanitizarConferenciaSD3(c) {
+  if (!c || typeof c !== "object" || Array.isArray(c)) return null;
+  return {
+    verificadoEm: sd3Iso(c.verificadoEm), coberturaAte: sd3Iso(c.coberturaAte),
+    status: SD3_STATUS_VALIDOS.includes(c.status) ? c.status : "sem_dado",
+    totalEntrada: sd3Num(c.totalEntrada),
+    docs: (Array.isArray(c.docs) ? c.docs : []).slice(0, 8).map((d) => ({
+      doc: sd3Txt(d && d.doc, 40), dt: sd3Iso(d && d.dt), qtd: sd3Num(d && d.qtd), usuario: sd3Txt(d && d.usuario, 60),
+      status: SD3_TRANSF_VALIDOS.includes(d && d.status) ? d.status : "completa",
+    })),
+    flags: (Array.isArray(c.flags) ? c.flags : []).slice(0, 8).map((f) => ({
+      nivel: ["erro", "aviso", "info"].includes(f && f.nivel) ? f.nivel : "aviso", titulo: sd3Txt(f && f.titulo, 300),
+      hipoteses: (Array.isArray(f && f.hipoteses) ? f.hipoteses : []).slice(0, 5).map((h) => sd3Txt(h, 200)),
+    })),
+  };
+}
+function sanitizarExtraSD3(x) {
+  x = x && typeof x === "object" ? x : {};
+  return {
+    coberturaAte: sd3Iso(x.coberturaAte), desde: sd3Iso(x.desde),
+    semRegistro: (Array.isArray(x.semRegistro) ? x.semRegistro : []).slice(0, 200).map((t) => ({
+      doc: sd3Txt(t && t.doc, 40), lote: sd3Txt(t && t.lote, 60), produto: sd3Txt(t && t.produto, 60), qtd: sd3Num(t && t.qtd),
+      dt: sd3Iso(t && t.dt), usuario: sd3Txt(t && t.usuario, 60),
+      status: SD3_TRANSF_VALIDOS.includes(t && t.status) ? t.status : "completa",
+      armazemEntradaErrado: t && t.armazemEntradaErrado ? sd3Txt(t.armazemEntradaErrado, 10) : null,
+    })),
+  };
+}
 const CAMPOS_IDENTIDADE = ["criadoPorUsuario", "criadoPorNome", "criadoEm", "confirmadoPorUsuario", "confirmadoPorNome", "confirmadoEm"];
 
 // Rate limit geral: além do bloqueio específico do login (mais rígido), toda a
@@ -1127,6 +1219,50 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  // ---- Conferência do Controle 02->01 com o SD3 (Protheus) ----
+  // O arquivo do SD3 NUNCA fica salvo aqui. O administrador carrega no navegador, o
+  // navegador cruza com o controle e manda só o RESULTADO de cada entrega (compacto).
+  // Assim o operador também vê a conferência, sem a movimentação inteira ir pro servidor.
+  // Endpoint próprio (e não o upsert do controle) pra gravar SÓ esse campo: um upsert
+  // substitui a entrega inteira e poderia desfazer um recebimento que o operador
+  // acabou de confirmar.
+  if (pathname === "/api/controle-sd3" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "controle0201"))) return;
+    try {
+      const data = await objLoad(CONTROLE_SD3_OBJ);
+      res.setHeader("Cache-Control", "no-store");
+      return sendJson(res, 200, { extra: data || null });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar a conferência com o SD3")); }
+  }
+  if (pathname === "/api/controle-sd3" && method === "POST") {
+    const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    body = body || {};
+    const resultados = Array.isArray(body.resultados) ? body.resultados : [];
+    if (resultados.length > 3000) return sendJson(res, 400, { error: "resultados demais de uma vez (máximo 3000)" });
+    try {
+      const mapa = new Map();
+      for (const r of resultados) {
+        if (!r || typeof r.id !== "string") continue;
+        const c = sanitizarConferenciaSD3(r.conferenciaSD3);
+        if (c) mapa.set(r.id, c);
+      }
+      const extra = sanitizarExtraSD3(body.extra);
+      const saida = await comFilaControle(async () => {
+        const atual = await loadControle();
+        const lista = (atual && Array.isArray(atual.entries)) ? atual.entries : [];
+        let atualizados = 0;
+        const nova = lista.map((e) => { const c = mapa.get(e.id); if (!c) return e; atualizados++; return { ...e, conferenciaSD3: c }; });
+        const agora = new Date().toISOString();
+        if (atualizados) await saveControle({ ...(atual || {}), entries: nova, savedAt: agora });
+        await objSave(CONTROLE_SD3_OBJ, { ...extra, atualizadoEm: agora, atualizadoPor: sess.nome || sess.usuario || "administrador" });
+        return { ok: true, atualizados, semRegistro: extra.semRegistro.length };
+      });
+      return sendJson(res, 200, saida);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar a conferência com o SD3")); }
+  }
+
   // ---- saldo por lote (administrador e operador) ----
   if (pathname === "/api/saldo" && method === "GET") {
     if (!(await exigir(req, res, ["admin", "operador"], "controle0201"))) return;
@@ -1185,8 +1321,10 @@ async function handleApi(req, res, pathname) {
             if (!ehAdmin && existenteConfirmado) { ignorados++; continue; }
             const u = { ...u0 };
             for (const k of CAMPOS_IDENTIDADE) delete u[k]; // identidade nunca vem do navegador
+            delete u.conferenciaSD3; // resultado do SD3 só entra por /api/controle-sd3 (admin) — nunca por aqui
             if (existente) {
               for (const k of CAMPOS_IDENTIDADE) if (existente[k] !== undefined) u[k] = existente[k];
+              if (existente.conferenciaSD3 !== undefined) u.conferenciaSD3 = existente.conferenciaSD3; // reenviar uma entrega antiga não apaga a conferência
             } else {
               u.criadoPorUsuario = sess.usuario; u.criadoPorNome = sess.nome; u.criadoEm = agora;
               if (!ehAdmin) { // operador só cria registro "aguardando", em nome dele
