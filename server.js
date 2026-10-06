@@ -915,6 +915,13 @@ async function saidaReconciliar(indice) {
 const RECEB_DIAS_DUP = 3;      // um pedido já recebido nesses últimos dias não entra de novo
 const RECEB_DIAS_ENTREGA = 10; // a planilha de Entrega confirma recebimentos desses últimos dias
 const RECEB_MOTIVOS = ["Sem transportadora/coleta hoje", "Aguardando liberação ou pagamento do cliente", "Pedido incompleto (falta item)", "Alteração de pedido pendente", "Problema de endereço ou cadastro", "Cliente pediu para segurar", "Pedido cancelado ou retirado", "Outro"];
+const RECEB_PESQ_DIAS = 30;      // a pesquisa olha até 30 dias para trás
+const RECEB_PESQ_MAX = 200;      // máximo de recebimentos devolvidos de uma vez
+const RECEB_PESQ_MAX_SC9 = 40;   // máximo de "ainda não chegou / só no SC9"
+const semAcento = (s) => String(s === null || s === undefined ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// palavras da busca (sem acento, minúsculas); número solto com menos de 3 dígitos é ignorado (casaria com tudo)
+const recebPalavras = (q) => semAcento(q).split(/[\s,;]+/).filter((p) => p && !(/^\d+$/.test(p) && p.length < 3)).slice(0, 6);
+const recebPalheiro = (pedido, info, quem) => semAcento([pedido, info && info.nf, info && info.cliente, info && info.codCliente, info && info.transportadora, quem].filter((x) => x !== null && x !== undefined).join(" "));
 const recebObj = (dia) => `recebimento-exp-${dia}.json`;
 const recebCache = new Map();
 async function recebCarregar(dia) {
@@ -1893,6 +1900,74 @@ async function handleApi(req, res, pathname) {
         ultimaEntrega: ultima, usuario: sess.usuario,
       });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o recebimento")); }
+  }
+
+  // Pesquisa em todos os dias guardados: "quando esse pedido foi bipado, por quem, de qual cliente/transportadora, já saiu?"
+  // Aceita pedido (parte do número), NF, cliente, transportadora ou quem bipou — várias palavras juntas (todas precisam bater).
+  if (pathname === "/api/recebimento/pesquisar" && method === "GET") {
+    const sess = await exigirRecebimento(req, res, { leitura: true }); if (!sess) return;
+    const q = new URL(req.url, "http://localhost").searchParams;
+    const hoje = diaSP();
+    const diaValido = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? v : null);
+    const maisAntigo = diaAnterior(hoje, RECEB_PESQ_DIAS - 1);
+    let ate = diaValido(q.get("ate")) || hoje, de = diaValido(q.get("de")) || maisAntigo;
+    if (ate > hoje) ate = hoje;
+    if (de < maisAntigo) de = maisAntigo;
+    if (de > ate) return sendJson(res, 400, { error: "a data inicial é depois da final" });
+    const textoQ = String(q.get("q") || "").slice(0, 120);
+    const palavras = recebPalavras(textoQ);
+    if (textoQ.trim() && !palavras.length) return sendJson(res, 400, { error: "Digite pelo menos 3 números ou uma palavra." });
+    const transp = semAcento(q.get("transp") || "").trim();
+    const status = ["sem_saida", "nao_sai", "sem_confirmar", "saiu"].includes(q.get("status")) ? q.get("status") : "";
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      const dias = []; for (let d = ate; d >= de; d = diaAnterior(d, 1)) dias.push(d);
+      // Saída desde 1 dia antes do período (o pedido pode ter descido na véspera do recebimento)
+      const mapa = new Map();
+      for (const d of [...dias, diaAnterior(de, 1)]) for (const e of (await saidaCarregar(d)).entries) if (!mapa.has(e.pedido)) mapa.set(e.pedido, { entry: e, dia: d });
+      const casa = (txt) => palavras.every((p) => txt.includes(p));
+      const resultados = []; const recebidos = new Set(); let total = 0;
+      for (const d of dias) {
+        const lista = (await recebCarregar(d)).entries;
+        for (const e of lista) { // já vem da mais nova para a mais antiga
+          recebidos.add(e.pedido);
+          const info = e.info || {};
+          if (transp && !semAcento(info.transportadora || "").includes(transp)) continue;
+          if (!casa(recebPalheiro(e.pedido, info, `${e.recebidoPorNome || ""} ${e.recebidoPorUsuario || ""}`))) continue;
+          const desceu = descerResumo(mapa.get(e.pedido));
+          const sit = e.saiuEntrega ? "saiu" : e.naoSaiHoje ? "nao_sai" : "sem_confirmar";
+          if (status === "sem_saida" ? desceu.status === "ok" : (status && sit !== status)) continue;
+          total++;
+          if (resultados.length < RECEB_PESQ_MAX) resultados.push({ dia: d, entry: { ...e, desceu } });
+        }
+      }
+      // pedidos que desceram (Saída) no período e ainda não foram recebidos; e, se pesquisou algo, pedidos só do SC9
+      const naoRecebidos = [];
+      if (!status && (palavras.length || transp)) {
+        for (const [ped, a] of mapa) {
+          if (a.dia < de || a.dia > ate || recebidos.has(ped)) continue;
+          const info = a.entry.info || {};
+          if (transp && !semAcento(info.transportadora || "").includes(transp)) continue;
+          if (!casa(recebPalheiro(ped, info, `${a.entry.registradoPorNome || ""} ${a.entry.registradoPorUsuario || ""}`))) continue;
+          naoRecebidos.push({ tipo: "desceu_nao_recebido", pedido: ped, info: a.entry.info || null, saidaEm: a.entry.registradoEm, saidaPor: a.entry.registradoPorNome || a.entry.registradoPorUsuario, saidaDia: a.dia, emAlteracao: Boolean(a.entry.alteracao && a.entry.alteracao.status === "pendente") });
+        }
+        naoRecebidos.sort((x, y) => String(y.saidaEm).localeCompare(String(x.saidaEm)));
+        naoRecebidos.length = Math.min(naoRecebidos.length, RECEB_PESQ_MAX_SC9);
+        if (palavras.length && naoRecebidos.length < RECEB_PESQ_MAX_SC9) {
+          try {
+            const indice = await indiceCarregar();
+            for (const [ped, r] of Object.entries((indice && indice.pedidos) || {})) {
+              if (recebidos.has(ped) || mapa.has(ped)) continue;
+              if (transp && !semAcento(r.tr || "").includes(transp)) continue;
+              if (!casa(recebPalheiro(ped, { nf: r.nf, cliente: r.c, transportadora: r.tr, codCliente: r.cc }, ""))) continue;
+              naoRecebidos.push({ tipo: "so_sc9", pedido: ped, info: { armazem: r.a, cliente: r.c, transportadora: r.tr, nf: r.nf, pecas: r.q, linhas: r.l, liberadoEm: r.dt, fimConferencia: r.fc } });
+              if (naoRecebidos.length >= RECEB_PESQ_MAX_SC9 * 2) break;
+            }
+          } catch { /* sem o índice do SC9, mostra só o que a Saída e o recebimento têm */ }
+        }
+      }
+      return sendJson(res, 200, { q: textoQ, de, ate, diasPesquisados: dias.length, total, resultados, truncado: total > resultados.length, naoRecebidos, retencaoDias: RECEB_PESQ_DIAS });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao pesquisar")); }
   }
 
   if (pathname === "/api/recebimento/bipar" && method === "POST") {
