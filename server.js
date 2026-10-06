@@ -937,6 +937,17 @@ async function recebGravar(dia, novo) {
   await objSave(recebObj(dia), novo);
   recebCache.set(dia, novo);
 }
+// Configuração do recebimento (compartilhada): depois de quantas horas um pedido que "desceu" e não chegou vira alerta
+const RECEB_CONFIG_OBJ = "recebimento-config.json";
+const RECEB_ALERTA_PADRAO_H = 2;
+let recebConfig = null;
+async function recebConfigCarregar() {
+  if (recebConfig) return recebConfig;
+  let d = null; try { d = await objLoad(RECEB_CONFIG_OBJ); } catch { /* usa o padrão */ }
+  const h = d && Number.isFinite(Number(d.alertaHoras)) ? Number(d.alertaHoras) : RECEB_ALERTA_PADRAO_H;
+  recebConfig = { alertaHoras: h, por: (d && d.por) || null, em: (d && d.em) || null };
+  return recebConfig;
+}
 const RECEB_ENTREGAS_OBJ = "recebimento-entregas.json";
 let recebEntregas = null;
 async function recebEntregasCarregar() {
@@ -1878,7 +1889,8 @@ async function handleApi(req, res, pathname) {
       const { mapa, versoes } = await saidaMapaRecente(hoje, RECEB_DIAS_DUP);
       const log = await recebEntregasCarregar();
       const ultima = log.uploads.length ? log.uploads[log.uploads.length - 1] : null;
-      const ver = [dia, d.versao || 0, ...versoes, log.uploads.length, ultima ? ultima.em : ""].join("|");
+      const cfg = await recebConfigCarregar();
+      const ver = [dia, d.versao || 0, ...versoes, log.uploads.length, ultima ? ultima.em : "", cfg.alertaHoras].join("|");
       if (q.get("v") !== null && q.get("v") === ver) return sendJson(res, 200, { igual: true, versao: ver, hoje });
       const entries = d.entries.map((e) => ({ ...e, desceu: descerResumo(mapa.get(e.pedido)) }));
       // "desceu" (Saída) nos últimos 2 dias que ainda NÃO foi recebido (em nenhum dos últimos dias)
@@ -1897,7 +1909,7 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 200, {
         dia, hoje, versao: ver, entries, faltando, motivos: RECEB_MOTIVOS,
         podeReceber: sess.role === "admin" || perfis.includes("recebimento"), podeDespacho: sess.role === "admin" || perfis.includes("despacho"),
-        ultimaEntrega: ultima, usuario: sess.usuario,
+        ultimaEntrega: ultima, usuario: sess.usuario, alertaHoras: cfg.alertaHoras,
       });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o recebimento")); }
   }
@@ -2009,6 +2021,23 @@ async function handleApi(req, res, pathname) {
   }
 
   // volumes e/ou motivo de "não sai hoje" de um pedido já recebido
+  // depois de quantas horas "desceu e não chegou" vira alerta (0 = desligado). Só despacho/administrador mexe; vale para todo mundo.
+  if (pathname === "/api/recebimento/config" && method === "POST") {
+    const sess = await exigirRecebimento(req, res, { despacho: true }); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const bruto = body ? body.alertaHoras : null;
+    const h = (typeof bruto === "number" || (typeof bruto === "string" && bruto.trim() !== "")) ? Number(bruto) : NaN;
+    if (!Number.isFinite(h) || h < 0 || h > 72) return sendJson(res, 400, { error: "Informe as horas entre 0 (desligado) e 72." });
+    try {
+      const nova = await comFila("recebimento-config", async () => {
+        const c = { alertaHoras: Math.round(h * 4) / 4, por: sess.nome || sess.usuario, em: new Date().toISOString() };
+        await objSave(RECEB_CONFIG_OBJ, c); recebConfig = c; return c;
+      });
+      return sendJson(res, 200, { ok: true, ...nova });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar o alerta")); }
+  }
+
   if (pathname === "/api/recebimento/atualizar" && method === "POST") {
     const sess = await exigirRecebimento(req, res); if (!sess) return;
     let body;
