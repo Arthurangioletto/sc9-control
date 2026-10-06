@@ -1658,17 +1658,24 @@ async function handleApi(req, res, pathname) {
         const nota = String(body.nota || "").trim();
         const status = String(body.status || "pendente").trim();
         const CORES_VALIDAS = ["vermelho", "amarelo", "verde", "azul", ""];
-        const cor = CORES_VALIDAS.includes(String(body.cor || "").trim()) ? String(body.cor || "").trim() : "";
+        const idxPrev = dados.lembretes.findIndex((l) => l.chave === chave && l.tipo === tipo);
+        const anterior = idxPrev === -1 ? null : dados.lembretes[idxPrev];
+        // cor: se o navegador não mandou o campo, mantém a que já estava (não apaga a marcação sem querer)
+        const cor = body.cor === undefined ? ((anterior && anterior.cor) || "") : (CORES_VALIDAS.includes(String(body.cor || "").trim()) ? String(body.cor || "").trim() : "");
+        // lote correto (só duplicados): identidade do registro marcado (filial|produto|armazém|validade). Ausente = mantém.
+        const correto = body.correto === undefined ? ((anterior && anterior.correto) || "") : String(body.correto || "").trim().slice(0, 300);
         if (!chave) return { erro: 400, msg: "informe a chave do achado (lote/produto)" };
         if (!tipo) return { erro: 400, msg: "informe o tipo (duplicado ou validade)" };
         const idx = dados.lembretes.findIndex((l) => l.chave === chave && l.tipo === tipo);
         const lembretes = dados.lembretes.map((l) => ({ ...l }));
         const agora = new Date().toISOString();
+        // "finalizado" = status resolvido: guarda QUANDO foi finalizado (não muda em edições seguintes; some se reabrir)
+        const finalizadoEm = status === "resolvido" ? ((idx !== -1 && lembretes[idx].status === "resolvido" && lembretes[idx].finalizadoEm) || agora) : null;
         if (idx === -1) {
-          const novo = { id: `lemb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, chave, tipo, nota, status, cor, criadoEm: agora, criadoPorUsuario: sess.usuario, criadoPorNome: sess.nome, atualizadoEm: agora };
+          const novo = { id: `lemb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, chave, tipo, nota, status, cor, correto, finalizadoEm, criadoEm: agora, criadoPorUsuario: sess.usuario, criadoPorNome: sess.nome, atualizadoEm: agora };
           lembretes.push(novo);
         } else {
-          lembretes[idx] = { ...lembretes[idx], nota, status, cor, atualizadoEm: agora };
+          lembretes[idx] = { ...lembretes[idx], nota, status, cor, correto, finalizadoEm, atualizadoEm: agora };
         }
         await cadastroLembretesSalvar({ lembretes });
         return { ok: true, lembrete: lembretes.find((l) => l.chave === chave && l.tipo === tipo) };
