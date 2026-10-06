@@ -1319,6 +1319,8 @@ async function handleApi(req, res, pathname) {
             const existenteConfirmado = Boolean(existente) && existente.qtdRecebida !== null && existente.qtdRecebida !== undefined;
             // operador não mexe no que já foi confirmado
             if (!ehAdmin && existenteConfirmado) { ignorados++; continue; }
+            // uma cópia velha (de um navegador que ficou sem salvar) nunca "desconfirma" uma entrega já confirmada
+            if (existenteConfirmado && (u0.qtdRecebida === null || u0.qtdRecebida === undefined)) { ignorados++; continue; }
             const u = { ...u0 };
             for (const k of CAMPOS_IDENTIDADE) delete u[k]; // identidade nunca vem do navegador
             delete u.conferenciaSD3; // resultado do SD3 só entra por /api/controle-sd3 (admin) — nunca por aqui
