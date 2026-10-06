@@ -130,7 +130,7 @@ if (!process.env.SESSION_SECRET) {
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro"];
+const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -901,6 +901,66 @@ async function saidaReconciliar(indice) {
     }
     return { resolvidos, atualizados };
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Recebimento na expedição: a expedição BIPA o pedido que "desceu" do estoque.
+// Cada bipe é conferido com a aba "Saída p/ Expedição" (o que o estoque disse que
+// desceu). Também guarda volumes, o motivo de um pedido não sair hoje e, quando
+// o usuário de despacho sobe a planilha de Entrega do SC9, quais saíram de fato.
+// Guardado por dia (igual à Saída); a leitura de rotina vem da memória, sem
+// baixar nada do Supabase a cada atualização da tela.
+// ---------------------------------------------------------------------------
+const RECEB_DIAS_DUP = 3;      // um pedido já recebido nesses últimos dias não entra de novo
+const RECEB_DIAS_ENTREGA = 10; // a planilha de Entrega confirma recebimentos desses últimos dias
+const RECEB_MOTIVOS = ["Sem transportadora/coleta hoje", "Aguardando liberação ou pagamento do cliente", "Pedido incompleto (falta item)", "Alteração de pedido pendente", "Problema de endereço ou cadastro", "Cliente pediu para segurar", "Pedido cancelado ou retirado", "Outro"];
+const recebObj = (dia) => `recebimento-exp-${dia}.json`;
+const recebCache = new Map();
+async function recebCarregar(dia) {
+  if (recebCache.has(dia)) return recebCache.get(dia);
+  const data = await objLoad(recebObj(dia));
+  const v = data && Array.isArray(data.entries) ? data : { dia, versao: 0, entries: [], removidos: [] };
+  if (!Array.isArray(v.removidos)) v.removidos = [];
+  recebCache.set(dia, v);
+  return v;
+}
+async function recebGravar(dia, novo) {
+  novo.versao = (novo.versao || 0) + 1;
+  await objSave(recebObj(dia), novo);
+  recebCache.set(dia, novo);
+}
+const RECEB_ENTREGAS_OBJ = "recebimento-entregas.json";
+let recebEntregas = null;
+async function recebEntregasCarregar() {
+  if (recebEntregas) return recebEntregas;
+  const d = await objLoad(RECEB_ENTREGAS_OBJ);
+  recebEntregas = { uploads: Array.isArray(d && d.uploads) ? d.uploads : [] };
+  return recebEntregas;
+}
+const recebDiasJanela = (hoje, n) => Array.from({ length: n }, (_, i) => diaAnterior(hoje, i));
+// pedido -> { entry, dia } entre as saídas dos últimos dias (a mais nova vale)
+async function saidaMapaRecente(hoje, n) {
+  const mapa = new Map(); const versoes = [];
+  for (const dia of recebDiasJanela(hoje, n)) {
+    const d = await saidaCarregar(dia);
+    versoes.push(d.versao || 0);
+    for (const e of d.entries) if (!mapa.has(e.pedido)) mapa.set(e.pedido, { entry: e, dia });
+  }
+  return { mapa, versoes };
+}
+const descerResumo = (achado) => (achado
+  ? { status: "ok", saidaEm: achado.entry.registradoEm, saidaPor: achado.entry.registradoPorNome || achado.entry.registradoPorUsuario, saidaDia: achado.dia, emAlteracao: Boolean(achado.entry.alteracao && achado.entry.alteracao.status === "pendente") }
+  : { status: "sem_saida" });
+async function exigirRecebimento(req, res, { despacho = false, leitura = false } = {}) {
+  const sess = await getSession(req);
+  if (!sess) { sendJson(res, 401, { error: "não autenticado" }); return null; }
+  if (sess.role !== "admin" && sess.role !== "operador") { sendJson(res, 403, { error: "seu acesso não permite isso" }); return null; }
+  const perfis = sess.perfis || [];
+  const pode = sess.role === "admin"
+    || (despacho ? perfis.includes("despacho") : leitura ? (perfis.includes("recebimento") || perfis.includes("despacho")) : perfis.includes("recebimento"));
+  if (!pode) { sendJson(res, 403, { error: despacho ? "só o usuário de despacho pode confirmar a saída com a planilha de Entrega" : "seu acesso não permite isso" }); return null; }
+  return sess;
 }
 
 const LOGIN_RE = /^[a-z0-9._-]{3,30}$/;
@@ -1795,6 +1855,218 @@ async function handleApi(req, res, pathname) {
       const registros = podeVerTudo ? dados.registros : dados.registros.filter((r) => r.marcadoPorUsuario === sess.usuario);
       return sendJson(res, 200, { registros, motivos: MOTIVOS_ALTERACAO });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar alterações de separação")); }
+  }
+
+  // ---- Recebimento na expedição (perfil "recebimento"; planilha de Entrega só com o perfil "despacho") ----
+  if (pathname === "/api/recebimento" && method === "GET") {
+    const sess = await exigirRecebimento(req, res, { leitura: true }); if (!sess) return;
+    const q = new URL(req.url, "http://localhost").searchParams;
+    const hoje = diaSP();
+    const dia = q.get("dia") || hoje;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return sendJson(res, 400, { error: "dia inválido" });
+    if (sess.role !== "admin" && dia !== hoje && dia !== diaAnterior(hoje, 1)) return sendJson(res, 403, { error: "seu acesso só mostra hoje e ontem" });
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      const d = await recebCarregar(dia);
+      const { mapa, versoes } = await saidaMapaRecente(hoje, RECEB_DIAS_DUP);
+      const log = await recebEntregasCarregar();
+      const ultima = log.uploads.length ? log.uploads[log.uploads.length - 1] : null;
+      const ver = [dia, d.versao || 0, ...versoes, log.uploads.length, ultima ? ultima.em : ""].join("|");
+      if (q.get("v") !== null && q.get("v") === ver) return sendJson(res, 200, { igual: true, versao: ver, hoje });
+      const entries = d.entries.map((e) => ({ ...e, desceu: descerResumo(mapa.get(e.pedido)) }));
+      // "desceu" (Saída) nos últimos 2 dias que ainda NÃO foi recebido (em nenhum dos últimos dias)
+      let faltando = [];
+      if (dia === hoje) {
+        const recebidos = new Set();
+        for (const dd of recebDiasJanela(hoje, RECEB_DIAS_DUP)) for (const e of (await recebCarregar(dd)).entries) recebidos.add(e.pedido);
+        for (const [ped, a] of mapa) {
+          if (a.dia !== hoje && a.dia !== diaAnterior(hoje, 1)) continue;
+          if (recebidos.has(ped)) continue;
+          faltando.push({ pedido: ped, saidaEm: a.entry.registradoEm, saidaPor: a.entry.registradoPorNome || a.entry.registradoPorUsuario, saidaDia: a.dia, info: a.entry.info || null, emAlteracao: Boolean(a.entry.alteracao && a.entry.alteracao.status === "pendente") });
+        }
+        faltando.sort((x, y) => String(x.saidaEm).localeCompare(String(y.saidaEm)));
+      }
+      const perfis = sess.perfis || [];
+      return sendJson(res, 200, {
+        dia, hoje, versao: ver, entries, faltando, motivos: RECEB_MOTIVOS,
+        podeReceber: sess.role === "admin" || perfis.includes("recebimento"), podeDespacho: sess.role === "admin" || perfis.includes("despacho"),
+        ultimaEntrega: ultima, usuario: sess.usuario,
+      });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o recebimento")); }
+  }
+
+  if (pathname === "/api/recebimento/bipar" && method === "POST") {
+    const sess = await exigirRecebimento(req, res); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const ped = normalizarPedido(body && body.pedido);
+    if (!ped) return sendJson(res, 400, { error: "Código inválido: leia só o número do pedido." });
+    let indice = null;
+    try { indice = await indiceCarregar(); } catch { /* sem índice: registra mesmo assim, sinalizado */ }
+    const info = infoDoPedido(indice, ped);
+    const hoje = diaSP();
+    try {
+      const r = await comFila("recebimento", async () => {
+        for (const dia of recebDiasJanela(hoje, RECEB_DIAS_DUP)) {
+          const ex = (await recebCarregar(dia)).entries.find((e) => e.pedido === ped);
+          if (ex) return { duplicado: ex };
+        }
+        const { mapa } = await saidaMapaRecente(hoje, RECEB_DIAS_DUP);
+        const desceu = descerResumo(mapa.get(ped));
+        const atual = await recebCarregar(hoje);
+        const novo = { ...atual, entries: [...atual.entries], removidos: atual.removidos };
+        const entry = {
+          id: `rx_${ped}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`, pedido: ped,
+          recebidoPorUsuario: sess.usuario, recebidoPorNome: sess.nome, recebidoEm: new Date().toISOString(),
+          semDadoSC9: !info, info: resumoInfo(info), desceuNaHora: desceu.status,
+          volumes: null, naoSaiHoje: null, saiuEntrega: null,
+        };
+        novo.entries.unshift(entry);
+        await recebGravar(hoje, novo);
+        return { entry: { ...entry, desceu }, total: novo.entries.length, desceu };
+      });
+      if (r.duplicado) return sendJson(res, 409, { error: "duplicado", duplicado: r.duplicado, info });
+      return sendJson(res, 200, { ok: true, entry: r.entry, desceu: r.desceu, info, totalHoje: r.total });
+    } catch (e) {
+      console.error("Erro ao receber na expedição:", e);
+      return sendJson(res, 500, erroPublico(e, "erro ao registrar o recebimento"));
+    }
+  }
+
+  // volumes e/ou motivo de "não sai hoje" de um pedido já recebido
+  if (pathname === "/api/recebimento/atualizar" && method === "POST") {
+    const sess = await exigirRecebimento(req, res); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const id = body && typeof body.id === "string" ? body.id : "";
+    if (!id) return sendJson(res, 400, { error: "informe o id do registro" });
+    const temVol = body && Object.prototype.hasOwnProperty.call(body, "volumes");
+    const temMot = body && Object.prototype.hasOwnProperty.call(body, "naoSaiHoje");
+    if (!temVol && !temMot) return sendJson(res, 400, { error: "nada pra atualizar" });
+    let volumes = null;
+    if (temVol && body.volumes !== null && body.volumes !== "") {
+      volumes = Number(body.volumes);
+      if (!Number.isInteger(volumes) || volumes < 1 || volumes > 999) return sendJson(res, 400, { error: "Volumes: digite um número inteiro de 1 a 999." });
+    }
+    let mot = null;
+    if (temMot && body.naoSaiHoje) {
+      const m = String(body.naoSaiHoje.motivo || "").trim().slice(0, 80);
+      const obs = String(body.naoSaiHoje.obs || "").trim().slice(0, 200);
+      if (!m) return sendJson(res, 400, { error: "Escolha o motivo." });
+      if (m === "Outro" && !obs) return sendJson(res, 400, { error: "Em \"Outro\", escreva qual é o motivo." });
+      mot = { motivo: m, obs };
+    }
+    const hoje = diaSP();
+    try {
+      const r = await comFila("recebimento", async () => {
+        const dias = sess.role === "admin" ? recebDiasJanela(hoje, 30) : [hoje, diaAnterior(hoje, 1)];
+        for (const dia of dias) {
+          const atual = await recebCarregar(dia);
+          const e = atual.entries.find((x) => x.id === id);
+          if (!e) continue;
+          if (e.saiuEntrega && temMot && mot) return { erro: 409, msg: "Esse pedido já saiu para entrega — não dá mais pra marcar que não sai hoje." };
+          const agora = new Date().toISOString();
+          const novo = { ...atual, entries: atual.entries.map((x) => {
+            if (x.id !== id) return x;
+            const y = { ...x };
+            if (temVol) y.volumes = volumes === null ? null : volumes;
+            if (temMot) y.naoSaiHoje = mot ? { ...mot, por: sess.usuario, nome: sess.nome, em: agora } : null;
+            y.atualizadoPorUsuario = sess.usuario; y.atualizadoEm = agora;
+            return y;
+          }) };
+          await recebGravar(dia, novo);
+          return { ok: true, entry: novo.entries.find((x) => x.id === id) };
+        }
+        return { erro: 404, msg: "Registro não encontrado." };
+      });
+      if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+      return sendJson(res, 200, r);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao atualizar o recebimento")); }
+  }
+
+  if (pathname === "/api/recebimento/desfazer" && method === "POST") {
+    const sess = await exigirRecebimento(req, res); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const id = body && typeof body.id === "string" ? body.id : "";
+    const hoje = diaSP();
+    try {
+      const r = await comFila("recebimento", async () => {
+        const dias = sess.role === "admin" ? recebDiasJanela(hoje, 30) : [hoje, diaAnterior(hoje, 1)];
+        for (const dia of dias) {
+          const atual = await recebCarregar(dia);
+          const e = atual.entries.find((x) => x.id === id);
+          if (!e) continue;
+          if (sess.role !== "admin") {
+            if (e.recebidoPorUsuario !== sess.usuario) return { erro: 403, msg: "Só quem bipou consegue desfazer o próprio bipe." };
+            if (Date.now() - new Date(e.recebidoEm).getTime() > DESFAZER_MS) return { erro: 403, msg: "O prazo pra desfazer acabou. Fale com o administrador." };
+          }
+          if (e.saiuEntrega) return { erro: 409, msg: "Esse pedido já foi confirmado como saído para entrega." };
+          const novo = { ...atual, entries: atual.entries.filter((x) => x.id !== id), removidos: [...atual.removidos, { id: e.id, pedido: e.pedido, removidoPorUsuario: sess.usuario, removidoPorNome: sess.nome, removidoEm: new Date().toISOString(), recebidoPorUsuario: e.recebidoPorUsuario, recebidoEm: e.recebidoEm }] };
+          await recebGravar(dia, novo);
+          return { ok: true };
+        }
+        return { erro: 404, msg: "Registro não encontrado (talvez já tenha sido desfeito)." };
+      });
+      if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+      return sendJson(res, 200, r);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao desfazer")); }
+  }
+
+  // A planilha de Entrega (aba do SC9) CONFIRMA que o que foi recebido saiu para entrega.
+  // Só o usuário com o perfil "despacho" (ou o administrador).
+  if (pathname === "/api/recebimento/entrega" && method === "POST") {
+    const sess = await exigirRecebimento(req, res, { despacho: true }); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const linhas = body && Array.isArray(body.linhas) ? body.linhas : null;
+    if (!linhas || !linhas.length) return sendJson(res, 400, { error: "A planilha de Entrega veio vazia ou sem a coluna de pedidos." });
+    if (linhas.length > 100000) return sendJson(res, 400, { error: "Planilha grande demais." });
+    const doArquivo = new Map();
+    for (const l of linhas) {
+      if (!Array.isArray(l)) continue;
+      const ped = normalizarPedido(l[0]); if (!ped) continue;
+      const data = typeof l[1] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(l[1]) ? l[1] : null;
+      const transp = l[2] ? String(l[2]).trim().slice(0, 60) : null;
+      const ant = doArquivo.get(ped);
+      if (!ant || (data && (!ant.data || data > ant.data))) doArquivo.set(ped, { data, transp });
+    }
+    if (!doArquivo.size) return sendJson(res, 400, { error: "Não achei nenhum número de pedido válido na planilha." });
+    const nomeArq = String((body && body.nome) || "").slice(0, 120);
+    const hoje = diaSP();
+    try {
+      const r = await comFila("recebimento", async () => {
+        const agora = new Date().toISOString();
+        let confirmados = 0, jaConfirmados = 0, anteriores = 0; const naoSairam = [];
+        for (const dia of recebDiasJanela(hoje, RECEB_DIAS_ENTREGA)) {
+          const atual = await recebCarregar(dia);
+          let mudou = false;
+          const novos = atual.entries.map((e) => {
+            const f = doArquivo.get(e.pedido);
+            if (e.saiuEntrega) { if (f) jaConfirmados++; return e; }
+            if (!f) { if (dia >= diaAnterior(hoje, RECEB_DIAS_DUP - 1)) naoSairam.push({ pedido: e.pedido, dia, cliente: e.info && e.info.cliente, transportadora: e.info && e.info.transportadora, motivo: e.naoSaiHoje ? e.naoSaiHoje.motivo : null }); return e; }
+            if (f.data && f.data < dia) { // consta com saída ANTES de ter sido recebido: não confirma, só avisa
+              anteriores++;
+              naoSairam.push({ pedido: e.pedido, dia, cliente: e.info && e.info.cliente, transportadora: e.info && e.info.transportadora, motivo: e.naoSaiHoje ? e.naoSaiHoje.motivo : null, aviso: `consta na Entrega com data ${f.data}, antes de ser recebido (${dia})` });
+              return e;
+            }
+            confirmados++; mudou = true;
+            return { ...e, saiuEntrega: { em: agora, por: sess.usuario, nome: sess.nome, dataEntrega: f.data, transportadora: f.transp, arquivo: nomeArq } };
+          });
+          if (mudou) await recebGravar(dia, { ...atual, entries: novos });
+        }
+        const log = await recebEntregasCarregar();
+        const registro = { em: agora, por: sess.usuario, nome: sess.nome, arquivo: nomeArq, pedidosNoArquivo: doArquivo.size, confirmados, jaConfirmados, anteriores };
+        const novoLog = { uploads: [...log.uploads, registro].slice(-30) };
+        await objSave(RECEB_ENTREGAS_OBJ, novoLog);
+        recebEntregas = novoLog;
+        return { ok: true, ...registro, naoSairam: naoSairam.slice(0, 500), totalNaoSairam: naoSairam.length };
+      });
+      return sendJson(res, 200, r);
+    } catch (e) {
+      console.error("Erro ao confirmar a Entrega:", e);
+      return sendJson(res, 500, erroPublico(e, "erro ao confirmar a saída com a planilha de Entrega"));
+    }
   }
 
   // buscar um pedido em todos os dias guardados: "esse pedido já saiu? quem bipou e quando?"
