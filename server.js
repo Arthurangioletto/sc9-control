@@ -1746,6 +1746,27 @@ async function handleApi(req, res, pathname) {
         const cor = body.cor === undefined ? ((anterior && anterior.cor) || "") : (CORES_VALIDAS.includes(String(body.cor || "").trim()) ? String(body.cor || "").trim() : "");
         // lote correto (só duplicados): identidade do registro marcado (filial|produto|armazém|validade). Ausente = mantém.
         const correto = body.correto === undefined ? ((anterior && anterior.correto) || "") : String(body.correto || "").trim().slice(0, 300);
+        // conferência física (por registro): { fab, val (AAAA-MM-DD, só quando diferente do sistema), anvisa }.
+        // Chega como PATCH (só o que mudou; null apaga) e é mesclado aqui, pra duas pessoas editando registros
+        // diferentes do mesmo lote não apagarem uma a outra. Ausente = mantém.
+        let fisico = (anterior && anterior.fisico && typeof anterior.fisico === "object") ? { ...anterior.fisico } : {};
+        const patch = body.fisicoPatch && typeof body.fisicoPatch === "object" && !Array.isArray(body.fisicoPatch) ? body.fisicoPatch : null;
+        if (patch) {
+          for (const [k, pv] of Object.entries(patch).slice(0, 50)) {
+            const key = String(k).slice(0, 300); if (!key || !pv || typeof pv !== "object") continue;
+            const cur = { ...(fisico[key] || {}) };
+            for (const campo of ["fab", "val", "anvisa"]) {
+              if (!(campo in pv)) continue;
+              const raw = pv[campo];
+              if (raw === null || raw === undefined || String(raw).trim() === "") { delete cur[campo]; continue; }
+              const sv = String(raw).trim();
+              if (campo === "anvisa") cur.anvisa = sv.slice(0, 40);
+              else if (/^\d{4}-\d{2}-\d{2}$/.test(sv)) cur[campo] = sv;
+            }
+            if (Object.keys(cur).length) fisico[key] = cur; else delete fisico[key];
+          }
+          if (Object.keys(fisico).length > 300) return { erro: 400, msg: "registros demais na conferência física deste lote" };
+        }
         if (!chave) return { erro: 400, msg: "informe a chave do achado (lote/produto)" };
         if (!tipo) return { erro: 400, msg: "informe o tipo (duplicado ou validade)" };
         const idx = dados.lembretes.findIndex((l) => l.chave === chave && l.tipo === tipo);
@@ -1754,10 +1775,10 @@ async function handleApi(req, res, pathname) {
         // "finalizado" = status resolvido: guarda QUANDO foi finalizado (não muda em edições seguintes; some se reabrir)
         const finalizadoEm = status === "resolvido" ? ((idx !== -1 && lembretes[idx].status === "resolvido" && lembretes[idx].finalizadoEm) || agora) : null;
         if (idx === -1) {
-          const novo = { id: `lemb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, chave, tipo, nota, status, cor, correto, finalizadoEm, criadoEm: agora, criadoPorUsuario: sess.usuario, criadoPorNome: sess.nome, atualizadoEm: agora };
+          const novo = { id: `lemb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, chave, tipo, nota, status, cor, correto, fisico, finalizadoEm, criadoEm: agora, criadoPorUsuario: sess.usuario, criadoPorNome: sess.nome, atualizadoEm: agora };
           lembretes.push(novo);
         } else {
-          lembretes[idx] = { ...lembretes[idx], nota, status, cor, correto, finalizadoEm, atualizadoEm: agora };
+          lembretes[idx] = { ...lembretes[idx], nota, status, cor, correto, fisico, finalizadoEm, atualizadoEm: agora };
         }
         await cadastroLembretesSalvar({ lembretes });
         return { ok: true, lembrete: lembretes.find((l) => l.chave === chave && l.tipo === tipo) };
