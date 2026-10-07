@@ -30,6 +30,7 @@ const LOCAL_DIR = path.join(__dirname, "data");
 const CONTROLE_OBJ = "controle-0201.json";
 const USUARIOS_OBJ = "usuarios-controle.json";
 const SALDO_OBJ = "saldo-lotes.json";
+const MOV_ANALISE_OBJ = "movimentacao-analise.json"; // cópia COMPACTA da movimentação (só linhas com lote) pra análise de alteração
 const CONTROLE_SD3_OBJ = "controle-sd3.json"; // { coberturaAte, desde, semRegistro, atualizadoEm, atualizadoPor }
 const usingSupabase = Boolean(SB_URL && SB_KEY);
 const saveSnapshot = (d) => objSave("latest.json", d); // mesmo arquivo/bucket de antes (era do storage.js)
@@ -266,6 +267,7 @@ function readJsonBody(req) {
 
 // Fila simples: dois salvamentos do controle ao mesmo tempo não se atropelam
 // (cada um lê, junta e grava um de cada vez).
+let movAnaliseCache = null; // { savedAt, total, por, json, gz }
 let controleFila = Promise.resolve();
 function comFilaControle(fn) {
   const run = controleFila.then(fn, fn);
@@ -1861,6 +1863,47 @@ async function handleApi(req, res, pathname) {
       // vai dentro de cada bipe, que fica salvo pra sempre no arquivo do dia).
       return sendJson(res, 200, { pedido: ped, info: info ? { ...resumoInfo(info), itens: info.itens || [] } : null });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao buscar o pedido")); }
+  }
+
+  // ---- Movimentação (SD3) compacta para a análise automática da Alteração ----
+  // A movimentação bruta continua fora do servidor (pode ter 100 mil+ linhas). Aqui fica só o
+  // necessário pra análise por lote: apenas as linhas COM lote, em formato compacto (sem custos,
+  // sem descrição). O admin envia ao subir a planilha; o revisor (perfil "alteracoes") baixa
+  // ao abrir a tela — com ETag, então só baixa de novo quando o admin subir outra.
+  if (pathname === "/api/movimentacao-analise" && method === "POST") {
+    if (!(await exigir(req, res, ["admin"]))) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    if (!body || !Array.isArray(body.rows) || !Array.isArray(body.usuarios) || !Array.isArray(body.cfs)) return sendJson(res, 400, { error: "payload inválido — esperado { rows, usuarios, cfs }" });
+    if (body.rows.length > 600000) return sendJson(res, 400, { error: "movimentação grande demais" });
+    const rowsOk = body.rows.every((r) => Array.isArray(r) && r.length >= 11 && Number.isFinite(Number(r[0])));
+    if (!rowsOk) return sendJson(res, 400, { error: "linhas inválidas na movimentação" });
+    try {
+      const sess = await getSession(req);
+      const obj = { v: 1, savedAt: new Date().toISOString(), por: (sess && sess.usuario) || "admin", total: body.rows.length, totalOriginal: Number(body.totalOriginal) || body.rows.length, usuarios: body.usuarios.map(String), cfs: body.cfs.map(String), rows: body.rows };
+      await objSave(MOV_ANALISE_OBJ, obj);
+      movAnaliseCache = null;
+      return sendJson(res, 200, { ok: true, savedAt: obj.savedAt, total: obj.total });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar a movimentação")); }
+  }
+  if (pathname === "/api/movimentacao-analise" && method === "GET") {
+    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
+    if (sess.role !== "admin" && !(sess.perfis || []).includes("alteracoes")) return sendJson(res, 403, { error: "seu acesso não permite isso" });
+    try {
+      if (!movAnaliseCache) {
+        const d = await objLoad(MOV_ANALISE_OBJ);
+        if (!d) return sendJson(res, 404, { error: "nenhuma movimentação salva ainda" });
+        const json = Buffer.from(JSON.stringify(d), "utf8");
+        movAnaliseCache = { savedAt: d.savedAt, total: d.total, por: d.por, json, gz: await gzipAsync(json, { level: 6 }) };
+      }
+      const c = movAnaliseCache; const etag = `"${c.savedAt}"`;
+      const meta = new URL(req.url, "http://localhost").searchParams.get("meta");
+      if (meta) return sendJson(res, 200, { savedAt: c.savedAt, total: c.total, por: c.por });
+      const base = { "Content-Type": "application/json; charset=utf-8", "Vary": "Accept-Encoding", "ETag": etag, "Cache-Control": "private, no-cache" };
+      if (String(req.headers["if-none-match"] || "") === etag) { res.writeHead(304, base); return res.end(); }
+      if (aceitaGzip(req)) { res.writeHead(200, { ...base, "Content-Encoding": "gzip", "Content-Length": c.gz.length }); return res.end(c.gz); }
+      res.writeHead(200, { ...base, "Content-Length": c.json.length }); return res.end(c.json);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar a movimentação")); }
   }
 
   if (pathname === "/api/alteracao-separacao" && method === "GET") {
