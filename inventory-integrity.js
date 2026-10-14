@@ -68,6 +68,20 @@
       return result;
     });
   }
+  async function importPrepared(payload,send,onProgress=()=>{}){
+    if(payload?.format!=='sc9-sb8-v1'||!Array.isArray(payload.achados)||!payload.achados.length)throw new Error('Base processada SB8 inválida.');
+    const types=new Set(['duplicado','validadeVariavel','vencimento','saldoNegativo','multiFilial']);
+    for(const item of payload.achados){
+      if(!types.has(item?.tipo)||!item.dados||typeof item.dados!=='object'||!item.chave)throw new Error('Achado inválido na base processada.');
+      if(!individual(item.tipo)&&!Array.isArray(item.dados.registros))throw new Error('Grupo sem registros na base processada.');
+    }
+    for(let offset=0;offset<payload.achados.length;offset+=2000){
+      const chunk=payload.achados.slice(offset,offset+2000);
+      await send({acao:'sincronizar',achados:chunk,completeGroups:true});
+      onProgress(Math.min(offset+chunk.length,payload.achados.length),payload.achados.length);
+    }
+    return {records:Number(payload.source?.rows)||0,findings:payload.achados.length};
+  }
   function allExpiryRecords(rows,now=new Date()){return rows.filter(row=>Number(row.saldo)>0&&row.dtValidade&&!isNaN(new Date(row.dtValidade))).map(row=>({...row,diasParaVencer:Math.round((new Date(row.dtValidade)-now)/86400000),jaVencido:new Date(row.dtValidade)<now}));}
   function LegacyNotes({notes}){
     const pending=notes.filter(note=>note.legacyUnscoped||note.legacyRecordFields?.length);if(!pending.length)return null;
@@ -82,5 +96,5 @@
         Object.entries(note.fisico||{}).filter(([key])=>key.startsWith('|')).map(([key,value])=>h('p',{key},key+' · '+Object.entries(value).map(([field,text])=>field+': '+text).join(' · '))),
         h('small',null,'Situação anterior: '+(note.status||'pendente')))));
   }
-  const api={allExpiryRecords,individual,recordKey,currentFindings,findingKey,legacyKey,mergeFinding,canonicalizeFindings,migrateNotes,LegacyNotes};root.SC9Inventory=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  const api={importPrepared,allExpiryRecords,individual,recordKey,currentFindings,findingKey,legacyKey,mergeFinding,canonicalizeFindings,migrateNotes,LegacyNotes};root.SC9Inventory=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window==='undefined'?globalThis:window);

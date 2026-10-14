@@ -37,3 +37,17 @@ test('conferência física ambígua ou conflitante fica preservada e não é cop
  const conflict={...note,fisico:{...note.fisico,'1|A|1|2020-01-01':{anvisa:'456'}}};
  const result=I.migrateNotes([conflict],[{...finding,dados:{registros:[row('01')]}}])[0];assert.deepEqual(result.fisico,conflict.fisico);assert.deepEqual(result.legacyRecordFields,['conferência física']);
 });
+
+test('importação processada valida a base inteira antes de gravar e mantém grupos completos',async()=>{
+ const items=Array.from({length:2001},(_,n)=>({chave:'L'+n,tipo:'duplicado',dados:{registros:[row()]}}));const calls=[],progress=[];
+ const result=await I.importPrepared({format:'sc9-sb8-v1',source:{rows:421130},achados:items},async body=>calls.push(body),(done,total)=>progress.push([done,total]));
+ assert.deepEqual(calls.map(c=>c.achados.length),[2000,1]);assert(calls.every(c=>c.completeGroups===true));assert.deepEqual(progress,[[2000,2001],[2001,2001]]);assert.equal(result.records,421130);assert.equal(result.findings,2001);
+ const invalid=[...items,{chave:'x',tipo:'duplicado',dados:{}}];let writes=0;
+ await assert.rejects(I.importPrepared({format:'sc9-sb8-v1',achados:invalid},async()=>writes++),/sem registros/);assert.equal(writes,0);
+});
+
+test('importação processada interrompe após erro e não comunica conclusão parcial',async()=>{
+ const items=Array.from({length:4001},(_,n)=>({chave:'L'+n,tipo:'duplicado',dados:{registros:[row()]}}));let sends=0;const progress=[];
+ await assert.rejects(I.importPrepared({format:'sc9-sb8-v1',achados:items},async()=>{if(++sends===2)throw Error('503');},done=>progress.push(done)),/503/);
+ assert.equal(sends,2);assert.deepEqual(progress,[2000]);
+});
