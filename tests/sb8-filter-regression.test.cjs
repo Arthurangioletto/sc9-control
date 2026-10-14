@@ -124,3 +124,13 @@ test('exclusões lógicas consecutivas não interrompem a leitura',async()=>{
  const parsed=await pi({SheetNames:['SB8'],Sheets:{SB8:sheet([headers,...deleted,['03','B','59','ATIVO',9,' ']])}});
  assert.equal(parsed.records.length,1);assert.equal(parsed.records[0].lote,'ATIVO');
 });
+
+test('cópia CSV conserva zeros dos códigos e datas compactas textuais',async()=>{
+ const parsed=await pi({SheetNames:['Sheet1'],Sheets:{Sheet1:sheet([
+  ['Filial','Produto','Lote','Armazem','Saldo','Fabricacao','Validade','Dt Entrada'],
+  ['01','000123','000456','01','5','20220228','20280102','20230118']
+ ])}});
+ assert.equal(parsed.records[0].produto,'000123');assert.equal(parsed.records[0].lote,'000456');assert.equal(parsed.records[0].saldo,5);assert.equal(parsed.records[0].dtFabricacao.getFullYear(),2022);
+ const upload=bundle.slice(bundle.indexOf('let bt=async u=>'),bundle.indexOf('},Ot=async',bundle.indexOf('let bt=async u=>')));
+ assert.match(upload,/raw:!0/);assert.match(bundle,/accept:t\?"\.xlsx,\.xls,\.csv,\.json":"\.xlsx,\.xls,\.csv",onChange:u=>bt/);
+});
