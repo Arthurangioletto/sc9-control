@@ -11,7 +11,7 @@
     const [head, body] = children(tableChildren);
     const labels = children(children(head.props.children)[0].props.children).map(cell => cell.props.children);
     const rows = children(body.props.children);
-    return h('div', { className: 'sc9-lot-records' }, rows.map((row, index) => {
+    return h('div', { className: 'sc9-lot-records' }, h(root.SC9Paging.List, { items: rows, size: 20, hideSingleControls: true, label: 'registros do lote ' + lot, renderItem: (row, index) => {
       const cells = children(row.props.children);
       if (cells.some(cell => cell.props.colSpan)) {
         return h('div', { key: row.key || index, className: 'sc9-lot-total' }, cells.map((cell, i) => h('span', { key: i, style: cell.props.style }, cell.props.children)));
@@ -32,6 +32,6 @@
           return h(Field, { key: i, ...field, label: title, extraClass: 'sc9-lot-manual-field' });
         })),
         financial.length > 0 && h('details', { className: 'sc9-lot-financial' }, h('summary', null, 'Valores e impacto financeiro'), h('div', { className: 'sc9-lot-financial-fields' }, financial.map((field, i) => h(Field, { key: i, ...field })))));
-    }));
+    } }));
   };
 })(window);
