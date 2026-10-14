@@ -124,3 +124,17 @@ Validação local: `node --check navigation.js`, `node --check bundle.js` e
 `node --check server.js`. Inicie com `npm start`, importe uma base de teste e
 verifique a troca de telas, os filtros de armazém, a expansão da tabela e o menu
 em uma janela estreita. Não inclua planilhas reais nem arquivos de `data/` no PR.
+
+### Filtro de unidade no cadastro de lotes
+
+O seletor **Unidade** separa Cambuci (filial 01) e Tamboré (filial 03), conforme a
+coluna Filial do SB8. **Todas as unidades** mantém também registros de outras
+filiais ou sem filial informada. Esse seletor é independente de **Só o armazém**
+e da prioridade de saldo. Listas, indicadores, busca e exportações seguem a unidade
+selecionada, tanto com o SB8 carregado quanto com os achados salvos. Achados sem
+filial identificável só aparecem em Todas as unidades.
+
+A sincronização mantém a análise completa: mudar a seleção não grava uma versão
+parcial sobre os achados existentes. A lógica de normalização e o seletor ficam
+em `lot-filters.js`. Execute `node --test tests/lot-filters.test.cjs` para validar
+os códigos e a filtragem sem alterar os dados originais.
