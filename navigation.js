@@ -74,7 +74,7 @@
     const title = imports ? 'Importações' : root.SC9Followup.labelFor(analysis);
     return h('div', { className: 'sc9-lot-workspace' },
       h('aside', { className: 'sc9-lot-sidebar' },
-        h('div', { className: 'sc9-lot-sidebar-title' }, h('strong', null, 'Cadastro de lotes'),
+        h('div', { className: 'sc9-lot-sidebar-title' }, h('strong', null, 'Produtos Duplicados'),
           h('button', { type: 'button', className: 'sc9-lot-menu-toggle',
             'aria-expanded': menuOpen, 'aria-controls': 'sc9-lot-navigation',
             onClick: () => setMenuOpen(value => !value) }, menuOpen ? 'Fechar menu' : 'Abrir menu')),
