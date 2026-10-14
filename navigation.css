@@ -58,3 +58,23 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 .sc9-filial-filter { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--sc9-muted); font-weight:600; }
 .sc9-filial-filter select { padding:7px 10px; border:1px solid var(--sc9-border); border-radius:8px; background:var(--sc9-panel2); color:var(--sc9-ink); font-size:12px; font-weight:400; }
 .sc9-filial-filter select:focus-visible { outline:2px solid var(--sc9-accent); outline-offset:2px; }
+.sc9-lot-instructions { margin:8px 0 12px; color:var(--sc9-dim); font-size:12px; line-height:1.6; }
+.sc9-lot-records { display:grid; gap:12px; min-width:0; }
+.sc9-lot-record { min-width:0; border:1px solid var(--sc9-border); border-left:4px solid var(--sc9-accent); border-radius:10px; background:var(--sc9-panel); overflow:hidden; }
+.sc9-lot-data-row { display:grid; grid-template-columns:minmax(75px,.8fr) minmax(95px,1fr) 42px minmax(95px,1fr) minmax(110px,1.7fr) 55px minmax(65px,1fr) 52px; gap:12px; padding:14px; align-items:start; }
+.sc9-lot-field { min-width:0; }
+.sc9-lot-field-label { display:block; margin-bottom:7px; color:var(--sc9-dim); font-size:10px; font-weight:500; line-height:1.4; }
+.sc9-lot-field-value { display:block; color:var(--sc9-ink); font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.sc9-lot-field-value>span { white-space:normal!important; }
+.sc9-lot-decision .sc9-lot-field-value { display:flex; align-items:flex-start; gap:7px; }
+.sc9-lot-decision .sc9-lot-field-value span { padding:0; font-size:10px; }
+.sc9-lot-manual-row { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; padding:14px; border-top:1px solid var(--sc9-border-soft); background:var(--sc9-panel2); align-items:start; }
+.sc9-lot-manual-field input { box-sizing:border-box; width:100%!important; min-width:0!important; max-width:100%; padding:6px!important; font-size:12px!important; min-height:34px; }
+.sc9-lot-manual-field .sc9-lot-field-value>div { min-width:0; }
+.sc9-lot-manual-field .sc9-lot-field-value>div>input { flex:1; }
+.sc9-lot-financial { padding:10px 14px; border-top:1px solid var(--sc9-border-soft); color:var(--sc9-muted); font-size:11px; }
+.sc9-lot-financial summary { cursor:pointer; }
+.sc9-lot-financial-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding-top:12px; }
+.sc9-lot-total { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:12px; padding:10px; border-top:1px solid var(--sc9-border); }
+@media(max-width:1200px) { .sc9-lot-data-row { grid-template-columns:repeat(4,minmax(0,1fr)); } .sc9-lot-manual-row { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:600px) { .sc9-lot-data-row,.sc9-lot-manual-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .sc9-lot-financial-fields { grid-template-columns:1fr; } }

@@ -138,3 +138,16 @@ A sincronização mantém a análise completa: mudar a seleção não grava uma 
 parcial sobre os achados existentes. A lógica de normalização e o seletor ficam
 em `lot-filters.js`. Execute `node --test tests/lot-filters.test.cjs` para validar
 os códigos e a filtragem sem alterar os dados originais.
+
+### Registros de lotes em duas linhas
+
+Na análise de lotes associados a mais de um produto, cada registro aparece em um
+bloco: a primeira linha reúne lote, ação, filial, produto, descrição, armazém,
+endereço e saldo; a segunda reúne as datas de referência, fabricação/validade
+físicas editáveis e registro ANVISA. Em telas menores, os campos se distribuem em
+mais linhas para evitar rolagem lateral. Os valores financeiros, quando
+carregados, ficam em uma seção expansível do registro.
+
+O componente `lot-records.js` reaproveita os campos e callbacks existentes; a
+exportação continua usando os mesmos dados. Datas físicas também são confirmadas
+ao sair do campo. As datas do sistema e a data de entrada permanecem referências.
