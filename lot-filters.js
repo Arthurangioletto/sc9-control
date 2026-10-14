@@ -159,3 +159,24 @@
   root.SC9Paging = { pageInfo, targetPage, Controls, List };
   if (typeof module !== 'undefined' && module.exports) module.exports.paging = root.SC9Paging;
 })(typeof window === 'undefined' ? globalThis : window);
+
+/* Follow-up stays within the selected analysis; existing note identities are retained. */
+(function (root) {
+  const analyses = [
+    { id: 'duplicado', type: 'duplicado', label: 'Lote em mais de um produto' },
+    { id: 'validadeVariavel', type: 'validadeVariavel', label: 'Validade inconsistente' },
+    { id: 'validade', type: 'vencimento', label: 'Vencimento' },
+    { id: 'saldoNegativo', type: 'saldoNegativo', label: 'Saldo negativo' },
+    { id: 'multiFilial', type: 'multiFilial', label: 'Filiais' }
+  ];
+  function typeFor(id) { return analyses.find(item => item.id === id || item.type === id)?.type || null; }
+  function labelFor(type) { return analyses.find(item => item.type === typeFor(type))?.label || ''; }
+  function scope(items, type) { return items.filter(item => item.tipo === typeFor(type)); }
+  function counts(items) {
+    const result = Object.fromEntries(analyses.map(item => [item.type, 0]));
+    for (const item of items) if (Object.hasOwn(result, item.tipo)) result[item.tipo]++;
+    return result;
+  }
+  root.SC9Followup = { analyses, typeFor, labelFor, scope, counts };
+  if (typeof module !== 'undefined' && module.exports) module.exports.followup = root.SC9Followup;
+})(typeof window === 'undefined' ? globalThis : window);

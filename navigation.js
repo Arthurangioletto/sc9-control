@@ -52,38 +52,26 @@
   };
 })();
 
-/* Internal SB8 navigation: imports and analyses share one workspace. */
+/* SB8 analyses contain their own follow-up views. */
 (function (root) {
-  const h = root.React.createElement;
-  const labels = {
-    duplicado: 'Lote em mais de um produto',
-    validadeVariavel: 'Validade inconsistente',
-    validade: 'Vencimento',
-    saldoNegativo: 'Saldo negativo',
-    multiFilial: 'Filiais',
-    marcados: 'Marcados',
-    finalizados: 'Finalizados'
-  };
-  root.SC9LotWorkspace = function LotWorkspace({ tabs, active, onNavigate, children }) {
-    const [menuOpen, setMenuOpen] = root.React.useState(false);
-    const items = root.React.Children.toArray(children);
-    const imports = active === 'importacoes';
-    function navigate(id) { onNavigate(id); setMenuOpen(false); }
-    function link(id, text, count) {
+  const R = root.React, h = R.createElement;
+  root.SC9LotWorkspace = function LotWorkspace({ tabs, active, analysis, followup, onNavigate, children }) {
+    const [menuOpen, setMenuOpen] = R.useState(false);
+    const [expanded, setExpanded] = R.useState({});
+    const items = R.Children.toArray(children), imports = active === 'importacoes';
+    R.useEffect(() => {
+      if (!imports) setExpanded(previous => ({ ...previous, [analysis]: true }));
+    }, [analysis, active, imports]);
+    function navigate(view, type) { onNavigate(view, type); setMenuOpen(false); }
+    function link(view, type, text, count) {
+      const selected = active === view && analysis === type;
       return h('button', {
-        key: id, type: 'button', className: 'sc9-lot-nav-link',
-        'aria-current': active === id ? 'page' : undefined,
-        onClick: () => navigate(id)
-      }, h('span', null, text), count != null && h('span', { className: 'sc9-lot-nav-count' }, count));
+        key: view, type: 'button', className: 'sc9-lot-nav-link sc9-lot-sub-link',
+        'aria-current': selected ? 'page' : undefined,
+        onClick: () => navigate(view, type)
+      }, h('span', null, text), h('span', { className: 'sc9-lot-nav-count' }, count || 0));
     }
-    function group(title, ids) {
-      return h('div', { className: 'sc9-lot-nav-group', key: title },
-        h('p', { className: 'sc9-lot-nav-heading' }, title),
-        tabs.filter(([id]) => ids.includes(id)).map(([id, text]) => {
-          const count = String(text).match(/\((\d+)\)$/);
-          return link(id, labels[id] || text, count ? count[1] : null);
-        }));
-    }
+    const title = imports ? 'Importações' : root.SC9Followup.labelFor(analysis);
     return h('div', { className: 'sc9-lot-workspace' },
       h('aside', { className: 'sc9-lot-sidebar' },
         h('div', { className: 'sc9-lot-sidebar-title' }, h('strong', null, 'Cadastro de lotes'),
@@ -92,12 +80,30 @@
             onClick: () => setMenuOpen(value => !value) }, menuOpen ? 'Fechar menu' : 'Abrir menu')),
         h('nav', { id: 'sc9-lot-navigation', 'aria-label': 'Seções do cadastro de lotes',
           className: 'sc9-lot-navigation' + (menuOpen ? ' is-open' : '') },
-          group('Análises', ['duplicado', 'validadeVariavel', 'validade', 'saldoNegativo', 'multiFilial']),
-          group('Acompanhamento', ['marcados', 'finalizados']),
-          h('div', { className: 'sc9-lot-nav-group' },
+          root.SC9Followup.analyses.map(item => {
+            const tab = tabs.find(([id]) => id === item.id);
+            if (!tab) return null;
+            const open = expanded[item.type] ?? (!imports && analysis === item.type);
+            const panelId = 'sc9-lot-analysis-' + item.id;
+            const count = String(tab[1]).match(/\((\d+)\)$/)?.[1] || 0;
+            return h('section', { key: item.id, className: 'sc9-lot-analysis-group' },
+              h('button', {
+                type: 'button', className: 'sc9-lot-analysis-toggle',
+                'aria-label': item.label, 'aria-expanded': open, 'aria-controls': panelId,
+                onClick: () => setExpanded(previous => ({ ...previous, [item.type]: !open }))
+              }, h('span', null, item.label), h('span', { 'aria-hidden': true }, open ? '−' : '+')),
+              h('div', { id: panelId, hidden: !open, className: 'sc9-lot-sub-tabs' },
+                link(item.id, item.type, 'Análise', count),
+                link('marcados', item.type, 'Marcados', followup?.marked[item.type]),
+                link('finalizados', item.type, 'Finalizados', followup?.finalized[item.type])));
+          }),
+          h('div', { className: 'sc9-lot-nav-group sc9-lot-bases' },
             h('p', { className: 'sc9-lot-nav-heading' }, 'Bases de dados'),
-            link('importacoes', 'Importações')))),
+            h('button', { type: 'button', className: 'sc9-lot-nav-link', 'aria-current': imports ? 'page' : undefined,
+              onClick: () => navigate('importacoes') }, 'Importações')))),
       h('div', { className: 'sc9-lot-workspace-content' },
+        h('p', { className: 'sc9-lot-current-analysis' }, title,
+          !imports && ' / ' + (active === 'marcados' ? 'Marcados' : active === 'finalizados' ? 'Finalizados' : 'Análise')),
         items[0],
         h('section', { hidden: !imports, 'aria-label': 'Importações do cadastro de lotes' },
           h('div', { className: 'sc9-lot-page-heading' },

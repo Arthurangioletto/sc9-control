@@ -185,3 +185,16 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 .sc9-page-buttons button,.sc9-page-buttons select{border:1px solid #D2D9F0;border-radius:7px;background:#fff;color:#435782;padding:6px 9px;font-size:12px;cursor:pointer;}
 .sc9-page-buttons button:disabled{opacity:.4;cursor:default;}
 .sc9-page-buttons button:focus-visible,.sc9-page-buttons select:focus-visible{outline:2px solid #4F63D2;outline-offset:2px;}
+
+/* Acompanhamento dentro de cada análise. */
+.sc9-lot-sidebar{max-height:calc(100dvh - 40px);overflow-y:auto;}
+.sc9-lot-analysis-group{padding-top:10px;}
+.sc9-lot-analysis-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:11px 8px;border:0;background:transparent;color:#435782;text-align:left;font-size:11px;line-height:1.5;font-weight:600;letter-spacing:.03em;text-transform:uppercase;cursor:pointer;}
+.sc9-lot-analysis-toggle>span:last-child{flex-shrink:0;font-size:15px;font-weight:400;color:#7181AF;}
+.sc9-lot-analysis-toggle:hover{color:#4F63D2;}
+.sc9-lot-analysis-toggle:focus-visible{outline:2px solid #4F63D2;outline-offset:1px;border-radius:7px;}
+.sc9-lot-sub-tabs{margin:0 1px 4px 7px;padding-left:7px;border-left:1px solid #E3E8F5;}
+.sc9-lot-sub-link{padding:9px 9px;}
+.sc9-lot-bases{margin-top:14px;border-top:1px solid #E6EAF5;}
+.sc9-lot-current-analysis{color:#7181AF;font-size:11px;line-height:1.5;margin:0 0 12px;}
+@media(max-width:900px){.sc9-lot-sidebar{max-height:none;overflow:visible;}}

@@ -52,7 +52,7 @@ test('exportação de finalizados usa todos os itens, independentemente da pági
  const items=Array.from({length:63},(_,i)=>({chave:'L'+i,achado:{lote:'L'+i}}));
  let exported;
  const fn=vm.runInNewContext('('+bundle.slice(start+3,end)+')',{
-  Ta:items,_e:{},ve:x=>x,Gi:rows=>{assert(Array.isArray(rows));return rows;},
+  Ta:items,sc9Analysis:"duplicado",_e:{},ve:x=>x,Gi:rows=>{assert(Array.isArray(rows));return rows;},
   yt:rows=>{exported=rows;},ze:()=>'',Date,window:{alert:message=>{throw Error(message);}},
   React:{createElement:()=>{throw Error('Exportação tentou renderizar paginação');}}
  });
