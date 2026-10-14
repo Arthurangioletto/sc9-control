@@ -98,3 +98,29 @@ Se um dia você quiser mudar alguma regra do painel, me pede o código-fonte
   com requisições HTTP reais, o painel renderizando, a lógica de negócio) mas
   a integração final Render+Supabase+CDN só se prova no primeiro deploy real.
   Se algo não subir, me manda a mensagem de erro exata que eu conserto.
+
+## Navegação por áreas
+
+O painel agrupa as telas em Visão geral, Operação, Produtividade, Análises e
+Administração. No computador, a navegação aparece na lateral; abaixo de 1024 px,
+o botão **Abrir menu** revela os grupos. Cada grupo pode ser expandido ou recolhido.
+Os filtros de armazém e os controles existentes continuam disponíveis.
+
+A visão geral mantém a paleta original, distribui os indicadores em até quatro
+colunas e permite expandir **Consultar pedidos** para acessar a tabela detalhada.
+
+- `navigation.js`: componente React legível de navegação; recebe a lista de abas
+  já filtrada pelo aplicativo e não concede permissões adicionais.
+- `navigation.css`: estilos do menu, cabeçalho, indicadores e layout responsivo.
+- `index.html`: carrega os estilos e o componente antes de `bundle.js`.
+- `server.js`: permite servir esses dois arquivos estáticos adicionais.
+
+O `App.jsx` original ainda não está disponível neste repositório. A integração
+no `bundle.js` é limitada à navegação, ao grid de indicadores e à tabela recolhível.
+Se o bundle for recompilado a partir do fonte original, essas três integrações
+precisam ser levadas para o JSX antes da compilação.
+
+Validação local: `node --check navigation.js`, `node --check bundle.js` e
+`node --check server.js`. Inicie com `npm start`, importe uma base de teste e
+verifique a troca de telas, os filtros de armazém, a expansão da tabela e o menu
+em uma janela estreita. Não inclua planilhas reais nem arquivos de `data/` no PR.
