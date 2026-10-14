@@ -137,3 +137,11 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 .sc9-legacy-notes summary { cursor:pointer; font-weight:600; color:var(--sc9-muted); }
 .sc9-legacy-notes p { margin:8px 0; line-height:1.6; }
 .sc9-legacy-notes>div { padding:10px 0; border-top:1px solid var(--sc9-border-soft); }
+
+/* Importações ficam recolhidas para priorizar a análise dos lotes. */
+.sc9-imports{border:1px solid #D2D9F0;border-radius:12px;background:#fff;}
+.sc9-imports>summary{cursor:pointer;padding:14px 16px;color:#12234A;font-size:13px;font-weight:600;}
+.sc9-imports-hint{margin-left:12px;color:#7181AF;font-size:11px;font-weight:400;}
+.sc9-imports-content{display:flex;flex-direction:column;gap:12px;padding:0 12px 12px;}
+.sc9-imports>summary:focus-visible{outline:2px solid #4F63D2;outline-offset:2px;border-radius:12px;}
+@media(max-width:600px){.sc9-imports-hint{display:none;}}
