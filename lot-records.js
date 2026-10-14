@@ -5,7 +5,7 @@
   function Field({ label, cell, extraClass = '' }) {
     return h('div', { className: 'sc9-lot-field ' + extraClass },
       h('span', { className: 'sc9-lot-field-label' }, label),
-      h('div', { className: 'sc9-lot-field-value', style: { color: cell.props.style && cell.props.style.color } }, cell.props.children));
+      h('div', { className: 'sc9-lot-field-value', style: { color: cell.props.style && cell.props.style.color } }, label === 'Filial' && ['', '—'].includes(String(cell.props.children || '').trim()) ? 'Não informada' : cell.props.children));
   }
   root.SC9LotRecords = function LotRecords({ lot, children: tableChildren }) {
     const [head, body] = children(tableChildren);
