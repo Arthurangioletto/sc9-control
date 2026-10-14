@@ -125,3 +125,11 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
   .sc9-sidebar.is-collapsed .sc9-brand-mark { flex-shrink:0; }
 }
 @media(max-width:1023px) { .sc9-sidebar-collapse { display:none; } }
+.sc9-brand { gap:9px; padding:24px 14px; }
+.sc9-brand>div { min-width:0; flex:1; }
+.sc9-brand strong { font-size:14px; white-space:nowrap; }
+.sc9-brand .sc9-sidebar-collapse { flex-shrink:0; margin:0; padding:6px; background:transparent; border-color:transparent; }
+@media(min-width:1024px) {
+  .sc9-sidebar.is-collapsed .sc9-brand { flex-direction:column; gap:14px; padding:20px 10px; }
+  .sc9-sidebar.is-collapsed .sc9-brand .sc9-sidebar-collapse { margin:0; padding:6px; }
+}

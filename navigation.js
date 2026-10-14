@@ -32,8 +32,9 @@
         h('div', null, h('p', { className: 'sc9-breadcrumb' }, section ? section.name : 'SC9 Control'), h('h1', null, title), h('p', { className: 'sc9-page-description' }, 'Consulte os indicadores e acompanhe sua operação.')),
         h('button', { type: 'button', className: 'sc9-menu-toggle', onClick: () => setMobileOpen(!mobileOpen), 'aria-expanded': mobileOpen, 'aria-controls': 'sc9-navigation' }, mobileOpen ? 'Fechar menu' : 'Abrir menu')),
       h('aside', { className: 'sc9-sidebar' + (mobileOpen ? ' is-open' : '') + (collapsed ? ' is-collapsed' : '') },
-        h('div', { className: 'sc9-brand' }, h('span', { className: 'sc9-brand-mark', 'aria-hidden': true }, 'S9'), h('div', null, h('strong', null, 'SC9 Control'), h('span', null, 'Gestão da operação'))),
-        h('button', { type: 'button', className: 'sc9-sidebar-collapse', onClick: toggleSidebar, 'aria-expanded': !collapsed, 'aria-controls': 'sc9-navigation', 'aria-label': collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral', title: collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral' }, h('span', { 'aria-hidden': true }, collapsed ? '›' : '‹'), h('span', { className: 'sc9-collapse-label' }, 'Recolher menu')),
+        h('div', { className: 'sc9-brand' }, h('span', { className: 'sc9-brand-mark', 'aria-hidden': true }, 'S9'), h('div', null, h('strong', null, 'SC9 Control'), h('span', null, 'Gestão da operação')),
+          h('button', { type: 'button', className: 'sc9-sidebar-collapse', onClick: toggleSidebar, 'aria-expanded': !collapsed, 'aria-controls': 'sc9-navigation', 'aria-label': collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral', title: collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral' },
+            h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true }, h('rect', { x: 3, y: 4, width: 18, height: 16, rx: 3 }), h('path', { d: 'M9 4v16' })))),
         h('nav', { id: 'sc9-navigation', 'aria-label': 'Áreas do painel' }, sections.map(group => {
           const items = group.ids.map(id => tabs.find(([tab]) => tab === id)).filter(Boolean);
           if (!items.length) return null;
