@@ -171,3 +171,31 @@ A leitura da referência `BASE (SB8)` motivou aceitar os cabeçalhos abreviados
 A exportação do recorte inclui filial, unidade, armazém, produto, lote, saldo,
 ano/mês, dias vencidos e faixa de tempo. Os controles de marcação e notas são
 os existentes. Testes: `node --test tests/*.test.cjs`.
+
+## Integridade e compatibilidade dos dados
+
+- Lotes duplicados entre produtos continuam agrupados pelo lote, para análise.
+- Ocorrências individuais de vencimento e saldo negativo usam uma chave v2 com
+  filial, armazém, produto, lote e validade. A mesma função é usada no navegador
+  e no servidor (`inventory-integrity.js`). Tipos de achados têm namespaces distintos.
+- Notas antigas são vinculadas automaticamente somente quando o achado salvo
+  permite identificar uma única ocorrência. As demais ficam preservadas na seção
+  de observações antigas sem vínculo único; não são copiadas para várias filiais.
+- A sincronização do navegador usa a base completa, sem filtros de filial,
+  armazém ou prazo. Filtros afetam a visualização e a exportação. Clientes antigos
+  que enviarem grupos parciais têm seus registros mesclados pelo servidor; o
+  front atual identifica seus grupos completos com `completeGroups`.
+- Falhas de leitura do armazenamento não são convertidas em listas vazias no
+  cadastro. Isso evita tratar uma indisponibilidade como ausência de dados.
+- Dashboard exige o perfil `geral`. Consulta de pedido permite `geral`, `saida`,
+  `alteracoes`, `recebimento` ou `despacho`, além do administrador.
+- O índice normaliza os números dos pedidos tanto nos pedidos quanto nos itens
+  e transportadoras, preservando os vínculos quando existem zeros à esquerda.
+
+Após publicar, recarregue o navegador. Reimporte o SC9 para reconstruir o índice
+já salvo e o SB8 completo para recompor ocorrências que versões anteriores tenham
+sobrescrito. A correção preserva os dados disponíveis; não recupera registros que
+já deixaram de existir sem uma fonte ou backup.
+
+Execute `npm test`: inclui testes de identidade/migração/filtros e integração
+HTTP em um diretório temporário, com Supabase desativado e dados fictícios.

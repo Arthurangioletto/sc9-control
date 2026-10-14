@@ -8,12 +8,14 @@
     if (!filial) return rows;
     return rows.filter(row => normalize(row.filial) === normalize(filial));
   }
-  function findings(items, filial) {
-    if (!filial) return items;
+  function findings(items, filial, warehouse = '') {
+    const hasWarehouse = warehouse && warehouse !== '__TODOS__';
+    if (!filial && !hasWarehouse) return items;
+    const scope = rows => records(rows, filial).filter(row => !hasWarehouse || normalize(row.armazem) === normalize(warehouse));
     return items.flatMap(item => {
       const data = item.dados || {};
-      if (!Array.isArray(data.registros)) return records([data], filial).length ? [item] : [];
-      const scoped = records(data.registros, filial);
+      if (!Array.isArray(data.registros)) return scope([data]).length ? [item] : [];
+      const scoped = scope(data.registros);
       if (!scoped.length) return [];
       // Retain the complete finding's classification, but show/export only this unit's rows.
       return [{ ...item, dados: { ...data, registros: scoped, temSaldoAtivo: scoped.some(row => row.saldo > 0) } }];

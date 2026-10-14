@@ -1,5 +1,6 @@
 // Servidor sem dependências externas (só Node puro) — mais rápido de instalar
 // no Render e mais fácil de eu testar aqui antes de te entregar.
+const Inventory = require("./inventory-integrity.js");
 const http = require("http");
 const zlib = require("zlib");
 const fs = require("fs");
@@ -13,7 +14,7 @@ const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
 // (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
-const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js"]);
+const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "inventory-integrity.js"]);
 // ---- Armazenamento AUTOSSUFICIENTE (não depende do storage.js) ----
 // Arquivos próprios, separados do snapshot do SC9, pra atualizar o SC9 todo dia
 // nunca apagar nada disso:
@@ -376,8 +377,8 @@ const CADASTRO_LEMBRETES_OBJ = "cadastro-lembretes.json"; // { lembretes: [...] 
 let cadastroLembretesCache = null;
 async function cadastroLembretesCarregar() {
   if (cadastroLembretesCache) return cadastroLembretesCache;
-  try { const d = await objLoad(CADASTRO_LEMBRETES_OBJ); cadastroLembretesCache = { lembretes: Array.isArray(d && d.lembretes) ? d.lembretes : [] }; }
-  catch { cadastroLembretesCache = { lembretes: [] }; }
+  const d = await objLoad(CADASTRO_LEMBRETES_OBJ);
+  cadastroLembretesCache = { lembretes: Array.isArray(d && d.lembretes) ? d.lembretes : [] };
   return cadastroLembretesCache;
 }
 async function cadastroLembretesSalvar(dados) { await objSave(CADASTRO_LEMBRETES_OBJ, dados); cadastroLembretesCache = dados; }
@@ -392,8 +393,8 @@ const HISTORICO_SALDO_MAX = 60; // snapshots guardados por achado (uns 2 meses s
 let cadastroAchadosCache = null;
 async function cadastroAchadosCarregar() {
   if (cadastroAchadosCache) return cadastroAchadosCache;
-  try { const d = await objLoad(CADASTRO_ACHADOS_OBJ); cadastroAchadosCache = { achados: Array.isArray(d && d.achados) ? d.achados : [] }; }
-  catch { cadastroAchadosCache = { achados: [] }; }
+  const d = await objLoad(CADASTRO_ACHADOS_OBJ);
+  cadastroAchadosCache = { achados: Inventory.canonicalizeFindings(Array.isArray(d && d.achados) ? d.achados : []) };
   return cadastroAchadosCache;
 }
 async function cadastroAchadosSalvar(dados) { await objSave(CADASTRO_ACHADOS_OBJ, dados); cadastroAchadosCache = dados; }
@@ -463,14 +464,15 @@ const SLA_FATURAR_H = Number(process.env.SLA_FATURAR_HORAS) || 3;
 // ("0099999") ou com espaço bate certinho com o que o leitor bipa.
 function montarIndicePedidos(p) {
   const nomes = new Map((p.itemNames || []).map(([k, v]) => [String(k), String(v)]));
-  const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [String(k), String(v).replace(/\.0$/, "")]));
+  const sc5 = new Map((p.sc5PorPedido || []).map(([k, v]) => [normalizarPedido(k), String(v).replace(/\.0$/, "")]).filter(([k]) => k));
   // agrupa por produto+lote (não só produto) — um pedido pode ter o mesmo
   // item vindo de lotes diferentes (atendimento parcial), e pra travar a
   // alteração "com nota" pelo lote de verdade, precisa saber QUAL lote tem
   // QUAL quantidade, não só o total do produto somado.
   const itensPorPed = new Map(), fimConf = new Map();
   for (const it of p.items || []) {
-    const k = String(it.pedido);
+    const k = normalizarPedido(it.pedido);
+    if (!k) continue;
     if (!itensPorPed.has(k)) itensPorPed.set(k, new Map());
     const m = itensPorPed.get(k);
     const lote = it.lote ? String(it.lote).trim() : "";
@@ -1727,7 +1729,9 @@ async function handleApi(req, res, pathname) {
     if (!["salvar", "remover"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use salvar ou remover)" });
     try {
       const resultado = await comFila("cadastro-lembretes", async () => {
-        const dados = await cadastroLembretesCarregar();
+        const source = await cadastroLembretesCarregar();
+        const achados = await cadastroAchadosCarregar();
+        const dados = { lembretes: Inventory.migrateNotes(source.lembretes, achados.achados) };
         if (acao === "remover") {
           const id = body && typeof body.id === "string" ? body.id : "";
           if (!id) return { erro: 400, msg: "informe o id do lembrete" };
@@ -1792,7 +1796,8 @@ async function handleApi(req, res, pathname) {
     const sess = await exigir(req, res, ["admin", "operador"], "cadastro"); if (!sess) return;
     try {
       const dados = await cadastroLembretesCarregar();
-      return sendJson(res, 200, { lembretes: dados.lembretes });
+      const achados = await cadastroAchadosCarregar();
+      return sendJson(res, 200, { lembretes: Inventory.migrateNotes(dados.lembretes, achados.achados) });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar lembretes")); }
   }
 
@@ -1835,7 +1840,8 @@ async function handleApi(req, res, pathname) {
         const porChaveTipo = new Map(atual.achados.map((a) => [`${a.chave}|${a.tipo}`, a]));
         const agora = new Date().toISOString();
         for (const nova of entrada) {
-          const chave = String(nova.chave || "").trim(), tipo = String(nova.tipo || "").trim();
+          const tipo = String(nova.tipo || "").trim();
+          const chave = Inventory.individual(tipo) && nova.dados?.produto && nova.dados?.lote ? Inventory.findingKey(tipo, nova.dados) : String(nova.chave || "").trim();
           if (!chave || !tipo) continue;
           const k = `${chave}|${tipo}`;
           const existente = porChaveTipo.get(k);
@@ -1847,7 +1853,7 @@ async function handleApi(req, res, pathname) {
             historicoSaldo = [...historicoSaldo, { data: agora, porProduto: saldoPorProduto }].slice(-HISTORICO_SALDO_MAX);
           }
           porChaveTipo.set(k, {
-            chave, tipo, dados: nova.dados || (existente && existente.dados) || {},
+            chave, tipo, dados: Inventory.mergeFinding(existente, { dados: nova.dados || (existente && existente.dados) || {} }, body.completeGroups === true).dados,
             historicoSaldo,
             primeiraVezEm: (existente && existente.primeiraVezEm) || agora,
             ultimaVezEm: agora,
@@ -1874,6 +1880,7 @@ async function handleApi(req, res, pathname) {
   // (por isso não dá pra usar a busca da Saída, que só olha bipe já feito).
   if (pathname === "/api/pedido-info" && method === "GET") {
     const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
+    if (sess.role !== "admin" && !["geral", "saida", "alteracoes", "recebimento", "despacho"].some(perfil => (sess.perfis || []).includes(perfil))) return sendJson(res, 403, { error: "seu acesso não permite consultar pedidos" });
     const ped = normalizarPedido(new URL(req.url, "http://localhost").searchParams.get("pedido"));
     if (!ped) return sendJson(res, 400, { error: "informe o número do pedido" });
     try {
@@ -2280,9 +2287,9 @@ async function handleApi(req, res, pathname) {
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao apagar")); }
   }
 
-  // Dashboard ao vivo: quem tem QUALQUER acesso vê (é o "geral" — sem separador/conferente)
+  // Dashboard ao vivo: exige o perfil "geral" (sem separador/conferente)
   if (pathname === "/api/dashboard" && method === "GET") {
-    if (!(await exigir(req, res, ["admin", "operador"]))) return;
+    if (!(await exigir(req, res, ["admin", "operador"], "geral"))) return;
     try {
       const d = await dashboardAoVivo();
       const base = d || { totalPedidos: 0, emProcesso: 0, liberadosHoje: 0, pendenciasAntigas: 0, concluidosHoje: 0, valorFaturadoHoje: null, valorFaturadoTotal: null, armazem: "Cambuci", topItens: [], porEtapa: {}, etapaOrdem: ETAPA_ORDEM, etapaLabel: ETAPA_LABEL, porTransp: [], porHora: {}, porHoraPecas: {}, porHoraLiberados: {}, porHoraExpedidos: {}, porTurno: {}, rankingEtapas: [], sla: null, historico: {}, tendenciaDiaria: [], ontem: null, savedAt: null };

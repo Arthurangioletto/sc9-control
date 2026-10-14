@@ -60,3 +60,4 @@ test('recupera armazéns dos achados salvos, agrupados ou individuais', () => {
   assert.deepEqual(warehouses([], saved, '3'), ['3']);
   assert.deepEqual(warehouses([{ filial: '01', armazem: '90' }], saved, '1'), ['90']);
 });
+test('filtro de armazém em achado salvo não mostra registros de outro armazém',()=>{const saved=[{dados:{registros:[{filial:'01',armazem:'01',saldo:4},{filial:'01',armazem:'02',saldo:8}]}}];assert.equal(findings(saved,'01','1')[0].dados.registros.length,1);assert.equal(saved[0].dados.registros.length,2);});
