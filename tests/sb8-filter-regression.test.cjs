@@ -92,3 +92,35 @@ test('sem filial permanece acessível e a cobertura independe do filtro ativo',(
  assert.deepEqual(filters.coverage(rows,[]),{total:5,missing:1});
  assert.deepEqual(filters.coverage([],saved),{total:1,missing:1});
 });
+
+test('SB8 bruto: fabricação real, entrada, datas texto, filial e exclusão lógica',async()=>{
+ const headers=['B8_FILIAL','B8_PRODUTO','B8_LOCAL','B8_DATA','B8_DTVALID','B8_SALDO','B8_LOTECTL','B8_NUMLOTE','B8_DFABRIC','D_E_L_E_T_'];
+ const book={SheetNames:['Planilha1'],Sheets:{Planilha1:sheet([
+  headers,
+  [1,'A',1,20230118,'20280102',5,'CONTROLE','SUBLOTE','20220905',' '],
+  ['03','B','59','20230118',20280102,8,'CONTROLE','','20220228','*'],
+  ['02','C','02','20230118',20280102,2,' ','ALTERNATIVO','20220228',''],
+  ['04','D','04','20230118',20280102,3,'LOTE-D','','','']
+ ])}};
+ const parsed=await pi(book);
+ assert.equal(parsed.records.length,3);
+ const [a,c,d]=parsed.records;
+ assert.equal(a.filial,'1');assert.equal(a.armazem,'1');assert.equal(a.lote,'CONTROLE');
+ assert.equal(a.dtFabricacao.getFullYear(),2022);assert.equal(a.dtFabricacao.getMonth(),8);assert.equal(a.dtFabricacao.getDate(),5);
+ assert.equal(a.dtEntrada.getFullYear(),2023);assert.equal(a.dtEntrada.getDate(),18);
+ assert.equal(a.dtValidade.getFullYear(),2028);assert.equal(c.lote,'ALTERNATIVO');
+ assert.equal(d.dtFabricacao,null);assert.equal(d.dtEntrada.getFullYear(),2023);
+ assert.deepEqual(Array.from(parsed.records,r=>r.filial),['1','2','4']);
+});
+
+test('datas compactas inválidas não são convertidas para outro mês',()=>{
+ for(const v of ['20230229','20241301','00000000','20240230','20240100',20241301,'texto',new Date('invalid')])assert.equal(context.ci(v),null);
+ assert.equal(context.ci('20240229').getDate(),29);
+});
+
+test('exclusões lógicas consecutivas não interrompem a leitura',async()=>{
+ const headers=['B8_FILIAL','B8_PRODUTO','B8_LOCAL','B8_LOTECTL','B8_SALDO','D_E_L_E_T_'];
+ const deleted=Array.from({length:301},()=>['01','A','01','L',5,'*']);
+ const parsed=await pi({SheetNames:['SB8'],Sheets:{SB8:sheet([headers,...deleted,['03','B','59','ATIVO',9,' ']])}});
+ assert.equal(parsed.records.length,1);assert.equal(parsed.records[0].lote,'ATIVO');
+});
