@@ -12,6 +12,14 @@
   window.SC9Navigation = function SC9Navigation({ tabs, active, onNavigate }) {
     const [mobileOpen, setMobileOpen] = React.useState(false);
     const [expanded, setExpanded] = React.useState({});
+    const [collapsed, setCollapsed] = React.useState(() => {
+      try { return window.localStorage.getItem('sc9-sidebar-collapsed') === 'true'; } catch { return false; }
+    });
+    function toggleSidebar() {
+      const next = !collapsed;
+      setCollapsed(next);
+      try { window.localStorage.setItem('sc9-sidebar-collapsed', String(next)); } catch {}
+    }
     const known = new Set(groups.flatMap(group => group.ids));
     const extra = tabs.filter(([id]) => !known.has(id));
     const sections = extra.length ? [...groups, { name: 'Outras telas', ids: extra.map(([id]) => id) }] : groups;
@@ -23,8 +31,9 @@
       h('div', { className: 'sc9-page-heading' },
         h('div', null, h('p', { className: 'sc9-breadcrumb' }, section ? section.name : 'SC9 Control'), h('h1', null, title), h('p', { className: 'sc9-page-description' }, 'Consulte os indicadores e acompanhe sua operação.')),
         h('button', { type: 'button', className: 'sc9-menu-toggle', onClick: () => setMobileOpen(!mobileOpen), 'aria-expanded': mobileOpen, 'aria-controls': 'sc9-navigation' }, mobileOpen ? 'Fechar menu' : 'Abrir menu')),
-      h('aside', { className: 'sc9-sidebar' + (mobileOpen ? ' is-open' : '') },
+      h('aside', { className: 'sc9-sidebar' + (mobileOpen ? ' is-open' : '') + (collapsed ? ' is-collapsed' : '') },
         h('div', { className: 'sc9-brand' }, h('span', { className: 'sc9-brand-mark', 'aria-hidden': true }, 'S9'), h('div', null, h('strong', null, 'SC9 Control'), h('span', null, 'Gestão da operação'))),
+        h('button', { type: 'button', className: 'sc9-sidebar-collapse', onClick: toggleSidebar, 'aria-expanded': !collapsed, 'aria-controls': 'sc9-navigation', 'aria-label': collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral', title: collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral' }, h('span', { 'aria-hidden': true }, collapsed ? '›' : '‹'), h('span', { className: 'sc9-collapse-label' }, 'Recolher menu')),
         h('nav', { id: 'sc9-navigation', 'aria-label': 'Áreas do painel' }, sections.map(group => {
           const items = group.ids.map(id => tabs.find(([tab]) => tab === id)).filter(Boolean);
           if (!items.length) return null;

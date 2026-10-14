@@ -113,3 +113,15 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 .sc9-exp-flat-heading h3 { margin:0; font-size:12px; font-weight:600; color:var(--sc9-ink); }
 .sc9-exp-flat-heading>span { color:var(--sc9-dim); font-size:11px; }
 .sc9-exp-flat-group .sc9-exp-record { background:var(--sc9-panel); }
+.sc9-sidebar-collapse { display:flex; align-items:center; gap:10px; margin:12px; padding:8px 12px; border:1px solid var(--sc9-border-soft); border-radius:8px; background:var(--sc9-panel); color:var(--sc9-muted); font-size:11px; cursor:pointer; }
+.sc9-sidebar-collapse:hover { background:var(--sc9-highlight); color:var(--sc9-accent); }
+.sc9-sidebar-collapse>span:first-child { font-size:22px; line-height:20px; }
+@media(min-width:1024px) {
+  body:has(.sc9-sidebar.is-collapsed) { padding-left:64px; }
+  .sc9-sidebar.is-collapsed { width:64px; }
+  .sc9-sidebar.is-collapsed .sc9-brand { padding:24px 12px; }
+  .sc9-sidebar.is-collapsed .sc9-brand>div,.sc9-sidebar.is-collapsed nav,.sc9-sidebar.is-collapsed .sc9-sidebar-footer,.sc9-sidebar.is-collapsed .sc9-collapse-label { display:none; }
+  .sc9-sidebar.is-collapsed .sc9-sidebar-collapse { padding:8px; justify-content:center; }
+  .sc9-sidebar.is-collapsed .sc9-brand-mark { flex-shrink:0; }
+}
+@media(max-width:1023px) { .sc9-sidebar-collapse { display:none; } }
