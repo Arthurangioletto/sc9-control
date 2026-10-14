@@ -108,3 +108,8 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 .sc9-exp-empty { padding:24px; font-size:13px; color:var(--sc9-dim); }
 @media(max-width:1100px) { .sc9-exp-branches,.sc9-exp-aging { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:600px) { .sc9-expiry { padding:14px; } .sc9-exp-metrics { grid-template-columns:1fr; } .sc9-expiry summary>span { float:none; display:block; margin-top:6px; } .sc9-exp-controls label { width:100%; } .sc9-exp-warehouse,.sc9-exp-year,.sc9-exp-month { padding-left:6px; } }
+.sc9-exp-flat-group { margin-top:20px; min-width:0; }
+.sc9-exp-flat-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; padding:12px 0; margin-bottom:10px; border-bottom:1px solid var(--sc9-border-soft); }
+.sc9-exp-flat-heading h3 { margin:0; font-size:12px; font-weight:600; color:var(--sc9-ink); }
+.sc9-exp-flat-heading>span { color:var(--sc9-dim); font-size:11px; }
+.sc9-exp-flat-group .sc9-exp-record { background:var(--sc9-panel); }

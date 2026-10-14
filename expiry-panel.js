@@ -25,7 +25,6 @@
     const change=(set,value)=>{set(value);setLimit(30);};
     function metric(title,value,sub){return h('div',{className:'sc9-exp-metric'},h('span',null,title),h('strong',null,value),h('small',null,sub));}
     function select(title,value,set,options){return h('label',null,title,h('select',{value,onChange:e=>change(set,e.target.value)},h('option',{value:''},'Todos'),options.map(([v,t])=>h('option',{key:v,value:v},t))));}
-    function summary(title,items){const s=summarize(items);return h('summary',null,h('strong',null,title),h('span',null,fmt(s.units)+' un. · '+fmt(s.lots)+' lotes/produtos'));}
     const buckets=['Até 30 dias','31–90 dias','91–180 dias','181–365 dias','Mais de 1 ano'];
     return h('section',{className:'sc9-expiry','aria-label':'Análise de vencidos'},
       h('div',{className:'sc9-exp-heading'},h('div',null,h('h2',null,'Estoque vencido'),h('p',null,'Filial → armazém → ano e mês da validade. Tempo contado desde o vencimento, sem prazo de resolução.'))),
@@ -36,12 +35,19 @@
       h('p',{className:'sc9-exp-note'},'As faixas indicam envelhecimento do estoque vencido. Dias sem movimentação não são calculados sem histórico de movimentação.'),
       h('div',{className:'sc9-exp-controls'},h('label',{className:'sc9-exp-check'},h('input',{type:'checkbox',checked:future,onChange:e=>setFuture(e.target.checked)}),'Incluir itens a vencer'),future&&h('label',null,'A vencer em até (dias)',h('input',{type:'number',min:0,value:days,onChange:e=>onDays(e.target.value)})),h('button',{type:'button',onClick:()=>onExport(visible)},'Exportar recorte')),
       !visible.length&&h('p',{className:'sc9-exp-empty'},'Nenhum registro encontrado para esses filtros.'),
-      group(visible,r=>code(r.filial)).sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true})).map(([branch,branchRows])=>h('details',{key:branch,className:'sc9-exp-group',open:true},summary(branchName(branch)+' · '+label(branch),branchRows),
-        group(branchRows,r=>code(r.armazem)).sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true})).map(([arm,armRows])=>h('details',{key:arm,className:'sc9-exp-warehouse'},summary('Armazém '+label(arm),armRows),
-          group(armRows,r=>r.expiryYear).sort((a,b)=>a[0].localeCompare(b[0])).map(([yr,yrRows])=>h('details',{key:yr,className:'sc9-exp-year',open:!!year},summary(yr||'Sem validade',yrRows),
-            group(yrRows,r=>r.expiryMonth).sort((a,b)=>a[0].localeCompare(b[0])).map(([mo,monthRows])=>h('details',{key:mo,className:'sc9-exp-month',open:!!month},summary(MONTHS[Number(mo)-1]||'Sem mês',monthRows),monthRows.slice().sort((a,b)=>b.expiredDays-a.expiredDays).slice(0,limit).map((r,i)=>h('article',{key:[r.produto,r.lote,r.armazem,i].join('|'),className:'sc9-exp-record'},
+      group(visible,r=>JSON.stringify([code(r.filial),code(r.armazem),r.expiryYear,r.expiryMonth]))
+        .sort((a,b)=>a[0].localeCompare(b[0],undefined,{numeric:true}))
+        .map(([key,items])=>{
+          const [branch,arm,yr,mo]=JSON.parse(key),totals=summarize(items);
+          return h('section',{key,className:'sc9-exp-flat-group'},
+            h('header',{className:'sc9-exp-flat-heading'},
+              h('h3',null,branchName(branch)+' · Armazém '+label(arm)+' · '+(MONTHS[Number(mo)-1]||'Sem mês')+' / '+yr),
+              h('span',null,fmt(totals.units)+' un. · '+fmt(totals.lots)+' lotes/produtos')),
+            items.slice().sort((a,b)=>b.expiredDays-a.expiredDays).slice(0,limit).map((r,i)=>h('article',{key:[r.produto,r.lote,r.armazem,i].join('|'),className:'sc9-exp-record'},
               h('div',{className:'sc9-exp-record-top'},h('strong',null,r.produto+' · Lote '+r.lote),h('span',{className:r.expiredDays>365?'sc9-exp-old':''},r.expiredDays>0?'Vencido há '+fmt(r.expiredDays)+' dias':r.expiredDays===0?'Vence hoje':'Vence em '+fmt(-r.expiredDays)+' dias')),
-              h('p',null,r.descricao||'Sem descrição'),h('div',{className:'sc9-exp-record-meta'},h('span',null,'Saldo: '+fmt(r.saldo)+' un.'),h('span',null,'Validade: '+(dateParts(r.dtValidade)?[dateParts(r.dtValidade).d,dateParts(r.dtValidade).m,dateParts(r.dtValidade).y].map((v,i)=>i<2?String(v).padStart(2,'0'):v).join('/'):'Não informada')),h('span',null,'Armazém '+label(r.armazem))),renderActions(r))),monthRows.length>limit&&h('button',{type:'button',onClick:()=>setLimit(limit+30)},'Mostrar mais 30 registros'))))))))));
+              h('p',null,r.descricao||'Sem descrição'),h('div',{className:'sc9-exp-record-meta'},h('span',null,'Saldo: '+fmt(r.saldo)+' un.'),h('span',null,'Validade: '+(dateParts(r.dtValidade)?[dateParts(r.dtValidade).d,dateParts(r.dtValidade).m,dateParts(r.dtValidade).y].map((v,i)=>i<2?String(v).padStart(2,'0'):v).join('/'):'Não informada')),h('span',null,'Armazém '+label(r.armazem))),renderActions(r))),
+            items.length>limit&&h('button',{type:'button',onClick:()=>setLimit(limit+30)},'Mostrar mais 30 registros'));
+        }));
   }
   function exportRows(rows) {return rows.map(r=>({Filial:code(r.filial),Unidade:(BRANCHES.find(([id])=>id===code(r.filial))||['','Não informada'])[1],Armazém:code(r.armazem),Produto:r.produto,Descrição:r.descricao||'',Lote:r.lote,Saldo:r.saldo,'Ano de vencimento':r.expiryYear,'Mês de vencimento':r.expiryMonth,'Dias desde o vencimento':r.expiredDays,'Faixa de tempo':r.ageBand}));}
   const api={code,dateParts,day,ageBand,enrich,summarize,group,exportRows,Panel};root.SC9Expiry=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
