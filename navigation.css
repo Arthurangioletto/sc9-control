@@ -176,3 +176,6 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
  .sc9-lot-navigation{display:none;}
  .sc9-lot-navigation.is-open{display:block;}
 }
+
+.sc9-filial-notice{border:1px solid #E9D9A6;border-radius:10px;background:#FFF9EB;padding:12px 14px;font-size:12px;line-height:1.6;color:#755514;}
+.sc9-filial-notice p{margin:5px 0 0;}
