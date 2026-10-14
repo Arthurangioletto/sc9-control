@@ -13,7 +13,7 @@ const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
 // (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
-const SERVABLE = new Set(["index.html", "bundle.js"]);
+const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js"]);
 // ---- Armazenamento AUTOSSUFICIENTE (não depende do storage.js) ----
 // Arquivos próprios, separados do snapshot do SC9, pra atualizar o SC9 todo dia
 // nunca apagar nada disso:

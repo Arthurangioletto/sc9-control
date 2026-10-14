@@ -98,3 +98,76 @@ Se um dia você quiser mudar alguma regra do painel, me pede o código-fonte
   com requisições HTTP reais, o painel renderizando, a lógica de negócio) mas
   a integração final Render+Supabase+CDN só se prova no primeiro deploy real.
   Se algo não subir, me manda a mensagem de erro exata que eu conserto.
+
+## Navegação por áreas
+
+O painel agrupa as telas em Visão geral, Operação, Produtividade, Análises e
+Administração. No computador, a navegação aparece na lateral; abaixo de 1024 px,
+o botão **Abrir menu** revela os grupos. Cada grupo pode ser expandido ou recolhido.
+Os filtros de armazém e os controles existentes continuam disponíveis.
+
+A visão geral mantém a paleta original, distribui os indicadores em até quatro
+colunas e permite expandir **Consultar pedidos** para acessar a tabela detalhada.
+
+- `navigation.js`: componente React legível de navegação; recebe a lista de abas
+  já filtrada pelo aplicativo e não concede permissões adicionais.
+- `navigation.css`: estilos do menu, cabeçalho, indicadores e layout responsivo.
+- `index.html`: carrega os estilos e o componente antes de `bundle.js`.
+- `server.js`: permite servir esses dois arquivos estáticos adicionais.
+
+O `App.jsx` original ainda não está disponível neste repositório. A integração
+no `bundle.js` é limitada à navegação, ao grid de indicadores e à tabela recolhível.
+Se o bundle for recompilado a partir do fonte original, essas três integrações
+precisam ser levadas para o JSX antes da compilação.
+
+Validação local: `node --check navigation.js`, `node --check bundle.js` e
+`node --check server.js`. Inicie com `npm start`, importe uma base de teste e
+verifique a troca de telas, os filtros de armazém, a expansão da tabela e o menu
+em uma janela estreita. Não inclua planilhas reais nem arquivos de `data/` no PR.
+
+### Filtro de unidade no cadastro de lotes
+
+O seletor **Unidade** separa Cambuci (01), Santa Catarina (02), Tamboré (03) e Paraíso (04), conforme a
+coluna Filial do SB8. **Todas as unidades** mantém também registros de outras
+filiais ou sem filial informada. Esse seletor é independente de **Só o armazém**
+e da prioridade de saldo. Listas, indicadores, busca e exportações seguem a unidade
+selecionada, tanto com o SB8 carregado quanto com os achados salvos. Achados sem
+filial identificável só aparecem em Todas as unidades.
+
+A sincronização mantém a análise completa: mudar a seleção não grava uma versão
+parcial sobre os achados existentes. A lógica de normalização e o seletor ficam
+em `lot-filters.js`. Execute `node --test tests/lot-filters.test.cjs` para validar
+os códigos e a filtragem sem alterar os dados originais.
+
+### Registros de lotes em duas linhas
+
+Na análise de lotes associados a mais de um produto, cada registro aparece em um
+bloco: a primeira linha reúne lote, ação, filial, produto, descrição, armazém,
+endereço e saldo; a segunda reúne as datas de referência, fabricação/validade
+físicas editáveis e registro ANVISA. Em telas menores, os campos se distribuem em
+mais linhas para evitar rolagem lateral. Os valores financeiros, quando
+carregados, ficam em uma seção expansível do registro.
+
+O componente `lot-records.js` reaproveita os campos e callbacks existentes; a
+exportação continua usando os mesmos dados. Datas físicas também são confirmadas
+ao sair do campo. As datas do sistema e a data de entrada permanecem referências.
+
+### Visão de vencidos
+
+A aba de vencimento utiliza `expiry-panel.js` para organizar o estoque em filial,
+armazém, ano e mês da validade, com filtros de período e faixas de envelhecimento.
+As filiais são Cambuci (01), Santa Catarina (02), Tamboré (03) e Paraíso (04).
+O seletor de armazéns usa todos os códigos disponíveis para a filial no SB8; sem
+o arquivo carregado, a cobertura depende dos achados salvos disponíveis.
+
+O volume é a soma dos saldos positivos. Lotes/produtos são contados pela combinação
+filial + produto + lote, evitando contar duas vezes o mesmo lote distribuído em
+armazéns diferentes. As datas determinam dias de calendário desde o vencimento.
+Não há prazo de resolução nem afirmação de dias sem movimentação: isso depende
+de dados de movimentação que o cadastro de validade não comprova.
+
+A leitura da referência `BASE (SB8)` motivou aceitar os cabeçalhos abreviados
+`Data Validad` e `Data Fabric`. Nenhum dado da referência integra o código/PR.
+A exportação do recorte inclui filial, unidade, armazém, produto, lote, saldo,
+ano/mês, dias vencidos e faixa de tempo. Os controles de marcação e notas são
+os existentes. Testes: `node --test tests/*.test.cjs`.
