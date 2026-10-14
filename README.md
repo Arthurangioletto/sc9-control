@@ -151,3 +151,23 @@ carregados, ficam em uma seção expansível do registro.
 O componente `lot-records.js` reaproveita os campos e callbacks existentes; a
 exportação continua usando os mesmos dados. Datas físicas também são confirmadas
 ao sair do campo. As datas do sistema e a data de entrada permanecem referências.
+
+### Visão de vencidos
+
+A aba de vencimento utiliza `expiry-panel.js` para organizar o estoque em filial,
+armazém, ano e mês da validade, com filtros de período e faixas de envelhecimento.
+As filiais são Cambuci (01), Santa Catarina (02), Tamboré (03) e Paraíso (04).
+O seletor de armazéns usa todos os códigos disponíveis para a filial no SB8; sem
+o arquivo carregado, a cobertura depende dos achados salvos disponíveis.
+
+O volume é a soma dos saldos positivos. Lotes/produtos são contados pela combinação
+filial + produto + lote, evitando contar duas vezes o mesmo lote distribuído em
+armazéns diferentes. As datas determinam dias de calendário desde o vencimento.
+Não há prazo de resolução nem afirmação de dias sem movimentação: isso depende
+de dados de movimentação que o cadastro de validade não comprova.
+
+A leitura da referência `BASE (SB8)` motivou aceitar os cabeçalhos abreviados
+`Data Validad` e `Data Fabric`. Nenhum dado da referência integra o código/PR.
+A exportação do recorte inclui filial, unidade, armazém, produto, lote, saldo,
+ano/mês, dias vencidos e faixa de tempo. Os controles de marcação e notas são
+os existentes. Testes: `node --test tests/*.test.cjs`.
