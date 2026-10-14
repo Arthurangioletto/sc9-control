@@ -34,8 +34,24 @@ const SALDO_OBJ = "saldo-lotes.json";
 const MOV_ANALISE_OBJ = "movimentacao-analise.json"; // cópia COMPACTA da movimentação (só linhas com lote) pra análise de alteração
 const CONTROLE_SD3_OBJ = "controle-sd3.json"; // { coberturaAte, desde, semRegistro, atualizadoEm, atualizadoPor }
 const usingSupabase = Boolean(SB_URL && SB_KEY);
-const saveSnapshot = (d) => objSave("latest.json", d); // mesmo arquivo/bucket de antes (era do storage.js)
-const loadSnapshot = () => objLoad("latest.json");
+let snapshotCache = null, snapshotRead = null, snapshotGeneration = 0;
+const saveSnapshot = async data => {
+  const info = await objSave("latest.json", data);
+  snapshotGeneration++;
+  snapshotCache = { data, at: Date.now() };
+  return info;
+};
+const loadSnapshot = async () => {
+  if (snapshotCache && Date.now() - snapshotCache.at < 30000) return snapshotCache.data;
+  if (!snapshotRead) {
+    const generation = snapshotGeneration;
+    snapshotRead = objLoad("latest.json").then(data => {
+      if (generation === snapshotGeneration) snapshotCache = { data, at: Date.now() };
+      return snapshotCache ? snapshotCache.data : data;
+    }).finally(() => { snapshotRead = null; });
+  }
+  return snapshotRead;
+};
 const objUrl = (name) => `${SB_URL.replace(/\/$/, "")}/storage/v1/object/${SB_BUCKET}/${name}`;
 
 // A Render cobra a banda que SAI do servidor — e cada gravação no Supabase é o arquivo
@@ -301,6 +317,30 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
+// Cache by immutable snapshot identity; a successful save replaces the object.
+const snapshotHttpCache = new WeakMap();
+async function sendCachedSnapshot(req, res, dados) {
+  let cached = snapshotHttpCache.get(dados);
+  if (!cached) {
+    const body = Buffer.from(JSON.stringify(dados), 'utf8');
+    cached = { body, etag: 'W/"' + crypto.createHash('sha256').update(body).digest('hex') + '"', gzip: null };
+    snapshotHttpCache.set(dados, cached);
+  }
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'private, no-cache', 'Vary': 'Accept-Encoding', ETag: cached.etag };
+  if (String(req.headers['if-none-match'] || '').split(',').map(s => s.trim()).some(tag => tag === cached.etag || tag === '*')) {
+    res.writeHead(304, headers);return res.end();
+  }
+  let body = cached.body;
+  if (body.length >= GZIP_MIN_BYTES && aceitaGzip(req)) {
+    if (!cached.gzip) cached.gzip = gzipAsync(body, { level: 6 }).catch(() => null);
+    const compressed = await cached.gzip;
+    if (compressed) { body = compressed; headers['Content-Encoding'] = 'gzip'; }
+  }
+  if (res.writableEnded || res.destroyed) return;
+  res.writeHead(200, { ...headers, 'Content-Length': body.length });
+  res.end(body);
+}
+
 // index.html e bundle.js: antes saíam inteiros (384 KB o bundle), sem compressão e com
 // "no-store", a CADA abertura de página. Agora: comprimidos uma vez só (guardados em
 // memória), com ETag — se o arquivo não mudou, o navegador recebe um "304 não mudou"
@@ -390,12 +430,16 @@ async function cadastroLembretesSalvar(dados) { await objSave(CADASTRO_LEMBRETES
 // "esse lote tinha saldo e zerou — saiu do produto certo?".
 const CADASTRO_ACHADOS_OBJ = "cadastro-achados.json"; // { achados: [...] }
 const HISTORICO_SALDO_MAX = 60; // snapshots guardados por achado (uns 2 meses se recarregar 1x/dia)
-let cadastroAchadosCache = null;
+let cadastroAchadosCache = null, cadastroAchadosLoading = null;
 async function cadastroAchadosCarregar() {
   if (cadastroAchadosCache) return cadastroAchadosCache;
-  const d = await objLoad(CADASTRO_ACHADOS_OBJ);
-  cadastroAchadosCache = { achados: Inventory.canonicalizeFindings(Array.isArray(d && d.achados) ? d.achados : []) };
-  return cadastroAchadosCache;
+  // Notes and findings load together: share the storage read and normalization.
+  if (!cadastroAchadosLoading) cadastroAchadosLoading = (async () => {
+    const d = await objLoad(CADASTRO_ACHADOS_OBJ);
+    if (!cadastroAchadosCache) cadastroAchadosCache = { achados: Inventory.canonicalizeFindings(Array.isArray(d && d.achados) ? d.achados : []) };
+    return cadastroAchadosCache;
+  })().finally(() => { cadastroAchadosLoading = null; });
+  return cadastroAchadosLoading;
 }
 async function cadastroAchadosSalvar(dados) { await objSave(CADASTRO_ACHADOS_OBJ, dados); cadastroAchadosCache = dados; }
 const VALOR_GERAL_OBJ = "valor-faturado-geral.json"; // valor faturado do mês, TODOS os armazéns (não só Cambuci)
@@ -1294,7 +1338,7 @@ async function handleApi(req, res, pathname) {
     try {
       const data = await loadSnapshot();
       if (!data) return sendJson(res, 404, { error: "nenhum snapshot salvo ainda" });
-      return sendJson(res, 200, data);
+      return await sendCachedSnapshot(req, res, data);
     } catch (e) {
       console.error("Erro ao carregar snapshot:", e);
       return sendJson(res, 500, erroPublico(e, "erro ao carregar"));
@@ -1872,7 +1916,7 @@ async function handleApi(req, res, pathname) {
     const sess = await exigir(req, res, ["admin", "operador"], "cadastro"); if (!sess) return;
     try {
       const dados = await cadastroAchadosCarregar();
-      return sendJson(res, 200, { achados: dados.achados });
+      return await sendCachedSnapshot(req, res, dados);
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar achados")); }
   }
 
