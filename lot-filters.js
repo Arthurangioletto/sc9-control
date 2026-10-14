@@ -163,7 +163,7 @@
 /* Follow-up stays within the selected analysis; existing note identities are retained. */
 (function (root) {
   const analyses = [
-    { id: 'duplicado', type: 'duplicado', label: 'Lote em mais de um produto' },
+    { id: 'duplicado', type: 'duplicado', label: 'Produtos Duplicados' },
     { id: 'validadeVariavel', type: 'validadeVariavel', label: 'Validade inconsistente' },
     { id: 'validade', type: 'vencimento', label: 'Vencimento' },
     { id: 'saldoNegativo', type: 'saldoNegativo', label: 'Saldo negativo' },

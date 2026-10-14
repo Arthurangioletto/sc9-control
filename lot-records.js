@@ -35,3 +35,47 @@
     } }));
   };
 })(window);
+
+/* All duplicate-lot cards share the same disclosure, including follow-up cards. */
+(function (root) {
+  const R = root.React, h = R.createElement;
+  const list = value => R.Children.toArray(value);
+  const lotKey = value => String(value || '').trim().toUpperCase();
+  root.SC9DuplicatePanel = function DuplicatePanel({ lot, target, enabled = true, children }) {
+    const [open, setOpen] = R.useState(() => Boolean(target) && lotKey(target) === lotKey(lot));
+    const id = R.useId();
+    R.useEffect(() => {
+      if (enabled && target && lotKey(target) === lotKey(lot)) setOpen(true);
+    }, [lot, target, enabled]);
+    R.useEffect(() => {
+      if (!enabled) return;
+      const focus = event => { if (lotKey(event.detail) === lotKey(lot)) setOpen(true); };
+      root.addEventListener('sc9-focus-lot', focus);
+      return () => root.removeEventListener('sc9-focus-lot', focus);
+    }, [lot, enabled]);
+    const panel = list(children)[0];
+    if (!enabled || !panel) return panel || null;
+    const parts = list(panel.props.children), heading = parts[0];
+    const headingParts = list(heading?.props?.children);
+    const actions = headingParts.filter(child => child?.type === 'button');
+    const title = headingParts.filter(child => child?.type !== 'button').flatMap(child =>
+      child?.type === 'div' ? list(child.props.children) : [child]);
+    return h('section', {
+      ...panel.props, className: (panel.props.className || '') + ' sc9-duplicate-panel',
+      'data-sc9lote': lotKey(lot)
+    },
+      h('div', { className: 'sc9-duplicate-heading' },
+        h('button', {
+          type: 'button', className: 'sc9-duplicate-toggle',
+          'aria-expanded': open, 'aria-controls': id,
+          'aria-label': (open ? 'Recolher' : 'Expandir') + ' informações do lote ' + lot,
+          onClick: () => setOpen(value => !value)
+        }, h('span', { className: 'sc9-duplicate-summary' }, title),
+        h('span', { className: 'sc9-duplicate-indicator', 'aria-hidden': true },
+          open ? 'Recolher' : 'Expandir',
+          h('svg', { width: 15, height: 15, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8 },
+            h('path', { d: open ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6' })))),
+        actions.length > 0 && h('div', { className: 'sc9-duplicate-actions' }, actions)),
+      h('div', { id, hidden: !open, className: 'sc9-duplicate-content' }, open ? parts.slice(1) : null));
+  };
+})(window);
