@@ -145,3 +145,34 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 .sc9-imports-content{display:flex;flex-direction:column;gap:12px;padding:0 12px 12px;}
 .sc9-imports>summary:focus-visible{outline:2px solid #4F63D2;outline-offset:2px;border-radius:12px;}
 @media(max-width:600px){.sc9-imports-hint{display:none;}}
+
+/* Navegação interna do Cadastro de lotes. */
+.sc9-lot-workspace{display:grid;grid-template-columns:218px minmax(0,1fr);gap:20px;align-items:start;}
+.sc9-lot-sidebar{position:sticky;top:20px;border:1px solid #D2D9F0;border-radius:14px;background:#fff;padding:16px 10px;}
+.sc9-lot-sidebar-title{padding:0 8px 14px;color:#12234A;font-size:14px;border-bottom:1px solid #E6EAF5;}
+.sc9-lot-nav-group{padding-top:14px;}
+.sc9-lot-nav-heading{margin:0 8px 7px;color:#7181AF;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;}
+.sc9-lot-nav-link{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:10px 9px;margin-top:3px;border:0;border-radius:8px;background:transparent;color:#435782;text-align:left;font-size:12px;line-height:1.4;cursor:pointer;}
+.sc9-lot-nav-link:hover{background:#F0F3FA;}
+.sc9-lot-nav-link[aria-current=page]{background:#4F63D2;color:#fff;font-weight:600;}
+.sc9-lot-nav-count{border-radius:5px;padding:1px 5px;background:#E9EDF8;color:#4F63A0;font-size:10px;font-variant-numeric:tabular-nums;}
+.sc9-lot-nav-link[aria-current=page] .sc9-lot-nav-count{background:#ffffff26;color:#fff;}
+.sc9-lot-nav-link:focus-visible,.sc9-lot-menu-toggle:focus-visible{outline:2px solid #4F63D2;outline-offset:2px;}
+.sc9-lot-workspace-content{min-width:0;}
+.sc9-lot-workspace-content>div:not([hidden]){display:flex;flex-direction:column;gap:16px;}
+.sc9-lot-workspace [hidden]{display:none!important;}
+.sc9-lot-workspace .sc9-imports>summary{display:none;}
+.sc9-lot-workspace .sc9-imports{border:0;background:transparent;}
+.sc9-lot-workspace .sc9-imports-content{padding:0;gap:14px;}
+.sc9-lot-page-heading{margin-bottom:18px;}
+.sc9-lot-page-heading h2{font-size:20px;font-weight:600;color:#12234A;margin:0 0 4px;}
+.sc9-lot-page-heading p{font-size:12px;color:#7181AF;margin:0;}
+.sc9-lot-menu-toggle{display:none;}
+@media(max-width:900px){
+ .sc9-lot-workspace{grid-template-columns:minmax(0,1fr);gap:14px;}
+ .sc9-lot-sidebar{position:static;padding:12px;}
+ .sc9-lot-sidebar-title{display:flex;align-items:center;justify-content:space-between;gap:12px;border:0;padding:0;}
+ .sc9-lot-menu-toggle{display:block;font-size:12px;border:1px solid #D2D9F0;background:#F3F5FA;color:#4F63D2;border-radius:7px;padding:6px 10px;cursor:pointer;}
+ .sc9-lot-navigation{display:none;}
+ .sc9-lot-navigation.is-open{display:block;}
+}
