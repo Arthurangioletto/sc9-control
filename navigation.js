@@ -51,3 +51,59 @@
         h('div', { className: 'sc9-sidebar-footer' }, h('span', { className: 'sc9-footer-dot', 'aria-hidden': true }), 'Controle e acompanhamento')));
   };
 })();
+
+/* Internal SB8 navigation: imports and analyses share one workspace. */
+(function (root) {
+  const h = root.React.createElement;
+  const labels = {
+    duplicado: 'Lote em mais de um produto',
+    validadeVariavel: 'Validade inconsistente',
+    validade: 'Vencimento',
+    saldoNegativo: 'Saldo negativo',
+    multiFilial: 'Filiais',
+    marcados: 'Marcados',
+    finalizados: 'Finalizados'
+  };
+  root.SC9LotWorkspace = function LotWorkspace({ tabs, active, onNavigate, children }) {
+    const [menuOpen, setMenuOpen] = root.React.useState(false);
+    const items = root.React.Children.toArray(children);
+    const imports = active === 'importacoes';
+    function navigate(id) { onNavigate(id); setMenuOpen(false); }
+    function link(id, text, count) {
+      return h('button', {
+        key: id, type: 'button', className: 'sc9-lot-nav-link',
+        'aria-current': active === id ? 'page' : undefined,
+        onClick: () => navigate(id)
+      }, h('span', null, text), count != null && h('span', { className: 'sc9-lot-nav-count' }, count));
+    }
+    function group(title, ids) {
+      return h('div', { className: 'sc9-lot-nav-group', key: title },
+        h('p', { className: 'sc9-lot-nav-heading' }, title),
+        tabs.filter(([id]) => ids.includes(id)).map(([id, text]) => {
+          const count = String(text).match(/\((\d+)\)$/);
+          return link(id, labels[id] || text, count ? count[1] : null);
+        }));
+    }
+    return h('div', { className: 'sc9-lot-workspace' },
+      h('aside', { className: 'sc9-lot-sidebar' },
+        h('div', { className: 'sc9-lot-sidebar-title' }, h('strong', null, 'Cadastro de lotes'),
+          h('button', { type: 'button', className: 'sc9-lot-menu-toggle',
+            'aria-expanded': menuOpen, 'aria-controls': 'sc9-lot-navigation',
+            onClick: () => setMenuOpen(value => !value) }, menuOpen ? 'Fechar menu' : 'Abrir menu')),
+        h('nav', { id: 'sc9-lot-navigation', 'aria-label': 'Seções do cadastro de lotes',
+          className: 'sc9-lot-navigation' + (menuOpen ? ' is-open' : '') },
+          group('Análises', ['duplicado', 'validadeVariavel', 'validade', 'saldoNegativo', 'multiFilial']),
+          group('Acompanhamento', ['marcados', 'finalizados']),
+          h('div', { className: 'sc9-lot-nav-group' },
+            h('p', { className: 'sc9-lot-nav-heading' }, 'Bases de dados'),
+            link('importacoes', 'Importações')))),
+      h('div', { className: 'sc9-lot-workspace-content' },
+        items[0],
+        h('section', { hidden: !imports, 'aria-label': 'Importações do cadastro de lotes' },
+          h('div', { className: 'sc9-lot-page-heading' },
+            h('h2', null, 'Importações'),
+            h('p', null, 'Carregue ou atualize o SB8 e as bases complementares.')),
+          items[1]),
+        h('div', { hidden: imports }, items.slice(2))));
+  };
+})(window);
