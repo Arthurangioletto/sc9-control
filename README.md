@@ -127,7 +127,7 @@ em uma janela estreita. Não inclua planilhas reais nem arquivos de `data/` no P
 
 ### Filtro de unidade no cadastro de lotes
 
-O seletor **Unidade** separa Cambuci (filial 01) e Tamboré (filial 03), conforme a
+O seletor **Unidade** separa Cambuci (01), Santa Catarina (02), Tamboré (03) e Paraíso (04), conforme a
 coluna Filial do SB8. **Todas as unidades** mantém também registros de outras
 filiais ou sem filial informada. Esse seletor é independente de **Só o armazém**
 e da prioridade de saldo. Listas, indicadores, busca e exportações seguem a unidade

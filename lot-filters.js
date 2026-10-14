@@ -1,4 +1,4 @@
-/* SB8 filial codes: 01 = Cambuci; 03 = Tamboré. Independent of warehouse. */
+/* SB8 filial codes: 01 = Cambuci; 02 = Santa Catarina; 03 = Tamboré; 04 = Paraíso. Independent of warehouse. */
 (function (root) {
   function normalize(value) {
     const text = String(value == null ? '' : value).trim();
@@ -25,7 +25,9 @@
       h('select', { value, onChange: event => onChange(event.target.value), 'aria-label': 'Filtrar cadastro de lotes por unidade' },
         h('option', { value: '' }, 'Todas as unidades'),
         h('option', { value: '1' }, 'Cambuci · 01'),
-        h('option', { value: '3' }, 'Tamboré · 03')));
+        h('option', { value: '2' }, 'Santa Catarina · 02'),
+        h('option', { value: '3' }, 'Tamboré · 03'),
+        h('option', { value: '4' }, 'Paraíso · 04')));
   }
   root.SC9LotFilters = { normalize, records, findings, Selector };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.SC9LotFilters;
