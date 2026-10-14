@@ -1813,6 +1813,7 @@ async function handleApi(req, res, pathname) {
     if (!["sincronizar", "apagarTudo", "apagarUm"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use sincronizar, apagarUm ou apagarTudo)" });
 
     if (acao === "apagarTudo") {
+      if (sess.role !== "admin") return sendJson(res, 403, { error: "apenas o administrador pode apagar todos os achados" });
       try { await comFila("cadastro-achados", async () => { await cadastroAchadosSalvar({ achados: [] }); }); return sendJson(res, 200, { ok: true }); }
       catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao apagar os achados")); }
     }
