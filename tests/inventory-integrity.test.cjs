@@ -8,3 +8,32 @@ test('nota antiga única preserva identidade, texto e finalização',()=>{const 
 test('nota antiga ambígua não finaliza automaticamente várias filiais',()=>{const note={id:'n',tipo:'vencimento',chave:'L|A',nota:'Antiga',status:'resolvido'};const found=I.canonicalizeFindings([row(),row('03')].map(dados=>({chave:'L|A',tipo:'vencimento',dados})));const result=I.migrateNotes([note],found);assert.equal(result.length,1);assert.equal(result[0].legacyUnscoped,true);assert.equal(result[0].chave,'L|A');});
 test('nota scoped prevalece e a antiga permanece disponível para consulta',()=>{const old={id:'old',tipo:'vencimento',chave:'L|A',nota:'Antiga'},scoped={id:'new',tipo:'vencimento',chave:I.recordKey(row()),nota:'Nova'};const result=I.migrateNotes([old,scoped],I.canonicalizeFindings([{tipo:'vencimento',chave:'L|A',dados:row()}]));assert.equal(result[0].legacyUnscoped,true);assert.equal(result[1].nota,'Nova');});
 test('snapshot completo inclui futuras validades sem depender de filtro de prazo',()=>{const records=I.allExpiryRecords([row(),row('01','02','B','F','2040-01-01'),{...row(),saldo:0}],new Date('2026-01-01'));assert.equal(records.length,2);assert.equal(records[0].jaVencido,true);assert.equal(records[1].jaVencido,false);});
+
+test('base com filial não duplica a ocorrência antiga sem filial e preserva seu histórico',()=>{
+ const old={tipo:'saldoNegativo',chave:I.recordKey(row('')),dados:row(''),historicoSaldo:[{data:'2020-01-01'}]};
+ const fresh={tipo:'saldoNegativo',chave:I.recordKey(row('03')),dados:row('03')};
+ const all=[old,fresh];assert.deepEqual(I.currentFindings(all),[fresh]);assert.equal(all.length,2);assert.equal(old.historicoSaldo.length,1);
+ assert.equal(I.currentFindings([old,{...fresh,dados:row('03','02')}]).length,2);
+});
+
+test('nota v2 sem filial migra somente para uma ocorrência única',()=>{
+ const old={id:'x',tipo:'saldoNegativo',chave:I.recordKey(row('')),nota:'Conferir',status:'resolvido',finalizadoEm:'2020-01-01'};
+ const found=[row(''),row('03')].map(dados=>({tipo:old.tipo,chave:I.recordKey(dados),dados}));
+ const result=I.migrateNotes([old],found)[0];assert.equal(result.chave,I.recordKey(row('03')));assert.equal(result.status,'resolvido');assert.equal(result.finalizadoEm,old.finalizadoEm);assert.equal(old.chave,I.recordKey(row('')));
+ const ambiguous=I.migrateNotes([old],[...found,{tipo:old.tipo,chave:I.recordKey(row('02')),dados:row('02')}])[0];assert.equal(ambiguous.chave,old.chave);assert.equal(ambiguous.legacyUnscoped,true);
+});
+
+test('produto correto e campos físicos acompanham uma filial única sem perder texto ou finalização',()=>{
+ const key='|A|1|2020-01-01',scoped='3|A|1|2020-01-01';
+ const note={id:'g',tipo:'duplicado',chave:'L',nota:'Manter',status:'resolvido',correto:key,fisico:{[key]:{anvisa:'123',fab:'2019-01-01'}}};
+ const finding={tipo:'duplicado',chave:'L',dados:{registros:[row('03'),row('01','02','B')]}};
+ const migrated=I.migrateNotes([note],[finding])[0];assert.equal(migrated.correto,scoped);assert.deepEqual(migrated.fisico[scoped],note.fisico[key]);assert.equal(migrated.fisico[key],undefined);assert.equal(migrated.nota,'Manter');assert.equal(migrated.status,'resolvido');assert.deepEqual(migrated.legacyRecordFields,[]);assert.equal(note.correto,key);
+});
+
+test('conferência física ambígua ou conflitante fica preservada e não é copiada entre filiais',()=>{
+ const key='|A|1|2020-01-01';const note={tipo:'duplicado',chave:'L',correto:key,fisico:{[key]:{anvisa:'123'}}};
+ const finding={tipo:'duplicado',chave:'L',dados:{registros:[row('01'),row('03')]}};
+ const migrated=I.migrateNotes([note],[finding])[0];assert.equal(migrated.correto,key);assert.deepEqual(migrated.fisico,note.fisico);assert.equal(migrated.legacyRecordFields.length,2);
+ const conflict={...note,fisico:{...note.fisico,'1|A|1|2020-01-01':{anvisa:'456'}}};
+ const result=I.migrateNotes([conflict],[{...finding,dados:{registros:[row('01')]}}])[0];assert.deepEqual(result.fisico,conflict.fisico);assert.deepEqual(result.legacyRecordFields,['conferência física']);
+});
