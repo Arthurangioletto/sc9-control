@@ -26,6 +26,36 @@ await check('Permissões mantêm os perfis operacionais legítimos',async()=>{fo
 await check('Notas antigas ambíguas não são copiadas para as filiais',async()=>{await req('/api/cadastro-lembretes',{cookie:admin,body:{acao:'salvar',tipo:'vencimento',chave:'L1|P1',nota:'Antiga',status:'resolvido'}});const notes=(await req('/api/cadastro-lembretes',{cookie:admin})).data.lembretes;const note=notes.find(n=>n.chave==='L1|P1');assert.equal(note.legacyUnscoped,true);assert.equal(note.status,'resolvido');assert.equal(notes.filter(n=>n.tipo==='vencimento'&&n.chave.startsWith('v2:')).length,0);});
 await check('Notas específicas são independentes entre as filiais',async()=>{const findings=(await req('/api/cadastro-achados',{cookie:admin})).data.achados.filter(a=>a.tipo==='vencimento');for(const found of findings)await req('/api/cadastro-lembretes',{cookie:admin,body:{acao:'salvar',tipo:found.tipo,chave:found.chave,nota:'Filial '+found.dados.filial}});const notes=(await req('/api/cadastro-lembretes',{cookie:admin})).data.lembretes.filter(n=>n.tipo==='vencimento'&&n.chave.startsWith('v2:'));assert.equal(notes.length,2);assert.equal(new Set(notes.map(n=>n.nota)).size,2);});
 await check('Saída e SB8 não permitem apagar todos os achados',async()=>{const usuario='audit-adriano';assert.equal((await req('/api/usuarios',{cookie:admin,body:{acao:'criar',usuario,nome:'Teste Saída e SB8',senha:'audit-local-123',perfis:['saida','cadastro']}})).status,200);const login=await req('/api/login',{body:{usuario,password:'audit-local-123'}});assert.equal(login.status,200);const cookie=login.cookie;const before=(await req('/api/cadastro-achados',{cookie}));assert.equal(before.status,200);assert.equal((await req('/api/cadastro-achados',{cookie,body:{acao:'apagarTudo'}})).status,403);assert.deepEqual((await req('/api/cadastro-achados',{cookie})).data,before.data);assert.equal((await req('/api/alteracao-separacao',{cookie,body:{acao:'confirmar',id:'test'}})).status,403);assert.equal((await req('/api/pedido-info?pedido=1234',{cookie})).status,200);});
+await check('Completar filiais preserva revisões, gera backup e altera somente os pendentes',async()=>{
+ const row=(lote,produto)=>({filial:'',armazem:'1',produto,lote,saldo:5,dtValidade:'2030-01-01',descricao:'Manter texto'});
+ const pending={tipo:'duplicado',chave:'BRANCH_PENDING',dados:{lote:'BRANCH_PENDING',registros:[row('BRANCH_PENDING','BP')]}};
+ const done={tipo:'duplicado',chave:'BRANCH_DONE',dados:{lote:'BRANCH_DONE',registros:[row('BRANCH_DONE','BD')]}};
+ const negative={tipo:'saldoNegativo',chave:'BRANCH_NEG|BN',dados:{...row('BRANCH_NEG','BN'),saldo:-3}};
+ assert.equal((await req('/api/cadastro-achados',{cookie:admin,body:{acao:'sincronizar',achados:[pending,done,negative]}})).status,200);
+ await req('/api/cadastro-lembretes',{cookie:admin,body:{acao:'salvar',tipo:'duplicado',chave:'BRANCH_DONE',status:'resolvido',nota:'Já conferido',correto:'|BD|1|2030-01-01',fisicoPatch:{'|BD|1|2030-01-01':{anvisa:'123'}}}});
+ const initial=(await req('/api/cadastro-achados',{cookie:admin})).data.achados;
+ const negativeKey=initial.find(item=>item.dados?.lote==='BRANCH_NEG').chave;
+ await req('/api/cadastro-lembretes',{cookie:admin,body:{acao:'salvar',tipo:'saldoNegativo',chave:negativeKey,cor:'vermelho'}});
+ const body={acao:'completarFiliais',entries:[['BP','BRANCH_PENDING','01','1'],['BD','BRANCH_DONE','01','2'],['BN','BRANCH_NEG','01','3']],source:{name:'teste'}};
+ const before=(await req('/api/cadastro-achados',{cookie:admin})).data.achados;
+ const notesPath=path.join(dir,'data','cadastro-lembretes.json'),notesBefore=fs.readFileSync(notesPath,'utf8');
+ const preview=await req('/api/cadastro-achados',{cookie:admin,body:{...body,preview:true}});
+ assert.equal(preview.status,200);assert.equal(preview.data.updatedRows,1);
+ assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data.achados,before);
+ const operatorLogin=await req('/api/login',{body:{usuario:'audit-cadastro',password:'audit-local-123'}});
+ assert.equal((await req('/api/cadastro-achados',{cookie:operatorLogin.cookie,body})).status,403);
+ const result=await req('/api/cadastro-achados',{cookie:admin,body});
+ assert.equal(result.status,200);assert.equal(result.data.updatedRows,1);assert(result.data.protectedFindings>=2);
+ const after=(await req('/api/cadastro-achados',{cookie:admin})).data.achados;
+ assert.equal(after.length,before.length);
+ for(let i=0;i<before.length;i++){
+  if(before[i].chave==='BRANCH_PENDING')assert.deepEqual(after[i],{...before[i],dados:{...before[i].dados,registros:before[i].dados.registros.map(r=>({...r,filial:'1'}))}});
+  else assert.deepEqual(after[i],before[i]);
+ }
+ assert.equal(fs.readFileSync(notesPath,'utf8'),notesBefore);
+ const backup=JSON.parse(fs.readFileSync(path.join(dir,'data',result.data.backup),'utf8'));assert.deepEqual(backup.achados,before);assert.equal(backup.source.name,'teste');
+ const noOp=await req('/api/cadastro-achados',{cookie:admin,body});assert.equal(noOp.data.updatedRows,0);assert.equal(noOp.data.backup,undefined);
+});
 await check('Administrador pode apagar todos os achados',async()=>{assert.equal((await req('/api/cadastro-achados',{cookie:admin,body:{acao:'apagarTudo'}})).status,200);assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data.achados,[]);});
 await check('Sessão é revogada ao desativar o operador',async()=>{assert.equal((await req('/api/usuarios',{cookie:admin,body:{acao:'desativar',usuario:'audit-control'}})).status,200);assert.equal((await req('/api/controle',{cookie:operator})).status,401);});
 tests.forEach(result=>console.log((result.ok?'PASS ':'FAIL ')+result.name+(result.error?' '+result.error:'')));const failed=tests.filter(result=>!result.ok);await new Promise(resolve=>server.close(resolve));process.exit(failed.length?1:0);

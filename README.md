@@ -199,3 +199,12 @@ já deixaram de existir sem uma fonte ou backup.
 
 Execute `npm test`: inclui testes de identidade/migração/filtros e integração
 HTTP em um diretório temporário, com Supabase desativado e dados fictícios.
+
+
+## Completar filiais sem refazer revisões
+
+O administrador pode importar, em Importações → Carregar SB8, um JSON no formato `sc9-sb8-filiais-v1`. Ele contém `entries` com produto, lote, armazém e filial. Vínculos que exigem desambiguação também incluem saldo e validade.
+
+Essa operação preenche somente filiais ausentes nos achados existentes. Registros com qualquer observação, marcação, escolha de produto correto, conferência física, finalização ou outra nota permanecem intactos. Ela não recalcula análises nem modifica saldos, datas ou históricos. Correspondências ambíguas permanecem sem filial.
+
+Antes da gravação, uma cópia dos achados e lembretes é salva no armazenamento privado, com nome `cadastro-filiais-backup-<data>.json`. A operação exige administrador e protege os achados e as notas com as mesmas filas usadas nas atualizações normais. É possível validar sem gravar enviando `preview: true` com a ação `completarFiliais`.

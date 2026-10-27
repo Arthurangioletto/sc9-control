@@ -68,7 +68,52 @@
       return result;
     });
   }
+
+  // Add only a missing branch. Existing manual work and every other field are retained.
+  function enrichBranches(findings, notes, entries) {
+    if (!Array.isArray(entries) || !entries.length || entries.length > 500000) throw new Error('Lista de filiais inválida.');
+    const identity = row => JSON.stringify([String(row.produto||'').trim(),String(row.lote||'').trim(),code(row.armazem)]);
+    const index = new Map();
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || ![4,6].includes(entry.length) || entry.some(value => typeof value !== 'string') || !entry[0].trim() || !entry[1].trim() || !entry[2].trim() || !['1','2','3','4'].includes(code(entry[3])) || (entry.length===6&&(!Number.isFinite(Number(entry[4]))||!/^$|^\d{4}-\d{2}-\d{2}$/.test(entry[5])))) throw new Error('Vínculo de filial inválido.');
+      const base = identity({produto:entry[0],lote:entry[1],armazem:entry[2]});
+      const key = entry.length===6 ? JSON.stringify([base,Number(entry[4]),entry[5]]) : base, branch=code(entry[3]);
+      index.set(key,index.has(key)&&index.get(key)!==branch?null:branch);
+    }
+    // Protect even a pending note: it may contain a selected product or physical checks.
+    const reviewed = new Set((notes||[]).map(note=>JSON.stringify([note.tipo,note.chave])));
+    const occupied = new Set((findings||[]).map(item=>JSON.stringify([item.tipo,item.chave])));
+    const stats={updatedFindings:0,updatedRows:0,protectedFindings:0,unmatchedRows:0,existingBranchRows:0};
+    const updated=(findings||[]).map(item=>{
+      const data=item.dados||{};
+      const aliases=[item.chave,legacyKey(item.tipo,data)];
+      if(individual(item.tipo))aliases.push(recordKey({...data,filial:''}));
+      if(aliases.some(key=>reviewed.has(JSON.stringify([item.tipo,key])))){stats.protectedFindings++;return item;}
+      let changes=0;
+      const enrich=row=>{
+        if(code(row.filial)){stats.existingBranchRows++;return row;}
+        const base=identity(row),branch=index.get(base)||index.get(JSON.stringify([base,Number(row.saldo)||0,date(row.dtValidade)]));
+        if(!branch){stats.unmatchedRows++;return row;}
+        changes++;return {...row,filial:branch};
+      };
+      const nextData=Array.isArray(data.registros)?{...data,registros:data.registros.map(enrich)}:enrich(data);
+      if(!changes)return item;
+      const chave=individual(item.tipo)?recordKey(nextData):item.chave;
+      if(chave!==item.chave&&occupied.has(JSON.stringify([item.tipo,chave]))){stats.unmatchedRows+=changes;return item;}
+      occupied.add(JSON.stringify([item.tipo,chave]));
+      stats.updatedRows+=changes;stats.updatedFindings++;
+      return {...item,chave,dados:nextData};
+    });
+    return {achados:updated,stats};
+  }
   async function importPrepared(payload,send,onProgress=()=>{}){
+    if(payload?.format==='sc9-sb8-filiais-v1'){
+      if(!Array.isArray(payload.entries)||!payload.entries.length)throw new Error('Base de filiais inválida.');
+      onProgress(0,payload.entries.length);
+      const result=await send({acao:'completarFiliais',entries:payload.entries,source:payload.source||{}});
+      onProgress(payload.entries.length,payload.entries.length);
+      return {...result,branchOnly:true};
+    }
     if(payload?.format!=='sc9-sb8-v1'||!Array.isArray(payload.achados)||!payload.achados.length)throw new Error('Base processada SB8 inválida.');
     const types=new Set(['duplicado','validadeVariavel','vencimento','saldoNegativo','multiFilial']);
     for(const item of payload.achados){
@@ -96,5 +141,5 @@
         Object.entries(note.fisico||{}).filter(([key])=>key.startsWith('|')).map(([key,value])=>h('p',{key},key+' · '+Object.entries(value).map(([field,text])=>field+': '+text).join(' · '))),
         h('small',null,'Situação anterior: '+(note.status||'pendente')))));
   }
-  const api={importPrepared,allExpiryRecords,individual,recordKey,currentFindings,findingKey,legacyKey,mergeFinding,canonicalizeFindings,migrateNotes,LegacyNotes};root.SC9Inventory=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  const api={enrichBranches,importPrepared,allExpiryRecords,individual,recordKey,currentFindings,findingKey,legacyKey,mergeFinding,canonicalizeFindings,migrateNotes,LegacyNotes};root.SC9Inventory=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window==='undefined'?globalThis:window);

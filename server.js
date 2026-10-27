@@ -1854,6 +1854,21 @@ async function handleApi(req, res, pathname) {
     let body;
     try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
     const acao = body && body.acao;
+    if (acao === "completarFiliais") {
+      if (sess.role !== "admin") return sendJson(res,403,{error:"apenas o administrador pode completar as filiais"});
+      try {
+        const resultado=await comFila("cadastro-lembretes",()=>comFila("cadastro-achados",async()=>{
+          const atual=await cadastroAchadosCarregar(), notas=await cadastroLembretesCarregar();
+          const result=Inventory.enrichBranches(atual.achados,notas.lembretes||[],body.entries);
+          if(body.preview===true||!result.stats.updatedRows)return {ok:true,...result.stats,preview:body.preview===true};
+          const backup="cadastro-filiais-backup-"+new Date().toISOString().replace(/[:.]/g,"-")+".json";
+          await objSave(backup,{achados:atual.achados,lembretes:notas.lembretes||[],source:body.source||{},savedAt:new Date().toISOString()});
+          await cadastroAchadosSalvar({achados:result.achados});
+          return {ok:true,...result.stats,backup};
+        }));
+        return sendJson(res,200,resultado);
+      } catch(e) { return sendJson(res,400,erroPublico(e,"erro ao completar as filiais")); }
+    }
     if (!["sincronizar", "apagarTudo", "apagarUm"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use sincronizar, apagarUm ou apagarTudo)" });
 
     if (acao === "apagarTudo") {
