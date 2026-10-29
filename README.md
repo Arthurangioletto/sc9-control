@@ -254,3 +254,17 @@ Indicadores e linhas do comparativo abrem os pedidos correspondentes no painel l
 O módulo legível `operation-overview.js` recebe os pedidos já classificados e filtrados pelo aplicativo. Não grava dados nem altera a classificação, o prazo de corte ou os perfis de acesso. A interface é responsiva e reutiliza os componentes atuais, sem acrescentar dependências.
 
 Validação desta etapa: 20 testes de resumo, navegação, permissões, painel lateral e acompanhamento, mais 24 verificações de integração do servidor, incluindo a entrega do novo arquivo JavaScript. Conferência local com dados fictícios em computador e viewport de 390 px.
+
+## Fluxo da operação
+
+A aba Fluxo utiliza os mesmos pedidos classificados e filtrados do Resumo. Oferece filtros por armazém, data de corte, dia de liberação e status, com indicação do produto quando houver filtro herdado da análise. Alterar o armazém preserva os demais filtros; Limpar recorte volta a todos os armazéns e remove os filtros de seleção. A data de corte vazia não é aplicada.
+
+Os quatro registros de etapas preservam os critérios do fluxo anterior: todos os pedidos liberados, fim de pick informado, conferente preenchido diferente de zero e nota fiscal informada. As contagens são independentes, não exigem uma sequência completa e não devem ser somadas. Os rótulos distinguem conferente informado de término de conferência e nota fiscal de despacho.
+
+As filas repartem os pedidos sem status Enviado em separação, conferência/validação, faturamento e confirmação de despacho. A prioridade de enquadramento é confirmação de despacho, faturamento segundo a classificação atual, conferência quando existe fim de pick e separação nos demais casos. Cada pedido em aberto aparece uma única vez. Os cards mostram pedidos e peças; a maior fila é indicada pelo número de pedidos, incluindo empates, sem inferir produtividade ou atraso por SLA.
+
+Os tempos decorrem desde o registro disponível até a gravação da base: início de separação ou liberação com horário, fim de pick, fim de conferência ou fim de pick para faturamento, e fim de conferência para despacho. Datas ausentes, inválidas e posteriores à referência não entram na média nem no máximo. A cobertura informa quantos pedidos possuem data utilizável. Sem data válida de gravação, não se calculam tempos. Datas sem hora tornam a medida aproximada; tempo decorrido não comprova inatividade.
+
+Etapas e filas abrem a tabela de pedidos no painel lateral compartilhado, mantendo paginação, ordenação, exportação da lista completa, quantidades decimais e acesso à timeline. O retorno da timeline identifica a aba Fluxo e preserva o recorte. O módulo `operation-flow.js` não grava dados nem altera as regras de classificação ou permissões.
+
+Validação: 21 testes de Fluxo, Resumo, navegação, permissões e painel lateral, mais 24 verificações de integração do servidor. Conferência local com dados fictícios dos filtros combinados, armazém vazio, detalhes, timeline e layout em computador e viewport de 390 px.
