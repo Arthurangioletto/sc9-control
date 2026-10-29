@@ -1,6 +1,7 @@
 // Servidor sem dependências externas (só Node puro) — mais rápido de instalar
 // no Render e mais fácil de eu testar aqui antes de te entregar.
 const Inventory = require("./inventory-integrity.js");
+const Stock = require("./stock-position.js");
 const http = require("http");
 const zlib = require("zlib");
 const fs = require("fs");
@@ -14,7 +15,7 @@ const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
 // (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
-const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "inventory-integrity.js"]);
+const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "inventory-integrity.js", "stock-position.js", "stock-import.js"]);
 // ---- Armazenamento AUTOSSUFICIENTE (não depende do storage.js) ----
 // Arquivos próprios, separados do snapshot do SC9, pra atualizar o SC9 todo dia
 // nunca apagar nada disso:
@@ -430,6 +431,15 @@ async function cadastroLembretesSalvar(dados) { await objSave(CADASTRO_LEMBRETES
 // "esse lote tinha saldo e zerou — saiu do produto certo?".
 const CADASTRO_ACHADOS_OBJ = "cadastro-achados.json"; // { achados: [...] }
 const HISTORICO_SALDO_MAX = 60; // snapshots guardados por achado (uns 2 meses se recarregar 1x/dia)
+const STOCK_OBJ = 'cadastro-sb8-atual.json';
+const stockUploads = new Map();
+let stockPositionCache,stockGeneration=0;
+async function stockPositionLoad(){if(stockPositionCache===undefined){const generation=stockGeneration,data=(await objLoad(STOCK_OBJ))||{rows:null,updatedAt:null};if(generation===stockGeneration)stockPositionCache=data;}return stockPositionCache;}
+async function stockPositionSave(position){
+  if(SB_URL&&SB_KEY)return objSave(STOCK_OBJ,position);
+  fs.mkdirSync(LOCAL_DIR,{recursive:true});const temporary=path.join(LOCAL_DIR,STOCK_OBJ+'.'+crypto.randomUUID()+'.tmp');
+  try{fs.writeFileSync(temporary,JSON.stringify(position),'utf8');fs.renameSync(temporary,path.join(LOCAL_DIR,STOCK_OBJ));}finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
+}
 let cadastroAchadosCache = null, cadastroAchadosLoading = null;
 async function cadastroAchadosCarregar() {
   if (cadastroAchadosCache) return cadastroAchadosCache;
@@ -1843,6 +1853,48 @@ async function handleApi(req, res, pathname) {
       const achados = await cadastroAchadosCarregar();
       return sendJson(res, 200, { lembretes: Inventory.migrateNotes(dados.lembretes, achados.achados) });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar lembretes")); }
+  }
+
+  // Staging never changes live balances. Apply commits one complete position.
+  if (pathname === '/api/cadastro-saldos' && ['GET','POST'].includes(method)) {
+    const sess=await exigir(req,res,method==='GET'?['admin','operador']:['admin'],'cadastro');if(!sess)return;
+    try {
+      if(method==='GET')return await sendCachedSnapshot(req,res,await stockPositionLoad());
+      const body=await readJsonBody(req),owner=String(sess.usuario||sess.user||'admin');
+      for(const [id,upload]of stockUploads)if(Date.now()-upload.created>30*60*1000)stockUploads.delete(id);
+      if(body.acao==='iniciar'){
+        if(stockUploads.size>=3)return sendJson(res,409,{error:'Há importações em andamento. Aguarde ou cancele a anterior.'});
+        if(!['present','scopes','complete'].includes(body.mode))return sendJson(res,400,{error:'Modo inválido.'});
+        const current=await objLoad(STOCK_OBJ),id=crypto.randomUUID();
+        stockUploads.set(id,{owner,created:Date.now(),rows:[],next:0,mode:body.mode,source:{name:String(body.name||'SB8').slice(0,200)},version:current?.updatedAt||null});
+        return sendJson(res,200,{id});
+      }
+      const upload=stockUploads.get(body.id);
+      if(!upload||upload.owner!==owner)return sendJson(res,409,{error:'Importação expirada. Carregue o arquivo novamente.'});
+      if(body.acao==='cancelar'){stockUploads.delete(body.id);return sendJson(res,200,{ok:true});}
+      if(body.acao==='lote'){
+        if(body.sequence!==upload.next||!Array.isArray(body.rows)||!body.rows.length||body.rows.length>2000||upload.rows.length+body.rows.length>500000)return sendJson(res,400,{error:'Lote inválido ou fora de sequência.'});
+        const rows=body.rows.map(Stock.normalize);upload.rows.push(...rows);upload.next++;upload.previewed=false;
+        return sendJson(res,200,{received:upload.rows.length});
+      }
+      if(!['prever','aplicar'].includes(body.acao))return sendJson(res,400,{error:'Ação inválida.'});
+      const result=await comFila('cadastro-saldos',async()=>{
+        const current=await objLoad(STOCK_OBJ);
+        if((current?.updatedAt||null)!==upload.version)throw Error('Outra importação atualizou os saldos. Refaça a prévia com o arquivo.');
+        if(body.acao==='aplicar'&&!upload.previewed)throw Error('Confira a prévia antes de aplicar.');
+        const baseline=current||upload.baseline;
+        const seed=baseline?null:Stock.seed((await cadastroAchadosCarregar()).achados);
+        const previous=baseline||{rows:seed.rows,baselineAmbiguous:seed.ambiguous};
+        const result=Stock.update(previous,upload.rows,{mode:upload.mode,source:upload.source});
+        if(body.acao==='prever'){upload.previewed=true;upload.baseline=previous;return {ok:true,stats:result.stats,baselineAmbiguous:previous.baselineAmbiguous||0};}
+        const backup='cadastro-saldos-backup-'+crypto.randomUUID()+'.json';
+        await objSave(backup,{position:current,savedAt:new Date().toISOString()});
+        // Historical findings, physical checks and notes are deliberately not written.
+        await stockPositionSave(result.position);stockGeneration++;stockPositionCache=result.position;stockUploads.delete(body.id);
+        return {ok:true,stats:result.stats,backup,updatedAt:result.position.updatedAt};
+      });
+      return sendJson(res,200,result);
+    }catch(e){return sendJson(res,400,erroPublico(e,'Erro ao atualizar saldo SB8.'));}
   }
 
   // Achados do Cadastro SB8 — persistem até a pessoa apagar. Cada vez que o
