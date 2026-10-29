@@ -211,7 +211,7 @@ Antes da gravação, uma cópia dos achados e lembretes é salva no armazenament
 
 ## Vencimentos por estado e saldo atual
 
-A tela Vencimento mantém busca e filtros, sem o antigo resumo de volume e faixas. Os cards abaixo da filial agrupam RJ+RT, DF+DT, ES+ET, CE+CT e BH+BT, sempre dentro da filial selecionada. Somam apenas saldos positivos e mostram vencidos e vencimentos nos próximos 30 dias. Os cards incluem todos os status; a lista continua respeitando o filtro de acompanhamento. As demais análises mantêm seu comportamento.
+A tela Vencimento mantém busca e filtros, sem o antigo resumo de volume e faixas. Os cards abaixo da filial agrupam RJ+RT, DF+DT, ES+ET, CE+CT e BH+BT, sempre dentro da filial selecionada. Somam apenas saldos positivos e mostram vencidos e vencimentos nos próximos 90 dias, contados a partir do dia da consulta (prazo de retirada preventiva). Os cards incluem todos os status; a lista continua respeitando o filtro de acompanhamento. As demais análises mantêm seu comportamento.
 
 Em Importações, o administrador encontra **Atualizar saldo atual do SB8**. O modo padrão é **SB8 completo**, para exportação de todas as filiais/armazéns, sem filtros de produto/lote/saldo. Depois da leitura, a prévia informa novos registros, mudanças, saldos iguais e ausentes que serão zerados. Somente **Aplicar atualização do saldo** grava a posição. O modo parcial atualiza apenas as identidades presentes e preserva ausentes.
 
