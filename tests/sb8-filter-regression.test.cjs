@@ -12,6 +12,14 @@ const context = vm.createContext({
 });
 vm.runInContext(cut('function ci(', 'async function pi(')+cut('async function pi(', 'function vi(')+cut('function _i(', 'var pt='),context);
 const {mi,ui,pi,fi,gi,_i,Ao,Vi,Ei}=context;
+test('atualização de saldo rejeita números inválidos e identidade incompleta antes de enviar',async()=>{
+ for(const record of [['01','A','L','RJ','erro'],['','A','L','RJ',5],['01','A','L','',5]]){
+  const book={SheetNames:['SB8'],Sheets:{SB8:sheet([['Filial','Produto','Lote','Armazém','Saldo'],record])}};
+  await assert.rejects(()=>pi(book,undefined,true),/inválido|ausente/);
+ }
+ const valid={SheetNames:['SB8'],Sheets:{SB8:sheet([['Filial','Produto','Lote','Armazém','Saldo','B8_DTVALID'],['01','A','L','RJ',0,'        ']])}};
+ assert.equal((await pi(valid,undefined,true)).records[0].saldo,0);
+});
 function sheet(rows,dense=true,offset=0){
   const data=Array.from({length:offset},()=>[]).concat(rows);
   const out={'!ref':{s:{r:0,c:0},e:{r:data.length-1,c:rows[0].length-1}}};

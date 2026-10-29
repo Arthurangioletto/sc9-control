@@ -208,3 +208,17 @@ O administrador pode importar, em Importações → Carregar SB8, um JSON no for
 Essa operação preenche somente filiais ausentes nos achados existentes. Registros com qualquer observação, marcação, escolha de produto correto, conferência física, finalização ou outra nota permanecem intactos. Ela não recalcula análises nem modifica saldos, datas ou históricos. Correspondências ambíguas permanecem sem filial.
 
 Antes da gravação, uma cópia dos achados e lembretes é salva no armazenamento privado, com nome `cadastro-filiais-backup-<data>.json`. A operação exige administrador e protege os achados e as notas com as mesmas filas usadas nas atualizações normais. É possível validar sem gravar enviando `preview: true` com a ação `completarFiliais`.
+
+## Vencimentos por estado e saldo atual
+
+A tela Vencimento mantém busca e filtros, sem o antigo resumo de volume e faixas. Os cards abaixo da filial agrupam RJ+RT, DF+DT, ES+ET, CE+CT e BH+BT, sempre dentro da filial selecionada. Somam apenas saldos positivos e mostram vencidos e vencimentos nos próximos 30 dias. Os cards incluem todos os status; a lista continua respeitando o filtro de acompanhamento. As demais análises mantêm seu comportamento.
+
+Em Importações, o administrador encontra **Atualizar saldo atual do SB8**. O modo padrão é **SB8 completo**, para exportação de todas as filiais/armazéns, sem filtros de produto/lote/saldo. Depois da leitura, a prévia informa novos registros, mudanças, saldos iguais e ausentes que serão zerados. Somente **Aplicar atualização do saldo** grava a posição. O modo parcial atualiza apenas as identidades presentes e preserva ausentes.
+
+A identidade inclui filial, armazém, produto, lote e validade; linhas físicas com a mesma identidade são somadas dentro do arquivo. A importação substitui a quantidade anterior, sem acumular dois arquivos. Linhas zero novas não precisam ser armazenadas, e saldos que zeraram deixam de entrar nos vencidos. Na primeira atualização, achados antigos inequívocos fornecem a posição anterior para a prévia; referências repetidas não multiplicam saldo e saldos conflitantes são sinalizados.
+
+A posição é armazenada separadamente em `cadastro-sb8-atual.json`. Os arquivos de achados e lembretes não são escritos por essa operação: históricos, status, produto correto e campos físicos permanecem intactos. Cada aplicação salva antes uma cópia privada da posição anterior em `cadastro-saldos-backup-<id>.json`. O carregamento antigo do SB8 continua disponível para as análises existentes; use o novo bloco para atualizar apenas a posição de vencimentos.
+
+O envio ocorre em lotes de até 2.000 linhas, com validação e sequência. Nenhum lote altera a posição publicada. A publicação é feita numa fila única após a prévia; uma importação concorrente invalida a versão anterior. Preparações expiram após 30 minutos ou reinício. Falhas anteriores à publicação mantêm a posição anterior. O endpoint exige sessão e o cabeçalho anti-CSRF; gravar exige administrador. O limite é 500 mil linhas.
+
+Saldos iguais entre importações mostram desde quando foram observados iguais. Isso não comprova estoque sem movimentação: entradas e saídas entre exportações podem se compensar. Para medir dias sem movimento, ainda é necessário integrar o histórico de movimentação.

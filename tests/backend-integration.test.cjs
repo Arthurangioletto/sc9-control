@@ -1,5 +1,5 @@
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),crypto=require('crypto');
-const root=path.resolve(__dirname,'..'),dir=fs.mkdtempSync(path.join(require('os').tmpdir(),'sc9-integration-'));fs.mkdirSync(dir,{recursive:true});for(const file of ['inventory-integrity.js','server.js','index.html','bundle.js','navigation.js','navigation.css','lot-filters.js','lot-records.js','expiry-panel.js'])fs.copyFileSync(path.join(root,file),path.join(dir,file));
+const root=path.resolve(__dirname,'..'),dir=fs.mkdtempSync(path.join(require('os').tmpdir(),'sc9-integration-'));fs.mkdirSync(dir,{recursive:true});for(const file of ['stock-position.js','stock-import.js','inventory-integrity.js','server.js','index.html','bundle.js','navigation.js','navigation.css','lot-filters.js','lot-records.js','expiry-panel.js'])fs.copyFileSync(path.join(root,file),path.join(dir,file));
 delete process.env.SUPABASE_URL;delete process.env.SUPABASE_SERVICE_KEY;process.env.PORT='0';process.env.APP_PASSWORD='audit-'+crypto.randomUUID();process.env.SESSION_SECRET=crypto.randomBytes(32).toString('hex');process.env.NODE_ENV='test';
 const password=process.env.APP_PASSWORD,server=require(path.join(dir,'server.js')),tests=[];let base,admin,operator;
 async function req(url,{body,cookie,header=true,method}={}){const headers={};if(body!==undefined){headers['Content-Type']='application/json';if(header)headers['X-Sc9-App']='1';}if(cookie)headers.Cookie=cookie;const r=await fetch(base+url,{method:method||(body!==undefined?'POST':'GET'),headers,body:body!==undefined?JSON.stringify(body):undefined});const text=await r.text();let data;try{data=JSON.parse(text);}catch{data=text;}return{etag:r.headers.get('etag'),encoding:r.headers.get('content-encoding'),length:r.headers.get('content-length'),status:r.status,data,cookie:r.headers.get('set-cookie')?.split(';')[0],type:r.headers.get('content-type')};}
@@ -55,6 +55,34 @@ await check('Completar filiais preserva revisões, gera backup e altera somente 
  assert.equal(fs.readFileSync(notesPath,'utf8'),notesBefore);
  const backup=JSON.parse(fs.readFileSync(path.join(dir,'data',result.data.backup),'utf8'));assert.deepEqual(backup.achados,before);assert.equal(backup.source.name,'teste');
  const noOp=await req('/api/cadastro-achados',{cookie:admin,body});assert.equal(noOp.data.updatedRows,0);assert.equal(noOp.data.backup,undefined);
+});
+
+await check('Saldo atual: prévia, commit atômico, isolamento de histórico, backup e conflitos',async()=>{
+ assert.equal((await req('/api/cadastro-saldos')).status,401);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:operator,body:{acao:'iniciar',mode:'present'}})).status,403);
+ const initial=(await req('/api/cadastro-saldos',{cookie:admin})).data;assert.equal(initial.rows,null);
+ const findings=(await req('/api/cadastro-achados',{cookie:admin})).data;
+ const notesFile=path.join(dir,'data','cadastro-lembretes.json'),notes=fs.readFileSync(notesFile,'utf8');
+ async function stage(saldo){
+  const begin=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'iniciar',mode:'complete',name:'teste.xlsx'}});assert.equal(begin.status,200);const id=begin.data.id;
+  const rows=[{filial:'01',armazem:'RJ',produto:'STOCK',lote:'STOCK-LOT',saldo,dtValidade:'2026-01-01'}];
+  assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'lote',id,sequence:1,rows}})).status,400);
+  assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'lote',id,sequence:0,rows}})).status,200);
+  assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id}})).status,400);
+  const preview=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'prever',id}});assert.equal(preview.status,200);
+  return id;
+ }
+ const id=await stage(12),stale=await stage(4);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin})).data.rows,null);
+ const result=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id}});assert.equal(result.status,200);assert(result.data.backup);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id:stale}})).status,400);
+ const snapshot=(await req('/api/cadastro-saldos',{cookie:admin})).data;assert.equal(snapshot.rows.find(r=>r.produto==='STOCK').saldo,12);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id}})).status,409);
+ const zero=await stage(0);const applied=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id:zero}});assert.equal(applied.status,200);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin})).data.rows.find(r=>r.produto==='STOCK').saldo,0);
+ assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data,findings);assert.equal(fs.readFileSync(notesFile,'utf8'),notes);
+ const backup=JSON.parse(fs.readFileSync(path.join(dir,'data',applied.data.backup),'utf8'));assert.equal(backup.position.rows.find(r=>r.produto==='STOCK').saldo,12);
+ assert.doesNotMatch(String((await req('/'+applied.data.backup,{cookie:admin})).data),/STOCK-LOT/);
 });
 await check('Administrador pode apagar todos os achados',async()=>{assert.equal((await req('/api/cadastro-achados',{cookie:admin,body:{acao:'apagarTudo'}})).status,200);assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data.achados,[]);});
 await check('Sessão é revogada ao desativar o operador',async()=>{assert.equal((await req('/api/usuarios',{cookie:admin,body:{acao:'desativar',usuario:'audit-control'}})).status,200);assert.equal((await req('/api/controle',{cookie:operator})).status,401);});
