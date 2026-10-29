@@ -52,6 +52,27 @@
   };
 })();
 
+/* Shared detail panel: native modal handles focus containment and Escape. */
+(function(root){
+  const R=root.React,h=R.createElement;
+  root.SC9UI=root.SC9UI||{};
+  root.SC9UI.Sheet=function Sheet({title,subtitle,children,onClose,footer,closeLabel='Fechar painel'}){
+    const reference=R.useRef(null),id=R.useId();
+    R.useEffect(()=>{
+      const dialog=reference.current;if(!dialog)return;
+      const previous=root.document.activeElement,body=root.document.body,overflow=body.style.overflow;
+      dialog.showModal();body.style.overflow='hidden';
+      return()=>{if(dialog.open)dialog.close();body.style.overflow=overflow;if(previous?.isConnected)previous.focus({preventScroll:true});};
+    },[]);
+    const keyboard=e=>{if(e.key!=='Tab')return;const controls=[...e.currentTarget.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>el.getClientRects().length&&!el.closest('[hidden]'));if(!controls.length)return;const first=controls[0],last=controls[controls.length-1],active=root.document.activeElement;if(e.shiftKey&&(active===first||active===e.currentTarget)){e.preventDefault();last.focus();}else if(!e.shiftKey&&active===last){e.preventDefault();first.focus();}};
+    return h('dialog',{ref:reference,className:'sc9-sheet','aria-labelledby':id,'aria-describedby':subtitle?id+'-subtitle':undefined,onKeyDown:keyboard,onCancel:e=>{e.preventDefault();onClose();},onClick:e=>{if(e.target!==e.currentTarget)return;const box=e.currentTarget.getBoundingClientRect();if(e.clientX<box.left||e.clientX>box.right||e.clientY<box.top||e.clientY>box.bottom)onClose();}},
+      h('div',{className:'sc9-sheet-layout'},
+        h('header',{className:'sc9-sheet-heading'},h('div',null,subtitle&&h('p',{id:id+'-subtitle',className:'sc9-sheet-subtitle'},subtitle),h('h2',{id},title)),h('button',{type:'button',className:'sc9-sheet-close','aria-label':closeLabel,onClick:onClose,autoFocus:true},'×')),
+        h('div',{className:'sc9-sheet-body'},children),
+        footer&&h('footer',{className:'sc9-sheet-footer'},footer)));
+  };
+})(window);
+
 /* SB8 analyses contain their own follow-up views. */
 (function (root) {
   const R = root.React, h = R.createElement;
