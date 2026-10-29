@@ -268,3 +268,15 @@ Os tempos decorrem desde o registro disponível até a gravação da base: iníc
 Etapas e filas abrem a tabela de pedidos no painel lateral compartilhado, mantendo paginação, ordenação, exportação da lista completa, quantidades decimais e acesso à timeline. O retorno da timeline identifica a aba Fluxo e preserva o recorte. O módulo `operation-flow.js` não grava dados nem altera as regras de classificação ou permissões.
 
 Validação: 21 testes de Fluxo, Resumo, navegação, permissões e painel lateral, mais 24 verificações de integração do servidor. Conferência local com dados fictícios dos filtros combinados, armazém vazio, detalhes, timeline e layout em computador e viewport de 390 px.
+
+## Expedição: conferência, SF2 e Entrega
+
+A aba Expedição apresenta quatro indicadores clicáveis para pedidos com conferência finalizada: conferidos no SC9, notas vinculadas à SF2, pedidos presentes na Entrega e notas na SF2 sem presença na Entrega. Os grupos podem se sobrepor. Os detalhes usam os pedidos originais identificados por armazém e pedido, com quantidades decimais, tabela paginada, exportação e timeline. O retorno da timeline preserva o recorte e identifica a Expedição.
+
+Os filtros de armazém, data de corte, dia de liberação, status e produto herdado são os mesmos do Resumo e do Fluxo. O comparativo, os gráficos diários, a tabela por transportadora e o gráfico de mercadoria/faturamento respeitam o recorte de pedidos. O dia de liberação filtra os pedidos; os gráficos diários continuam usando as datas dos eventos. Alterar o armazém mantém os demais filtros e Limpar recorte remove a seleção.
+
+A interface identifica as fontes: SC9 pelo término de conferência, SF2 pelo número da nota e Entrega pelo número do pedido. Fontes ausentes aparecem como indisponíveis e desabilitam os indicadores correspondentes; uma fonte disponível sem correspondências mostra zero. A conferência permanece consultável mesmo sem SF2. O vínculo da Entrega continua usando o número do pedido, sem validação de unidade nessa associação; a lista identifica o armazém. As regras existentes não foram alteradas.
+
+O tempo médio entre fim de conferência e faturamento mantém o cálculo existente: notas anteriores ao término contam como zero minuto. Um atalho permite consultar esses pedidos. A timeline passa a distinguir nota já existente sem confirmação na Entrega de pedido sem nota, corrigindo apenas o texto apresentado.
+
+O módulo `operation-shipping.js` reutiliza o painel lateral, a tabela e os estilos das etapas anteriores, sem dependências novas. Dados de produção, importações e perfis permanecem preservados. Validação: 28 testes de Expedição, Fluxo, Resumo, navegação, permissões e painel lateral, mais 24 verificações de integração do servidor; conferência local com dados fictícios em computador e viewport de 390 px.
