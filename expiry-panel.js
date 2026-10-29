@@ -20,35 +20,51 @@
   function group(rows,key) {const map=new Map();rows.forEach(row=>{const k=key(row);if(!map.has(k))map.set(k,[]);map.get(k).push(row);});return [...map.entries()];}
   function productGroups(rows){return group(rows,r=>String(r.produto||'').trim()).map(([product,items])=>({product,description:items.find(r=>r.descricao)?.descricao||'Sem descrição',items:items.slice().sort((a,b)=>b.expiredDays-a.expiredDays||String(a.lote).localeCompare(String(b.lote),undefined,{numeric:true}))})).sort((a,b)=>(b.items[0]?.expiredDays||0)-(a.items[0]?.expiredDays||0)||a.product.localeCompare(b.product,undefined,{numeric:true}));}
   function productTargetPage(groups,target,size=10){if(!target)return null;const lot=String(target).trim().toUpperCase(),index=groups.findIndex(g=>g.items.some(r=>String(r.lote||'').trim().toUpperCase()===lot));return index<0?null:Math.floor(index/size);}
-  function ProductCard({product,description,items,target,renderActions}){
-    const R=root.React,h=R.createElement,hasLot=lot=>items.some(r=>String(r.lote||'').trim().toUpperCase()===String(lot||'').trim().toUpperCase());
-    const [open,setOpen]=R.useState(()=>!!target&&hasLot(target)),id=R.useId();
-    R.useEffect(()=>{if(target&&hasLot(target))setOpen(true);},[target,items]);
-    R.useEffect(()=>{const focus=e=>{if(hasLot(e.detail))setOpen(true);};root.addEventListener('sc9-focus-lot',focus);return()=>root.removeEventListener('sc9-focus-lot',focus);},[items]);
-    const fmt=v=>Number(v||0).toLocaleString('pt-BR'),label=v=>v?String(v).padStart(2,'0'):'Não informado',totals=summarize(items),expired=items.filter(r=>r.expiredDays>0),upcoming=items.filter(r=>r.expiredDays<=0),oldest=items[0];
-    const timing=r=>r.expiredDays>0?'Vencido há '+fmt(r.expiredDays)+' dias':r.expiredDays===0?'Vence hoje':'Vence em '+fmt(-r.expiredDays)+' dias';
-    const branch=v=>(BRANCHES.find(([c])=>c===code(v))||['','Filial não informada'])[1]+(v?' · '+label(v):'');
-    function field(title,value){return h('div',{className:'sc9-exp-product-field'},h('span',null,title),h('strong',null,value));}
-    function record(r,index){const p=dateParts(r.dtValidade),date=p?[p.d,p.m,p.y].map((v,i)=>i<2?String(v).padStart(2,'0'):v).join('/'):'Não informada';
+  function lotRecord(r,index,renderActions){const h=root.React.createElement,fmt=v=>Number(v||0).toLocaleString('pt-BR'),label=v=>v?String(v).padStart(2,'0'):'Não informado',timing=r=>r.expiredDays>0?'Vencido há '+fmt(r.expiredDays)+' dias':r.expiredDays===0?'Vence hoje':'Vence em '+fmt(-r.expiredDays)+' dias',branch=v=>(BRANCHES.find(([c])=>c===code(v))||['','Filial não informada'])[1]+(v?' · '+label(v):'');function field(title,value){return h('div',{className:'sc9-exp-product-field'},h('span',null,title),h('strong',null,value));}const p=dateParts(r.dtValidade),date=p?[p.d,p.m,p.y].map((v,i)=>i<2?String(v).padStart(2,'0'):v).join('/'):'Não informada';
       return h('article',{key:[r.filial,r.armazem,r.lote,index].join('|'),className:'sc9-exp-product-lot','data-sc9lote':String(r.lote||'').trim().toUpperCase()},
         h('header',null,h('h4',null,'Lote '+r.lote),h('span',{className:'sc9-exp-status '+(r.expiredDays>0?'is-expired':'is-upcoming')},timing(r))),
         h('div',{className:'sc9-exp-product-fields'},field('Filial',branch(r.filial)),field('Armazém',label(r.armazem)),field('Saldo',fmt(r.saldo)+' un.'),field('Validade',date)),
         r.observations>=2&&h('p',{className:'sc9-exp-note'},'Saldo igual nas últimas observações desde '+new Date(r.balanceSince).toLocaleDateString('pt-BR')+'. Isso não comprova ausência de movimentação.'),
         h('div',{className:'sc9-exp-product-actions'},renderActions(r)));
     }
+
+  function selectedProductDetails(groups,selection){
+    if(!selection)return null;
+    const current=groups.find(item=>item.product===String(selection.product||'').trim());
+    return {product:selection.product,description:current?.description||selection.description||'Sem descrição',items:current?.items||[],target:selection.lot||null};
+  }
+  function ProductDrawer({product,description,items,target,filters,position,onClose,renderActions}){
+    const h=root.React.createElement,fmt=v=>Number(v||0).toLocaleString('pt-BR'),totals=summarize(items),expired=summarize(items.filter(r=>r.expiredDays>0)),upcoming=summarize(items.filter(r=>r.expiredDays<=0));
+    const places=new Set(items.map(r=>code(r.filial)+'|'+code(r.armazem))).size;
+    const metric=(label,value)=>h('div',{className:'sc9-detail-metric'},h('span',null,label),h('strong',null,value));
+    return h(root.SC9UI.Sheet,{title:description,subtitle:'Ficha do produto · '+product,onClose,closeLabel:'Fechar ficha do produto',footer:h('button',{type:'button',className:'sc9-ui-button',onClick:onClose},'Voltar à lista')},
+      h('section',{className:'sc9-detail-section','aria-label':'Resumo do produto'},h('div',{className:'sc9-detail-metrics'},metric('Saldo no recorte',fmt(totals.units)+' un.'),metric('Lotes',fmt(totals.lots)),metric('Locais',fmt(places))),
+        h('div',{className:'sc9-detail-statuses'},expired.units>0&&h('span',{className:'sc9-exp-status is-expired'},fmt(expired.units)+' un. vencidas'),upcoming.units>0&&h('span',{className:'sc9-exp-status is-upcoming'},fmt(upcoming.units)+' un. a vencer'))),
+      h('section',{className:'sc9-detail-section'},h('h3',null,'Recorte consultado'),h('div',{className:'sc9-exp-active-filters'},filters.map((label,i)=>h('span',{key:i},label))),h('p',{className:'sc9-detail-help'},position?.updatedAt?'Saldo atualizado em '+new Date(position.updatedAt).toLocaleString('pt-BR'):'Dados da base de achados salvos.'),h('p',{className:'sc9-detail-help'},'A ficha mostra os registros deste produto nos filtros atuais de vencimentos.')),
+      h('section',{className:'sc9-detail-section'},h('div',{className:'sc9-detail-section-heading'},h('h3',null,'Lotes do produto'),h('span',null,fmt(items.length)+(items.length===1?' registro':' registros'))),
+        items.length?h(root.SC9Paging.List,{items,target,size:10,resetKey:product+'|'+items.length,label:'registros do produto',hideSingleControls:true,renderItem:(row,i)=>lotRecord(row,i,renderActions)}):h('p',{className:'sc9-detail-empty',role:'status'},'Não há registros deste produto no recorte atual. As marcações e finalizações podem alterar os itens exibidos.')));
+  }
+  function ProductCard({product,description,items,target,renderActions,onOpen}){
+    const R=root.React,h=R.createElement,hasLot=lot=>items.some(r=>String(r.lote||'').trim().toUpperCase()===String(lot||'').trim().toUpperCase());
+    const [open,setOpen]=R.useState(()=>!!target&&hasLot(target)),id=R.useId();
+    R.useEffect(()=>{if(target&&hasLot(target))setOpen(true);},[target,items]);
+    R.useEffect(()=>{const focus=e=>{if(hasLot(e.detail))setOpen(true);};root.addEventListener('sc9-focus-lot',focus);return()=>root.removeEventListener('sc9-focus-lot',focus);},[items]);
+    const fmt=v=>Number(v||0).toLocaleString('pt-BR'),totals=summarize(items),expired=items.filter(r=>r.expiredDays>0),upcoming=items.filter(r=>r.expiredDays<=0),oldest=items[0];
+    const timing=r=>r.expiredDays>0?'Vencido há '+fmt(r.expiredDays)+' dias':r.expiredDays===0?'Vence hoje':'Vence em '+fmt(-r.expiredDays)+' dias';
+    const record=(r,i)=>lotRecord(r,i,renderActions);
     return h('section',{className:'sc9-exp-product-card','aria-label':'Produto '+product},
-      h('button',{type:'button',className:'sc9-exp-product-toggle','aria-expanded':open,'aria-controls':id,onClick:()=>setOpen(v=>!v)},
+      h('div',{className:'sc9-exp-product-heading'},h('button',{type:'button',className:'sc9-exp-product-toggle','aria-expanded':open,'aria-controls':id,onClick:()=>setOpen(v=>!v)},
         h('div',{className:'sc9-exp-product-identity'},h('span',{className:'sc9-exp-product-code'},'Produto '+product),h('h3',null,description),h('div',{className:'sc9-exp-product-summary'},h('span',null,fmt(totals.lots)+' lote(s) · '+fmt(items.length)+' registro(s)'),expired.length>0&&h('span',null,fmt(summarize(expired).units)+' un. vencidas'),upcoming.length>0&&h('span',null,fmt(summarize(upcoming).units)+' un. a vencer'))),
-        h('div',{className:'sc9-exp-product-side'},oldest&&h('span',{className:'sc9-exp-status '+(oldest.expiredDays>0?'is-expired':'is-upcoming')},timing(oldest)),h('span',{className:'sc9-exp-product-disclosure'},open?'Recolher lotes −':'Ver lotes +'))),
+        h('div',{className:'sc9-exp-product-side'},oldest&&h('span',{className:'sc9-exp-status '+(oldest.expiredDays>0?'is-expired':'is-upcoming')},timing(oldest)),h('span',{className:'sc9-exp-product-disclosure'},open?'Recolher lotes −':'Ver lotes +'))),onOpen&&h('button',{type:'button',className:'sc9-ui-button sc9-exp-product-open','aria-label':'Ver ficha do produto '+product,onClick:()=>onOpen({product,description})},'Ver ficha')),
       h('div',{id,hidden:!open,className:'sc9-exp-product-content'},open&&h(root.SC9Paging.List,{items,renderItem:record,size:10,target,resetKey:product+'|'+items.length,label:'registros deste produto',hideSingleControls:true})));
   }
-  function RecordTable({items,target,renderActions}){
+  function RecordTable({items,target,renderActions,onOpen}){
     const h=root.React.createElement,fmt=v=>Number(v||0).toLocaleString('pt-BR'),label=v=>v?String(v).padStart(2,'0'):'Não informado';
     const branch=v=>(BRANCHES.find(([id])=>id===code(v))||['','Não informada'])[1]+(v?' · '+label(v):'');
     const headings=['Produto','Descrição','Lote','Filial','Armazém','Saldo','Validade','Situação','Acompanhamento'];
     function record(r,i){const p=dateParts(r.dtValidade),date=p?[p.d,p.m,p.y].map((v,j)=>j<2?String(v).padStart(2,'0'):v).join('/'):'Não informada',status=r.expiredDays>0?'Vencido há '+fmt(r.expiredDays)+' dias':r.expiredDays===0?'Vence hoje':'Vence em '+fmt(-r.expiredDays)+' dias';
       return h('tr',{key:[r.filial,r.armazem,r.produto,r.lote,r.dtValidade,i].join('|'),'data-sc9lote':String(r.lote||'').trim().toUpperCase()},
-        h('td',{className:'sc9-exp-table-code'},r.produto),h('td',{className:'sc9-exp-table-description'},r.descricao||'Sem descrição'),h('td',{className:'sc9-exp-table-code'},r.lote),h('td',null,branch(r.filial)),h('td',null,label(r.armazem)),h('td',{className:'sc9-exp-table-balance'},fmt(r.saldo)+' un.'),h('td',null,date),h('td',null,h('span',{className:'sc9-exp-status '+(r.expiredDays>0?'is-expired':'is-upcoming')},status)),h('td',{className:'sc9-exp-table-actions'},renderActions(r)));
+        h('td',{className:'sc9-exp-table-code'},onOpen?h('button',{type:'button',className:'sc9-exp-product-link','aria-label':'Ver ficha do produto '+r.produto+', lote '+r.lote,onClick:()=>onOpen({product:r.produto,description:r.descricao,lot:r.lote})},r.produto):r.produto),h('td',{className:'sc9-exp-table-description'},r.descricao||'Sem descrição'),h('td',{className:'sc9-exp-table-code'},r.lote),h('td',null,branch(r.filial)),h('td',null,label(r.armazem)),h('td',{className:'sc9-exp-table-balance'},fmt(r.saldo)+' un.'),h('td',null,date),h('td',null,h('span',{className:'sc9-exp-status '+(r.expiredDays>0?'is-expired':'is-upcoming')},status)),h('td',{className:'sc9-exp-table-actions'},renderActions(r)));
     }
     return h(root.SC9Paging.List,{items,target,size:30,resetKey:items,label:items.length===1?'registro':'registros',renderPage:page=>h('div',{className:'sc9-exp-table-scroll',role:'region','aria-label':'Tabela dos produtos no recorte',tabIndex:0},h('table',{className:'sc9-exp-table'},h('caption',{className:'sc9-sr-only'},'Estoque no recorte selecionado. Cada linha identifica produto, lote, filial e armazém.'),h('thead',null,h('tr',null,headings.map(title=>h('th',{key:title,scope:'col'},title)))),h('tbody',null,page.map(record))))});
   }
@@ -63,12 +79,13 @@
   }
   function Panel({target,rows,overviewRows,inventory,saved,filial,warehouse,onFilial,onWarehouse,days,onDays,renderActions,onExport,position,stockError}) {
     const h=root.React.createElement,R=root.React;
-    const [year,setYear]=R.useState(''),[month,setMonth]=R.useState(''),[band,setBand]=R.useState(''),[future,setFuture]=R.useState(false),[page,setPage]=R.useState(0),[state,setState]=R.useState(''),[view,setView]=R.useState('cards');
+    const [year,setYear]=R.useState(''),[month,setMonth]=R.useState(''),[band,setBand]=R.useState(''),[future,setFuture]=R.useState(false),[page,setPage]=R.useState(0),[state,setState]=R.useState(''),[view,setView]=R.useState('cards'),[selected,setSelected]=R.useState(null);
     const all=R.useMemo(()=>enrich(overviewRows),[overviewRows]),scoped=R.useMemo(()=>enrich(rows),[rows]);
     const years=[...new Set(scoped.filter(r=>future||r.expiredDays>0).map(r=>r.expiryYear).filter(Boolean))].sort();
     const visible=R.useMemo(()=>stateRows(scoped,state).filter(r=>Number(r.saldo)>0&&(future||r.expiredDays>0)&&(!year||r.expiryYear===year)&&(!month||r.expiryMonth===month)&&(!band||r.ageBand===band)),[scoped,state,future,year,month,band]);
     const cardRows=R.useMemo(()=>root.SC9LotFilters.records(all,filial).filter(r=>(!year||r.expiryYear===year)&&(!month||r.expiryMonth===month)&&(!band||r.ageBand===band)),[all,filial,year,month,band]);
     const groups=R.useMemo(()=>productGroups(visible),[visible]);
+    const details=selectedProductDetails(groups,selected);
     R.useEffect(()=>setPage(0),[year,month,band,future,filial,warehouse,state]);
     R.useEffect(()=>setState(''),[filial]);
     R.useEffect(()=>{const focus=event=>{const found=productTargetPage(groups,event.detail);if(found!==null)setPage(found);};root.addEventListener('sc9-focus-lot',focus);return()=>root.removeEventListener('sc9-focus-lot',focus);},[groups]);
@@ -95,10 +112,11 @@
       !visible.length&&h('p',{className:'sc9-exp-empty'},'Nenhum registro encontrado para esses filtros.'),
       h('div',{className:'sc9-exp-results-heading'},h('div',null,h('h3',null,'Produtos no recorte'),h('p',null,fmt(groups.length)+(groups.length===1?' produto':' produtos')+' · '+fmt(visible.length)+(visible.length===1?' registro':' registros'))),h('div',{className:'sc9-exp-view-switch',role:'group','aria-label':'Visualização dos resultados'},h('button',{type:'button','aria-pressed':view==='cards',onClick:()=>setView('cards')},'Cards'),h('button',{type:'button','aria-pressed':view==='table',onClick:()=>setView('table')},'Tabela'))),
       h('div',{className:'sc9-exp-active-filters','aria-label':'Recorte aplicado'},filters.map((text,i)=>h('span',{key:i},text)),state&&h('button',{type:'button',onClick:()=>setState('')},'Limpar estado')),
-      view==='cards'?h(root.React.Fragment,null,h(root.SC9Paging.Controls,{info,onPage:setPage,label:groups.length===1?'produto':'produtos'}),h('div',{className:'sc9-exp-products'},pageGroups.map(item=>h(ProductCard,{key:item.product,...item,target,renderActions}))),info.pages>1&&h(root.SC9Paging.Controls,{info,onPage:setPage,label:'produtos'})):h(RecordTable,{items:visible,target,renderActions}));
+      view==='cards'?h(root.React.Fragment,null,h(root.SC9Paging.Controls,{info,onPage:setPage,label:groups.length===1?'produto':'produtos'}),h('div',{className:'sc9-exp-products'},pageGroups.map(item=>h(ProductCard,{key:item.product,...item,target,renderActions,onOpen:setSelected}))),info.pages>1&&h(root.SC9Paging.Controls,{info,onPage:setPage,label:'produtos'})):h(RecordTable,{items:visible,target,renderActions,onOpen:setSelected}),
+      details&&h(ProductDrawer,{...details,filters,position,renderActions,onClose:()=>setSelected(null)}));
   }
 
   function exportRows(rows) {return rows.filter(isAnalyzedRow).map(r=>({Filial:code(r.filial),Unidade:(BRANCHES.find(([id])=>id===code(r.filial))||['','Não informada'])[1],Armazém:code(r.armazem),Produto:r.produto,Descrição:r.descricao||'',Lote:r.lote,Saldo:r.saldo,'Ano de vencimento':r.expiryYear,'Mês de vencimento':r.expiryMonth,'Dias desde o vencimento':r.expiredDays,'Faixa de tempo':r.ageBand}));}
-  const api={RecordTable,isAnalyzedRow,ProductCard,productGroups,productTargetPage,STATES,stateRows,stateSummary,code,dateParts,day,ageBand,enrich,summarize,group,paginateGroups,exportRows,Panel};root.SC9Expiry=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  const api={lotRecord,ProductDrawer,selectedProductDetails,RecordTable,isAnalyzedRow,ProductCard,productGroups,productTargetPage,STATES,stateRows,stateSummary,code,dateParts,day,ageBand,enrich,summarize,group,paginateGroups,exportRows,Panel};root.SC9Expiry=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window==='undefined'?globalThis:window);
 
