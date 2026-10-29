@@ -228,3 +228,5 @@ A lista de vencimentos é organizada em cards por produto, com código, descriç
 O armazém 16, destinado aos produtos vencidos já segregados, é desconsiderado na análise de vencimentos em todas as filiais: contagens, cards, lista, prazo de 90 dias, seletores de armazém e exportação. Os registros do SB8 e os trabalhos salvos permanecem guardados; as demais análises continuam considerando esse armazém.
 
 O aviso global de observações antigas não é mais exibido nas telas do cadastro. As observações permanecem salvas e as notas e ações de cada registro continuam disponíveis.
+
+Na análise de vencimentos, a primeira etapa de evolução visual acrescenta a alternância Cards/Tabela e a identificação do recorte aplicado. Ambas as visualizações usam os mesmos registros filtrados e as mesmas ações de acompanhamento. A tabela mostra até 30 registros por página, com produto, descrição, lote, filial, armazém, saldo, validade e situação. A busca por lote e a exportação continuam usando o recorte completo. Alternar a visualização não modifica o saldo, os filtros ou os rascunhos de notas mantidos na sessão.

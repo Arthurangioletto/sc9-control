@@ -29,3 +29,14 @@ test('busca abre o produto e um novo evento reabre o card recolhido',()=>{
  env.render().props.children[0].props.onClick();assert.equal(env.render().props.children[1].props.hidden,true);
  env.listeners.get('sc9-focus-lot')({detail:'OUTRO'});assert.equal(env.render().props.children[1].props.hidden,false);
 });
+test('tabela mantém todos os registros e vincula acompanhamento à filial e ao lote corretos',()=>{
+ const h=(type,props,...children)=>({type,props:{...props,children}}),root={React:{createElement:h},SC9Paging:{List:()=>{}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'..','expiry-panel.js'),'utf8'),{window:root});
+ const items=[row(),row({filial:'2',armazem:'RT',lote:'OUTRO',saldo:3})],copy=structuredClone(items);
+ const list=root.SC9Expiry.RecordTable({items,target:'OUTRO',renderActions:r=>h('input',{value:r.filial+'|'+r.lote})});
+ assert.strictEqual(list.props.items,items);assert.equal(list.props.target,'OUTRO');assert.equal(list.props.size,30);
+ const table=list.props.renderPage(items).props.children[0],body=table.props.children[2],rows=body.props.children[0];
+ assert.equal(rows.length,2);assert.equal(rows[0].props['data-sc9lote'],'98339');assert.equal(rows[1].props['data-sc9lote'],'OUTRO');
+ assert.equal(rows[0].props.children[8].props.children[0].props.value,'1|98339');assert.equal(rows[1].props.children[8].props.children[0].props.value,'2|OUTRO');
+ assert.equal(rows[1].props.children[5].props.children[0],'3 un.');assert.equal(rows[1].props.children[6].props.children[0],'15/10/2024');assert.deepEqual(items,copy);
+});
