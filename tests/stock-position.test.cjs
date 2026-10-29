@@ -22,7 +22,7 @@ test('par de armazéns nunca inclui outra filial nem o outro estado',()=>{
  const scoped=rows.filter(r=>S.code(r.filial)==='1');assert.equal(E.stateSummary(scoped,'RJ').units,5);assert.equal(E.stateSummary(scoped,'BH').units,13);assert.equal(E.stateSummary(scoped,'RJ').lots,1);
 });
 test('inclui novos lotes a vencer, sem confundir com vencidos e sem incluir saldo zero',()=>{
- const rows=E.enrich([row(),row({lote:'FUT',dtValidade:'2026-11-10',saldo:4}),row({lote:'LONG',dtValidade:'2027-01-01',saldo:8}),row({lote:'ZERO',dtValidade:'2026-11-10',saldo:0})],new Date(2026,9,29));
+ const rows=E.enrich([row(),row({lote:'FUT',dtValidade:'2026-11-10',saldo:4}),row({lote:'LONG',dtValidade:'2027-03-01',saldo:8}),row({lote:'ZERO',dtValidade:'2026-11-10',saldo:0})],new Date(2026,9,29));
  const summary=E.stateSummary(rows,'RJ');assert.equal(summary.units,10);assert.equal(summary.upcoming,4);
 });
 test('saldo igual tem datas comparáveis e reinicia a contagem quando muda',()=>{
@@ -45,4 +45,12 @@ test('todos os estados incluem o respectivo subestoque confirmado',()=>{
 test('validade persistida à meia-noite não retrocede no fuso de São Paulo',()=>{
  const r=E.enrich([row({dtValidade:new Date('2026-10-01T00:00:00.000Z')})],new Date(2026,9,29))[0];
  assert.equal(r.expiryMonth,'10');assert.equal(r.expiredDays,28);assert.deepEqual(E.dateParts(r.dtValidade),{y:2026,m:10,d:1});
+});
+
+test('retirada preventiva considera hoje até o 90º dia e avança com a data da consulta',()=>{
+ const now=new Date(2026,9,29),base=E.day('2026-10-29');
+ const date=offset=>new Date((base+offset)*86400000).toISOString().slice(0,10);
+ const rows=[row({lote:'HOJE',dtValidade:date(0),saldo:1}),row({lote:'DIA90',dtValidade:date(90),saldo:2}),row({lote:'DIA91',dtValidade:date(91),saldo:4}),row({lote:'ZERO',dtValidade:date(30),saldo:0}),row({lote:'VENCIDO',dtValidade:date(-1),saldo:8})];
+ const today=E.stateSummary(E.enrich(rows,now),'RJ');assert.equal(today.upcoming,3);assert.equal(today.units,8);
+ const tomorrow=E.stateSummary(E.enrich(rows,new Date(2026,9,30)),'RJ');assert.equal(tomorrow.upcoming,6);assert.equal(tomorrow.units,9);
 });
