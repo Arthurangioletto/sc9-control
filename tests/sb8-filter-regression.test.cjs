@@ -12,6 +12,12 @@ const context = vm.createContext({
 });
 vm.runInContext(cut('function ci(', 'async function pi(')+cut('async function pi(', 'function vi(')+cut('function _i(', 'var pt='),context);
 const {mi,ui,pi,fi,gi,_i,Ao,Vi,Ei}=context;
+test('vencimentos ignora o armazém 16 em qualquer filial sem ocultá-lo nas outras análises',()=>{
+ const rows=['16','016',16,'01'].map((armazem,i)=>({filial:String(i+1),armazem,produto:'P'+i,produtoBase:'P'+i,lote:'MESMO',saldo:5,dtValidade:new Date('2026-10-01T00:00:00Z')}));
+ rows.push({...rows[0],dtValidade:new Date('2026-11-15T00:00:00Z')});
+ assert.equal(Ei(rows,90,new Date(2026,9,29)).length,1);assert.equal(Ei(rows,90,new Date(2026,9,29))[0].armazem,'01');
+ assert.equal(fi(rows)[0].registros.length,5);assert.equal(rows.length,5);
+});
 test('prazo de vencimento inclui o dia 30 inteiro e não depende do horário da importação',()=>{
  const rows=[{saldo:2,dtValidade:new Date('2026-11-28T15:00:00Z')},{saldo:5,dtValidade:new Date('2026-11-29T00:00:00Z')},{saldo:1,dtValidade:new Date('2026-10-29T00:00:00Z')}];
  const now=new Date(2026,9,29,8);const result=Ei(rows,30,now);
