@@ -242,3 +242,15 @@ A navegação geral oferece busca por nome ou função da tela, sem diferenciar 
 Os cabeçalhos identificam a área, a tela e seu objetivo. O menu usa ícones e mantém atalhos acessíveis quando recolhido no computador. Em telas menores, apresenta busca e nomes completos no menu expansível, independentemente da preferência de recolhimento do computador. O título da navegação interna do cadastro é Estoque e lotes; as análises e ações permanecem disponíveis.
 
 Validação: `node --test tests/navigation-visual.test.cjs tests/detail-sheet.test.cjs tests/operator-navigation.test.cjs tests/analysis-followup.test.cjs` (14 testes), além de conferência local no navegador em computador e viewport de 390 px. Essa etapa não modifica saldos, importações ou registros de acompanhamento.
+
+## Resumo gerencial da operação
+
+O Resumo da operação apresenta pedidos no recorte, em aberto, enviados e peças liberadas, com a identificação dos filtros e da data de corte. Em aberto significa status diferente de Enviado. O percentual enviado é calculado sobre os pedidos do mesmo recorte; não mede atendimento dentro do prazo. Quando não há pedidos, não se apresenta percentual calculado.
+
+As filas de atenção preservam a classificação existente: atrasados excluindo os classificados como aguardando faturamento, pedidos sem nota com indicação de separação e conferência, e pedidos do Cambuci com nota e conclusão física sem confirmação na Entrega. Os critérios aparecem nos cards. As filas são sinais operacionais, não etapas exclusivas para soma. A confirmação por Entrega aplica-se ao Cambuci; os demais armazéns seguem a classificação por nota fiscal da base atual.
+
+Indicadores e linhas do comparativo abrem os pedidos correspondentes no painel lateral compartilhado. A tabela existente mantém paginação, ordenação, exportação de toda a lista e acesso à timeline. Quantidades decimais são preservadas na exibição dos detalhes do resumo. Peças liberadas abre a análise de produtos. O comparativo por armazém e as observações automáticas usam o mesmo recorte dos indicadores. A tabela comparativa antiga foi substituída para evitar duplicação e divergência de filtros.
+
+O módulo legível `operation-overview.js` recebe os pedidos já classificados e filtrados pelo aplicativo. Não grava dados nem altera a classificação, o prazo de corte ou os perfis de acesso. A interface é responsiva e reutiliza os componentes atuais, sem acrescentar dependências.
+
+Validação desta etapa: 20 testes de resumo, navegação, permissões, painel lateral e acompanhamento, mais 24 verificações de integração do servidor, incluindo a entrega do novo arquivo JavaScript. Conferência local com dados fictícios em computador e viewport de 390 px.
