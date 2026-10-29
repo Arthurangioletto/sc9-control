@@ -12,6 +12,11 @@ const context = vm.createContext({
 });
 vm.runInContext(cut('function ci(', 'async function pi(')+cut('async function pi(', 'function vi(')+cut('function _i(', 'var pt='),context);
 const {mi,ui,pi,fi,gi,_i,Ao,Vi,Ei}=context;
+test('prazo de vencimento inclui o dia 30 inteiro e não depende do horário da importação',()=>{
+ const rows=[{saldo:2,dtValidade:new Date('2026-11-28T15:00:00Z')},{saldo:5,dtValidade:new Date('2026-11-29T00:00:00Z')},{saldo:1,dtValidade:new Date('2026-10-29T00:00:00Z')}];
+ const now=new Date(2026,9,29,8);const result=Ei(rows,30,now);
+ assert.equal(result.length,2);assert.equal(result[1].diasParaVencer,30);assert.equal(result[0].jaVencido,false);
+});
 test('atualização de saldo rejeita números inválidos e identidade incompleta antes de enviar',async()=>{
  for(const record of [['01','A','L','RJ','erro'],['','A','L','RJ',5],['01','A','L','',5]]){
   const book={SheetNames:['SB8'],Sheets:{SB8:sheet([['Filial','Produto','Lote','Armazém','Saldo'],record])}};
