@@ -3,3 +3,10 @@ test('conta dias de calendário, sem transformar validade em data de movimentaç
 test('faixas de envelhecimento respeitam os limites e produtos de anos anteriores',()=>{assert.deepEqual([30,31,90,91,180,181,365,366,2000].map(x.ageBand),['Até 30 dias','31–90 dias','31–90 dias','91–180 dias','91–180 dias','181–365 dias','181–365 dias','Mais de 1 ano','Mais de 1 ano']);assert.equal(x.enrich([{dtValidade:'2023-12-31'}],new Date(2026,9,14))[0].expiryYear,'2023');});
 test('agrupa armazéns por filial e soma unidades sem duplicar lotes/produtos',()=>{const rows=x.enrich([{filial:'01',armazem:'01',produto:'P',lote:'L',saldo:2,dtValidade:'2023-01-01'},{filial:'01',armazem:'02',produto:'P',lote:'L',saldo:3,dtValidade:'2023-01-01'},{filial:'03',armazem:'01',produto:'P',lote:'L',saldo:4,dtValidade:'2024-02-01'}],new Date(2026,9,14));assert.equal(x.summarize(rows).units,9);assert.equal(x.summarize(rows).lots,2);assert.equal(x.group(rows,r=>x.code(r.filial)).length,2);const out=x.exportRows(rows);assert.equal(out[0].Unidade,'Cambuci');assert.equal(out[2].Unidade,'Tamboré');assert.equal(out[0]['Ano de vencimento'],'2023');});
 test('datas inválidas não produzem tempo vencido fictício',()=>{assert.equal(x.day('2026-02-30'),null);assert.equal(x.enrich([{dtValidade:'inválida'}])[0].expiredDays,null);});
+test('armazém 16 fica fora de vencidos, retirada preventiva, produtos e exportação sem apagar a fonte',()=>{
+ const rows=['16','016',16,' 16 ','01','RJ'].map((armazem,i)=>({armazem,produto:'P'+i,lote:'L'+i,filial:'1',saldo:5,dtValidade:'2026-10-01'}));
+ rows.push({armazem:'16',produto:'FUTURO',lote:'F',saldo:8,dtValidade:'2026-11-01'});
+ const copy=structuredClone(rows),visible=x.enrich(rows,new Date(2026,9,29));
+ assert.deepEqual(visible.map(r=>r.armazem),['01','RJ']);assert.equal(x.summarize(visible).units,10);assert.equal(x.productGroups(visible).length,2);
+ assert.equal(x.exportRows(rows).length,2);assert.deepEqual(rows,copy);
+});

@@ -7,6 +7,7 @@
   function stateRows(rows,state){const match=STATES.find(s=>s.id===state);return match?rows.filter(r=>match.warehouses.includes(warehouseCode(r.armazem))):rows;}
   function stateSummary(rows,state){const scoped=stateRows(rows,state).filter(r=>Number(r.saldo)>0);return {...summarize(scoped.filter(r=>r.expiredDays>0)),upcoming:scoped.filter(r=>r.expiredDays!==null&&r.expiredDays<=0&&r.expiredDays>=-90).reduce((n,r)=>n+Number(r.saldo),0)};}
   function code(value) { const s=String(value == null?'':value).trim(); return /^\d+$/.test(s)?String(Number(s)):s; }
+  const isAnalyzedRow=row=>code(row.armazem)!=='16';
   function dateParts(value) {
     if (!value) return null;
     if (typeof value==='string') { const m=value.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) { const y=+m[1],mo=+m[2],d=+m[3],check=new Date(Date.UTC(y,mo-1,d));return check.getUTCFullYear()===y&&check.getUTCMonth()===mo-1&&check.getUTCDate()===d?{y,m:mo,d}:null; } }
@@ -14,7 +15,7 @@
   }
   function day(value) { const p=dateParts(value);return p?Date.UTC(p.y,p.m-1,p.d)/86400000:null; }
   function ageBand(days) { return days<=0?'A vencer':days<=30?'Até 30 dias':days<=90?'31–90 dias':days<=180?'91–180 dias':days<=365?'181–365 dias':'Mais de 1 ano'; }
-  function enrich(rows, now=new Date()) { const today=Date.UTC(now.getFullYear(),now.getMonth(),now.getDate())/86400000;return rows.map(row=>{const p=dateParts(row.dtValidade),expiry=day(row.dtValidade);const age=expiry===null?null:today-expiry;return {...row,expiryYear:p?String(p.y):'',expiryMonth:p?String(p.m).padStart(2,'0'):'',expiredDays:age,ageBand:age===null?'Sem validade':ageBand(age)};}); }
+  function enrich(rows, now=new Date()) { const today=Date.UTC(now.getFullYear(),now.getMonth(),now.getDate())/86400000;return rows.filter(isAnalyzedRow).map(row=>{const p=dateParts(row.dtValidade),expiry=day(row.dtValidade);const age=expiry===null?null:today-expiry;return {...row,expiryYear:p?String(p.y):'',expiryMonth:p?String(p.m).padStart(2,'0'):'',expiredDays:age,ageBand:age===null?'Sem validade':ageBand(age)};}); }
   function summarize(rows) {return {units:rows.reduce((s,r)=>s+Math.max(0,Number(r.saldo)||0),0),lots:new Set(rows.map(r=>[code(r.filial),r.produto,r.lote].join('|'))).size,products:new Set(rows.map(r=>r.produto)).size,oldest:rows.reduce((m,r)=>Math.max(m,r.expiredDays||0),0)};}
   function group(rows,key) {const map=new Map();rows.forEach(row=>{const k=key(row);if(!map.has(k))map.set(k,[]);map.get(k).push(row);});return [...map.entries()];}
   function productGroups(rows){return group(rows,r=>String(r.produto||'').trim()).map(([product,items])=>({product,description:items.find(r=>r.descricao)?.descricao||'Sem descrição',items:items.slice().sort((a,b)=>b.expiredDays-a.expiredDays||String(a.lote).localeCompare(String(b.lote),undefined,{numeric:true}))})).sort((a,b)=>(b.items[0]?.expiredDays||0)-(a.items[0]?.expiredDays||0)||a.product.localeCompare(b.product,undefined,{numeric:true}));}
@@ -65,7 +66,7 @@
     const info=root.SC9Paging.pageInfo(groups.length,page,10),pageGroups=groups.slice(info.start,info.end);
     const fmt=v=>Number(v||0).toLocaleString('pt-BR'),label=v=>v?String(v).padStart(2,'0'):'Não informado';
     const branchName=v=>(BRANCHES.find(([c])=>c===code(v))||[v,'Filial '+label(v)])[1];
-    const warehouses=root.SC9LotFilters.warehouses(inventory,saved,filial);
+    const warehouses=root.SC9LotFilters.warehouses(inventory,saved,filial).filter(arm=>code(arm)!=='16');
     const change=(set,value)=>{set(value);setPage(0);};
     function metric(title,value,sub){return h('div',{className:'sc9-exp-metric'},h('span',null,title),h('strong',null,value),h('small',null,sub));}
     function select(title,value,set,options){return h('label',null,title,h('select',{value,onChange:e=>change(set,e.target.value)},h('option',{value:''},'Todos'),options.map(([v,t])=>h('option',{key:v,value:v},t))));}
@@ -88,7 +89,7 @@
       info.pages>1&&h(root.SC9Paging.Controls,{info,onPage:setPage,label:'produtos'}));
   }
 
-  function exportRows(rows) {return rows.map(r=>({Filial:code(r.filial),Unidade:(BRANCHES.find(([id])=>id===code(r.filial))||['','Não informada'])[1],Armazém:code(r.armazem),Produto:r.produto,Descrição:r.descricao||'',Lote:r.lote,Saldo:r.saldo,'Ano de vencimento':r.expiryYear,'Mês de vencimento':r.expiryMonth,'Dias desde o vencimento':r.expiredDays,'Faixa de tempo':r.ageBand}));}
-  const api={ProductCard,productGroups,productTargetPage,STATES,stateRows,stateSummary,code,dateParts,day,ageBand,enrich,summarize,group,paginateGroups,exportRows,Panel};root.SC9Expiry=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  function exportRows(rows) {return rows.filter(isAnalyzedRow).map(r=>({Filial:code(r.filial),Unidade:(BRANCHES.find(([id])=>id===code(r.filial))||['','Não informada'])[1],Armazém:code(r.armazem),Produto:r.produto,Descrição:r.descricao||'',Lote:r.lote,Saldo:r.saldo,'Ano de vencimento':r.expiryYear,'Mês de vencimento':r.expiryMonth,'Dias desde o vencimento':r.expiredDays,'Faixa de tempo':r.ageBand}));}
+  const api={isAnalyzedRow,ProductCard,productGroups,productTargetPage,STATES,stateRows,stateSummary,code,dateParts,day,ageBand,enrich,summarize,group,paginateGroups,exportRows,Panel};root.SC9Expiry=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window==='undefined'?globalThis:window);
 
