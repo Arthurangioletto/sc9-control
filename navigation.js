@@ -1,56 +1,86 @@
-/* Editable navigation source. Receives only the tabs authorized by the app. */
-(function () {
-  const h = React.createElement;
-  const groups = [
-    { name: 'Visão geral', description: 'Resumo e prioridades', ids: ['geral', 'dashboard', 'alertas', 'criticos'] },
-    { name: 'Operação', description: 'Acompanhe cada etapa', ids: ['fluxo', 'controle0201', 'saida', 'recebimento', 'expedicao', 'movimentacao'] },
-    { name: 'Produtividade', description: 'Equipe e desempenho', ids: ['separadores', 'conferencia', 'performance', 'horarios'] },
-    { name: 'Análises', description: 'Clientes, produtos e evolução', ids: ['clientes', 'itens', 'tendencias'] },
-    { name: 'Administração', description: 'Cadastros e acessos', ids: ['alteracoes_sep', 'cadastro_sb8', 'acessos'] }
+/* Shared navigation: all routes come from the tabs authorized by the app. */
+(function(root){
+  const R=root.React,h=R.createElement;
+  const groups=[
+    {name:'Visão geral',description:'Resumo e prioridades',icon:'grid',ids:['geral','dashboard','alertas','criticos']},
+    {name:'Operação',description:'Acompanhe cada etapa',icon:'route',ids:['fluxo','controle0201','controle','saida','recebimento','expedicao','movimentacao']},
+    {name:'Produtividade',description:'Equipe e desempenho',icon:'chart',ids:['separadores','conferencia','performance','horarios']},
+    {name:'Análises',description:'Clientes, produtos e evolução',icon:'trend',ids:['clientes','itens','tendencias']},
+    {name:'Administração',description:'Cadastros e acessos',icon:'settings',ids:['alteracoes_sep','cadastro_sb8','acessos']}
   ];
-  const labels = { geral: 'Resumo da operação', dashboard: 'Monitor ao vivo', controle0201: 'Controle 02 → 01', saida: 'Saída para expedição', recebimento: 'Recebimento', alteracoes_sep: 'Revisão de alterações', cadastro_sb8: 'Cadastro de lotes', itens: 'Produtos · Curva ABC' };
-  window.SC9Navigation = function SC9Navigation({ tabs, active, onNavigate }) {
-    const [mobileOpen, setMobileOpen] = React.useState(false);
-    const [expanded, setExpanded] = React.useState({});
-    const [collapsed, setCollapsed] = React.useState(() => {
-      try { return window.localStorage.getItem('sc9-sidebar-collapsed') === 'true'; } catch { return false; }
-    });
-    function toggleSidebar() {
-      const next = !collapsed;
-      setCollapsed(next);
-      try { window.localStorage.setItem('sc9-sidebar-collapsed', String(next)); } catch {}
-    }
-    const known = new Set(groups.flatMap(group => group.ids));
-    const extra = tabs.filter(([id]) => !known.has(id));
-    const sections = extra.length ? [...groups, { name: 'Outras telas', ids: extra.map(([id]) => id) }] : groups;
-    const current = tabs.find(([id]) => id === active);
-    const section = sections.find(group => group.ids.includes(active));
-    const title = current ? labels[active] || current[1] : 'Painel de controle';
-    function navigate(id) { onNavigate(id); setMobileOpen(false); }
-    return h(React.Fragment, null,
-      h('div', { className: 'sc9-page-heading' },
-        h('div', null, h('p', { className: 'sc9-breadcrumb' }, section ? section.name : 'SC9 Control'), h('h1', null, title), h('p', { className: 'sc9-page-description' }, 'Consulte os indicadores e acompanhe sua operação.')),
-        h('button', { type: 'button', className: 'sc9-menu-toggle', onClick: () => setMobileOpen(!mobileOpen), 'aria-expanded': mobileOpen, 'aria-controls': 'sc9-navigation' }, mobileOpen ? 'Fechar menu' : 'Abrir menu')),
-      h('aside', { className: 'sc9-sidebar' + (mobileOpen ? ' is-open' : '') + (collapsed ? ' is-collapsed' : '') },
-        h('div', { className: 'sc9-brand' }, h('span', { className: 'sc9-brand-mark', 'aria-hidden': true }, 'S9'), h('div', null, h('strong', null, 'SC9 Control'), h('span', null, 'Gestão da operação')),
-          h('button', { type: 'button', className: 'sc9-sidebar-collapse', onClick: toggleSidebar, 'aria-expanded': !collapsed, 'aria-controls': 'sc9-navigation', 'aria-label': collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral', title: collapsed ? 'Expandir barra lateral' : 'Recolher barra lateral' },
-            h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true }, h('rect', { x: 3, y: 4, width: 18, height: 16, rx: 3 }), h('path', { d: 'M9 4v16' })))),
-        h('nav', { id: 'sc9-navigation', 'aria-label': 'Áreas do painel' }, sections.map(group => {
-          const items = group.ids.map(id => tabs.find(([tab]) => tab === id)).filter(Boolean);
-          if (!items.length) return null;
-          const selected = group.ids.includes(active);
-          const open = expanded[group.name] ?? selected;
-          const panelId = 'sc9-group-' + sections.indexOf(group);
-          return h('section', { key: group.name, className: 'sc9-nav-section' },
-            h('button', { type: 'button', className: 'sc9-group-toggle', 'aria-expanded': open, 'aria-controls': panelId, onClick: () => setExpanded(previous => ({ ...previous, [group.name]: !open })) }, h('span', null, group.name), h('span', { 'aria-hidden': true }, open ? '−' : '+')),
-            h('div', { id: panelId, hidden: !open }, items.map(([id, originalLabel]) => {
-              const count = id === 'controle0201' && originalLabel.match(/\((\d+)\)$/);
-              return h('button', { type: 'button', key: id, className: 'sc9-nav-link' + (id === active ? ' is-active' : ''), 'aria-current': id === active ? 'page' : undefined, onClick: () => navigate(id) }, h('span', null, labels[id] || originalLabel), count && h('span', { className: 'sc9-nav-count', 'aria-label': count[1] + ' aguardando' }, count[1]));
-            })));
-        })),
-        h('div', { className: 'sc9-sidebar-footer' }, h('span', { className: 'sc9-footer-dot', 'aria-hidden': true }), 'Controle e acompanhamento')));
+  const pages={
+    geral:{label:'Resumo da operação',icon:'grid',description:'Indicadores e prioridades no recorte selecionado.'},
+    dashboard:{label:'Monitor ao vivo',icon:'chart',description:'Filas, pendências e tempos de espera da operação.'},
+    alertas:{icon:'alert',description:'Identifique pendências e situações que exigem atenção.'},
+    criticos:{icon:'alert',description:'Consulte os itens prioritários do recorte selecionado.'},
+    fluxo:{icon:'route',description:'Acompanhe os pedidos nas etapas do fluxo operacional.'},
+    controle0201:{label:'Controle 02 → 01',icon:'swap',description:'Registre envios e confira recebimentos entre os armazéns 02 e 01.'},
+    controle:{label:'Controle 02 → 01',icon:'swap',description:'Registre envios e confira recebimentos entre os armazéns 02 e 01.'},
+    saida:{label:'Saída para expedição',icon:'out',description:'Confira os pedidos encaminhados para expedição.'},
+    recebimento:{label:'Recebimento',icon:'in',description:'Acompanhe os pedidos recebidos e suas conferências.'},
+    expedicao:{icon:'box',description:'Consulte a situação dos pedidos e da expedição.'},
+    movimentacao:{icon:'swap',description:'Consulte transferências e movimentações internas.'},
+    separadores:{icon:'users',description:'Acompanhe volumes e atividade de separação no período.'},
+    conferencia:{icon:'check',description:'Consulte os resultados e a atividade de conferência.'},
+    performance:{icon:'chart',description:'Compare os indicadores de desempenho no recorte atual.'},
+    horarios:{icon:'clock',description:'Veja a distribuição da atividade ao longo da operação.'},
+    clientes:{icon:'users',description:'Analise os pedidos e volumes por cliente.'},
+    itens:{label:'Produtos · Curva ABC',icon:'box',description:'Analise os produtos e sua participação nos volumes da operação.'},
+    tendencias:{icon:'trend',description:'Compare a evolução dos resultados ao longo do tempo.'},
+    alteracoes_sep:{label:'Revisão de alterações',icon:'edit',description:'Confira as alterações e os registros que precisam de revisão.'},
+    cadastro_sb8:{label:'Cadastro de lotes',icon:'box',description:'Consulte lotes, saldos, vencimentos e divergências de estoque.',keywords:'SB8 estoque produtos filiais validade duplicados'},
+    acessos:{icon:'lock',description:'Gerencie usuários e os perfis de acesso ao sistema.'}
   };
-})();
+  const paths={
+    grid:'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+    route:'M4 5h5v5H4zM15 14h5v5h-5zM9 7h6a3 3 0 0 1 3 3v4M6 10v7h9',
+    chart:'M4 3v17h17M8 16v-5M13 16V7M18 16V4',
+    trend:'M3 17l6-6 4 4 8-10M15 5h6v6',
+    settings:'M4 7h16M4 17h16M9 4v6M15 14v6',
+    swap:'M3 7h17l-4-4M21 17H4l4 4',
+    out:'M4 4h9v4M13 16v4H4V4M9 12h12l-4-4M21 12l-4 4',
+    in:'M11 4h9v16h-9v-4M3 12h12l-4-4M15 12l-4 4',
+    box:'M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10',
+    users:'M4 20v-3a4 4 0 0 1 4-4h3a4 4 0 0 1 4 4v3M16 5a3 3 0 0 1 0 6M18 14a4 4 0 0 1 3 4v2M12 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
+    check:'M4 4h16v16H4zM8 12l3 3 5-6',
+    clock:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M12 7v5l3 2',
+    edit:'M14 5l5 5M4 20l2-7L17 2l5 5-11 11z',
+    lock:'M5 10h14v11H5zM8 10V7a4 4 0 0 1 8 0v3M12 14v3',
+    alert:'M12 3l10 18H2zM12 9v5M12 17v1',
+    search:'M16 10a6 6 0 1 1-12 0 6 6 0 0 1 12 0M15 15l6 6'
+  };
+  function Icon({name,className=''}){return h('svg',{className:'sc9-nav-icon '+className,width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.6,strokeLinecap:'round',strokeLinejoin:'round','aria-hidden':true},h('path',{d:paths[name]||paths.grid}));}
+  const normalize=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  function page(tab){const [id,originalLabel]=tab,meta=pages[id]||{};return {id,originalLabel,...meta,label:meta.label||originalLabel,icon:meta.icon||'grid',description:meta.description||'Consulte as informações desta área.'};}
+  function availableSections(tabs,query=''){
+    const known=new Set(groups.flatMap(group=>group.ids)),extra=tabs.filter(([id])=>!known.has(id));
+    const sections=extra.length?[...groups,{name:'Outras telas',icon:'grid',description:'Outras funções disponíveis',ids:extra.map(([id])=>id)}]:groups;
+    const terms=normalize(query).split(/\s+/).filter(Boolean);
+    return sections.map(group=>({...group,items:group.ids.map(id=>tabs.find(([tab])=>tab===id)).filter(Boolean).map(page).filter(item=>terms.every(term=>normalize([item.label,item.originalLabel,item.description,item.keywords,group.name].join(' ')).includes(term)))})).filter(group=>group.items.length);
+  }
+  root.SC9NavigationModel={availableSections,page};
+  root.SC9Navigation=function SC9Navigation({tabs,active,onNavigate}){
+    const [mobileOpen,setMobileOpen]=R.useState(false),[expanded,setExpanded]=R.useState({}),[query,setQuery]=R.useState('');
+    const [collapsed,setCollapsed]=R.useState(()=>{try{return root.localStorage.getItem('sc9-sidebar-collapsed')==='true';}catch{return false;}});
+    const [desktop,setDesktop]=R.useState(()=>root.matchMedia?root.matchMedia('(min-width:1024px)').matches:true);
+    R.useEffect(()=>{if(!root.matchMedia)return;const media=root.matchMedia('(min-width:1024px)'),changed=e=>setDesktop(e.matches);media.addEventListener('change',changed);return()=>media.removeEventListener('change',changed);},[]);
+    const allSections=availableSections(tabs),sections=availableSections(tabs,query),current=tabs.find(([id])=>id===active),selected=current?page(current):{label:'Painel de controle',icon:'grid',description:'Escolha uma área no menu para continuar.'};
+    const section=allSections.find(group=>group.ids.includes(active)),rail=desktop&&collapsed,results=sections.flatMap(group=>group.items);
+    R.useEffect(()=>{if(section)setExpanded(previous=>({...previous,[section.name]:true}));},[active]);
+    function toggleSidebar(){const next=!collapsed;setCollapsed(next);setQuery('');try{root.localStorage.setItem('sc9-sidebar-collapsed',String(next));}catch{}}
+    function navigate(id){if(!tabs.some(([tab])=>tab===id))return;onNavigate(id);setMobileOpen(false);setQuery('');const group=allSections.find(g=>g.ids.includes(id));if(group)setExpanded(previous=>({...previous,[group.name]:true}));}
+    return h(R.Fragment,null,
+      h('div',{className:'sc9-page-heading'},h('div',{className:'sc9-page-heading-main'},h('span',{className:'sc9-page-heading-icon'},h(Icon,{name:selected.icon})),h('div',null,h('nav',{className:'sc9-breadcrumb','aria-label':'Localização atual'},h('span',null,'SC9 Control'),h('span',{'aria-hidden':true},'/'),h('span',null,section?.name||'Painel')),h('h1',null,selected.label),h('p',{className:'sc9-page-description'},selected.description))),h('button',{type:'button',className:'sc9-menu-toggle',onClick:()=>setMobileOpen(!mobileOpen),'aria-expanded':mobileOpen,'aria-controls':'sc9-navigation'},mobileOpen?'Fechar menu':'Abrir menu')),
+      h('aside',{className:'sc9-sidebar'+(mobileOpen?' is-open':'')+(rail?' is-collapsed':'')},
+        h('div',{className:'sc9-brand'},h('span',{className:'sc9-brand-mark','aria-hidden':true},'S9'),h('div',null,h('strong',null,'SC9 Control'),h('span',null,'Gestão da operação')),h('button',{type:'button',className:'sc9-sidebar-collapse',onClick:toggleSidebar,'aria-expanded':!rail,'aria-controls':'sc9-navigation','aria-label':rail?'Expandir barra lateral':'Recolher barra lateral',title:rail?'Expandir barra lateral':'Recolher barra lateral'},h('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.8,'aria-hidden':true},h('rect',{x:3,y:4,width:18,height:16,rx:3}),h('path',{d:'M9 4v16'})))),
+        !rail&&h('div',{className:'sc9-nav-search'},h(Icon,{name:'search'}),h('input',{type:'search',value:query,onChange:e=>setQuery(e.target.value),onKeyDown:e=>{if(e.key==='Escape')setQuery('');if(e.key==='Enter'&&results.length===1){e.preventDefault();navigate(results[0].id);}},placeholder:'Buscar tela…','aria-label':'Buscar tela no menu',autoComplete:'off'}),query&&h('button',{type:'button',onClick:()=>setQuery(''),'aria-label':'Limpar busca de telas'},'×')),
+        h('nav',{id:'sc9-navigation','aria-label':'Áreas do painel'},sections.map(group=>{
+          const open=!!query||rail||(expanded[group.name]??group.ids.includes(active)),panelId='sc9-group-'+allSections.findIndex(g=>g.name===group.name);
+          return h('section',{key:group.name,className:'sc9-nav-section'},h('button',{type:'button',className:'sc9-group-toggle','aria-expanded':open,'aria-controls':panelId,title:group.description,onClick:()=>setExpanded(previous=>({...previous,[group.name]:!open}))},h('span',{className:'sc9-group-name'},h(Icon,{name:group.icon}),group.name),h('span',{className:'sc9-group-meta','aria-hidden':true},h('span',{className:'sc9-group-count'},group.items.length),h('span',null,open?'−':'+'))),h('div',{id:panelId,hidden:!open},group.items.map(item=>{const count=item.id==='controle0201'&&item.originalLabel.match(/\((\d+)\)$/);return h('button',{type:'button',key:item.id,className:'sc9-nav-link'+(item.id===active?' is-active':''),'aria-label':item.label+(count?' · '+count[1]+' aguardando':''),'aria-current':item.id===active?'page':undefined,title:rail?item.label:item.description,onClick:()=>navigate(item.id)},h(Icon,{name:item.icon}),h('span',{className:'sc9-nav-label'},item.label),count&&h('span',{className:'sc9-nav-count','aria-label':count[1]+' aguardando'},count[1]));})));})),
+        !sections.length&&h('p',{className:'sc9-nav-empty',role:'status'},'Nenhuma tela encontrada. Tente outro nome.'),
+        !rail&&h('div',{className:'sc9-sidebar-footer',role:query?'status':undefined},query?results.length+(results.length===1?' tela encontrada':' telas encontradas'):tabs.length+(tabs.length===1?' tela disponível no seu perfil':' telas disponíveis no seu perfil'))));
+  };
+})(window);
 
 /* Shared detail panel: native modal handles focus containment and Escape. */
 (function(root){
@@ -95,7 +125,7 @@
     const title = imports ? 'Importações' : root.SC9Followup.labelFor(analysis);
     return h('div', { className: 'sc9-lot-workspace' },
       h('aside', { className: 'sc9-lot-sidebar' },
-        h('div', { className: 'sc9-lot-sidebar-title' }, h('strong', null, 'Produtos Duplicados'),
+        h('div', { className: 'sc9-lot-sidebar-title' }, h('strong', null, 'Estoque e lotes'),
           h('button', { type: 'button', className: 'sc9-lot-menu-toggle',
             'aria-expanded': menuOpen, 'aria-controls': 'sc9-lot-navigation',
             onClick: () => setMenuOpen(value => !value) }, menuOpen ? 'Fechar menu' : 'Abrir menu')),

@@ -234,3 +234,11 @@ Na análise de vencimentos, a primeira etapa de evolução visual acrescenta a a
 A segunda etapa acrescenta a ficha lateral do produto. Ela é aberta por **Ver ficha** nos cards ou pelo código do produto na tabela. Reúne saldo, lotes, locais, validade e acompanhamento exclusivamente no recorte atual; não representa todo o estoque fora desses filtros. As ações e os rascunhos usam os registros originais. Abrir e fechar a ficha mantém a visualização, a página e os filtros da lista. Se um registro sair do recorte após marcação ou finalização, a ficha reflete essa mudança sem manter cópias antigas para edição.
 
 O componente `SC9UI.Sheet`, em `navigation.js`, e os estilos `sc9-sheet`, `sc9-ui-button` e `sc9-detail-*` formam uma base visual reutilizável para outras abas. O painel usa diálogo modal nativo, ciclo de foco por teclado, fechamento por Escape, botão ou área externa, bloqueio temporário da rolagem de fundo e restauração do foco ao controle de origem. Nenhuma dependência ou serviço foi acrescentado nesta etapa.
+
+## Navegação compartilhada
+
+A navegação geral oferece busca por nome ou função da tela, sem diferenciar acentos. A busca considera apenas as telas permitidas ao perfil atual; Enter abre a tela quando há um único resultado e Escape limpa a consulta. Os identificadores das rotas e as permissões existentes são preservados.
+
+Os cabeçalhos identificam a área, a tela e seu objetivo. O menu usa ícones e mantém atalhos acessíveis quando recolhido no computador. Em telas menores, apresenta busca e nomes completos no menu expansível, independentemente da preferência de recolhimento do computador. O título da navegação interna do cadastro é Estoque e lotes; as análises e ações permanecem disponíveis.
+
+Validação: `node --test tests/navigation-visual.test.cjs tests/detail-sheet.test.cjs tests/operator-navigation.test.cjs tests/analysis-followup.test.cjs` (14 testes), além de conferência local no navegador em computador e viewport de 390 px. Essa etapa não modifica saldos, importações ou registros de acompanhamento.
