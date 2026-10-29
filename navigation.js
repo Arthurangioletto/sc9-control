@@ -104,12 +104,11 @@
       h('div', { className: 'sc9-lot-workspace-content' },
         h('p', { className: 'sc9-lot-current-analysis' }, title,
           !imports && ' / ' + (active === 'marcados' ? 'Marcados' : active === 'finalizados' ? 'Finalizados' : 'Análise')),
-        items[0],
         h('section', { hidden: !imports, 'aria-label': 'Importações do cadastro de lotes' },
           h('div', { className: 'sc9-lot-page-heading' },
             h('h2', null, 'Importações'),
             h('p', null, 'Carregue ou atualize o SB8 e as bases complementares.')),
-          items[1]),
-        h('div', { hidden: imports }, items.slice(2))));
+          items[0]),
+        h('div', { hidden: imports }, items.slice(1))));
   };
 })(window);
