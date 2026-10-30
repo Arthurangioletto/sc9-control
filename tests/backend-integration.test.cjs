@@ -64,7 +64,7 @@ await check('Saldo atual: prévia, commit atômico, isolamento de histórico, ba
  const findings=(await req('/api/cadastro-achados',{cookie:admin})).data;
  const notesFile=path.join(dir,'data','cadastro-lembretes.json'),notes=fs.readFileSync(notesFile,'utf8');
  async function stage(saldo){
-  const begin=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'iniciar',mode:'complete',name:'teste.xlsx'}});assert.equal(begin.status,200);const id=begin.data.id;
+  const begin=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'iniciar',mode:'present',name:'teste.xlsx'}});assert.equal(begin.status,200);const id=begin.data.id;
   const rows=[{filial:'01',armazem:'RJ',produto:'STOCK',lote:'STOCK-LOT',saldo,dtValidade:'2026-01-01'}];
   assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'lote',id,sequence:1,rows}})).status,400);
   assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'lote',id,sequence:0,rows}})).status,200);
@@ -88,7 +88,7 @@ await check('Importação SB8 exige perfil Cadastro e não amplia os demais aces
  for(const usuario of ['audit-control','audit-geral','audit-saida','audit-recebimento','audit-despacho','audit-alteracoes']){
   const login=await req('/api/login',{body:{usuario,password:'audit-local-123'}});assert.equal(login.status,200);
   assert.equal((await req('/api/cadastro-saldos',{cookie:login.cookie})).status,403);
-  assert.equal((await req('/api/cadastro-saldos',{cookie:login.cookie,body:{acao:'iniciar',mode:'complete'}})).status,403);
+  assert.equal((await req('/api/cadastro-saldos',{cookie:login.cookie,body:{acao:'iniciar',mode:'present'}})).status,403);
  }
  for(const usuario of ['audit-cadastro','audit-adriano']){
   const login=await req('/api/login',{body:{usuario,password:'audit-local-123'}});assert.equal(login.status,200);
@@ -103,7 +103,7 @@ await check('Cadastro e Saída com Cadastro importam SB8 com prévia, backup e i
  const findings=(await req('/api/cadastro-achados',{cookie:admin})).data,notesFile=path.join(dir,'data','cadastro-lembretes.json'),notes=fs.readFileSync(notesFile,'utf8');
  for(let index=0;index<cookies.length;index++){
   const cookie=cookies[index],other=cookies[1-index],produto='IMPORTADOR-'+index;
-  const begin=await req('/api/cadastro-saldos',{cookie,body:{acao:'iniciar',mode:'complete',name:'SB8-operador.xlsx'}});assert.equal(begin.status,200);const id=begin.data.id;
+  const begin=await req('/api/cadastro-saldos',{cookie,body:{acao:'iniciar',mode:'present',name:'SB8-operador.xlsx'}});assert.equal(begin.status,200);const id=begin.data.id;
   for(const outsider of [other,admin])for(const acao of ['lote','prever','aplicar','cancelar'])assert.equal((await req('/api/cadastro-saldos',{cookie:outsider,body:{acao,id,sequence:0,rows:[{}]}})).status,409);
   assert.equal((await req('/api/cadastro-saldos',{cookie,body:{acao:'lote',id,sequence:0,rows:[{filial:'01',armazem:'RJ',produto,lote:'LOTE-'+index,saldo:2.125,dtValidade:'2027-01-01'}]}})).status,200);
   assert.equal((await req('/api/cadastro-saldos',{cookie,body:{acao:'aplicar',id}})).status,400);
@@ -113,6 +113,40 @@ await check('Cadastro e Saída com Cadastro importam SB8 com prévia, backup e i
   assert.equal((await req('/api/cadastro-saldos',{cookie:other})).data.rows.find(row=>row.produto===produto).saldo,2.125);
  }
  assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data,findings);assert.equal(fs.readFileSync(notesFile,'utf8'),notes);
+});
+await check('SB8 bloqueia substituição total e preserva ausentes mesmo após atualização parcial',async()=>{
+ for(const mode of ['complete','scopes',undefined])assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'iniciar',mode}})).status,400);
+ const before=(await req('/api/cadastro-saldos',{cookie:admin})).data;
+ const begin=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'iniciar',mode:'present'}}),id=begin.data.id;
+ await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'lote',id,sequence:0,rows:[{filial:'01',armazem:'RJ',produto:'NOVO',lote:'NOVO',saldo:1}]}});
+ const preview=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'prever',id}});assert.equal(preview.data.stats.zeroed,0);assert.equal(preview.data.stats.retained,before.rows.length);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id}})).status,200);
+ const after=(await req('/api/cadastro-saldos',{cookie:admin})).data;for(const row of before.rows)assert.deepEqual(after.rows.find(r=>require(path.join(dir,'stock-position.js')).key(r)===require(path.join(dir,'stock-position.js')).key(row)),row);
+});
+await check('Restauração SB8 recupera backup exato, protege histórico e rejeita conflito ou acesso indevido',async()=>{
+ const cadastro=(await req('/api/login',{body:{usuario:'audit-cadastro',password:'audit-local-123'}})).cookie;
+ const findings=(await req('/api/cadastro-achados',{cookie:admin})).data,notes=fs.readFileSync(path.join(dir,'data','cadastro-lembretes.json'),'utf8');
+ const list=await req('/api/cadastro-saldos/backups',{cookie:admin});assert.equal(list.status,200);assert(list.data.backups.length>0);
+ assert.equal((await req('/api/cadastro-saldos/backups')).status,401);assert.equal((await req('/api/cadastro-saldos/backups',{cookie:cadastro})).status,403);
+ const backup=list.data.backups.find(item=>JSON.parse(fs.readFileSync(path.join(dir,'data',item.name))).position?.rows?.some(r=>r.saldo>0)).name;
+ assert.equal((await req('/api/cadastro-saldos',{cookie:cadastro,body:{acao:'preverRestauracao',backup}})).status,403);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:cadastro,body:{acao:'restaurar',backup}})).status,403);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'preverRestauracao',backup:'../usuarios-controle.json'}})).status,400);
+ const preview=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'preverRestauracao',backup}});assert.equal(preview.status,200);assert(preview.data.positive>0);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'restaurar',backup,version:'desatualizada'}})).status,400);
+ const before=(await req('/api/cadastro-saldos',{cookie:admin})).data;
+ const restored=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'restaurar',backup,version:preview.data.version}});assert.equal(restored.status,200);
+ assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir,'data',restored.data.backup))).position,before);
+ assert.deepEqual((await req('/api/cadastro-saldos',{cookie:cadastro})).data.rows,JSON.parse(fs.readFileSync(path.join(dir,'data',backup))).position.rows);
+ const legacy=list.data.backups.find(item=>JSON.parse(fs.readFileSync(path.join(dir,'data',item.name))).position===null).name;
+ const legacyPreview=(await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'preverRestauracao',backup:legacy}})).data;assert.equal(legacyPreview.legacy,true);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'restaurar',backup:legacy,version:legacyPreview.version}})).status,200);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin})).data.rows,null);
+ const start=(await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'iniciar',mode:'present'}})).data;
+ await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'lote',id:start.id,sequence:0,rows:[{filial:'01',armazem:'RJ',produto:'APOS-RESTAURO',lote:'N',saldo:2}]}});
+ const next=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'prever',id:start.id}});assert(next.data.stats.retained>0);
+ assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id:start.id}})).status,200);
+ assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data,findings);assert.equal(fs.readFileSync(path.join(dir,'data','cadastro-lembretes.json'),'utf8'),notes);
 });
 await check('Administrador pode apagar todos os achados',async()=>{assert.equal((await req('/api/cadastro-achados',{cookie:admin,body:{acao:'apagarTudo'}})).status,200);assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data.achados,[]);});
 await check('Sessão é revogada ao desativar o operador',async()=>{assert.equal((await req('/api/usuarios',{cookie:admin,body:{acao:'desativar',usuario:'audit-control'}})).status,200);assert.equal((await req('/api/controle',{cookie:operator})).status,401);});
