@@ -15,7 +15,7 @@ const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
 // (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
-const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "operation-overview.js", "operation-flow.js", "operation-shipping.js", "operation-handoff.js", "operation-transfers.js", "inventory-presentation.js", "operation-live.js", "operation-productivity.js", "inventory-integrity.js", "stock-position.js", "stock-import.js"]);
+const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "operation-overview.js", "operation-flow.js", "operation-shipping.js", "operation-handoff.js", "operation-transfers.js", "inventory-presentation.js", "operation-live.js", "operation-productivity.js", "inventory-integrity.js", "stock-position.js", "stock-import.js", "entradas-tdc.js", "entradas-tdc-ui.js"]);
 // ---- Armazenamento AUTOSSUFICIENTE (não depende do storage.js) ----
 // Arquivos próprios, separados do snapshot do SC9, pra atualizar o SC9 todo dia
 // nunca apagar nada disso:
@@ -33,6 +33,9 @@ const CONTROLE_OBJ = "controle-0201.json";
 const USUARIOS_OBJ = "usuarios-controle.json";
 const SALDO_OBJ = "saldo-lotes.json";
 const MOV_ANALISE_OBJ = "movimentacao-analise.json"; // cópia COMPACTA da movimentação (só linhas com lote) pra análise de alteração
+const TDC_SD1_OBJ = "entradas-tdc-sd1.json"; // NF de entrada (SD1) do TDC no armazém 59, acumulada entre uploads
+const TDC_FICHAS_OBJ = "entradas-tdc-fichas.json"; // revisões do estoque (confirmar/descartar) e fichas manuais
+const TDC_NOTAS_OBJ = "entradas-tdc-notas.json"; // notas que o estoque está conferindo (número digitado pela pessoa)
 const CONTROLE_SD3_OBJ = "controle-sd3.json"; // { coberturaAte, desde, semRegistro, atualizadoEm, atualizadoPor }
 const usingSupabase = Boolean(SB_URL && SB_KEY);
 let snapshotCache = null, snapshotRead = null, snapshotGeneration = 0;
@@ -2047,6 +2050,120 @@ async function handleApi(req, res, pathname) {
       if (aceitaGzip(req)) { res.writeHead(200, { ...base, "Content-Encoding": "gzip", "Content-Length": c.gz.length }); return res.end(c.gz); }
       res.writeHead(200, { ...base, "Content-Length": c.json.length }); return res.end(c.json);
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar a movimentação")); }
+  }
+
+  // ---- Entradas do TDC no armazém 59: SD1 (nota de entrada) + fichário de revisões ----
+  // Admin ou perfil "alteracoes". O cruzamento SD1 x SD3 é feito no navegador; aqui só guarda.
+  if (pathname === "/api/entradas-tdc/sd1" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
+    try {
+      const d = await objLoad(TDC_SD1_OBJ);
+      if (!d) return sendJson(res, 404, { error: "nenhum SD1 enviado ainda" });
+      return sendJson(res, 200, d);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o SD1")); }
+  }
+  if (pathname === "/api/entradas-tdc/sd1" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "alteracoes"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    if (!body || !Array.isArray(body.rows) || !Array.isArray(body.usuarios)) return sendJson(res, 400, { error: "payload inválido — esperado { rows, usuarios }" });
+    if (!body.rows.length) return sendJson(res, 400, { error: "o SD1 enviado não tem linhas" });
+    if (body.rows.length > 200000 || body.usuarios.length > 5000) return sendJson(res, 400, { error: "SD1 grande demais" });
+    const rowsOk = body.rows.every((r) => Array.isArray(r) && r.length >= 12 && r[0] !== "" && r[3] !== "" && Number.isFinite(Number(r[5])));
+    if (!rowsOk) return sendJson(res, 400, { error: "linhas inválidas no SD1" });
+    const txt = (v, n) => String(v == null ? "" : v).slice(0, n);
+    try {
+      const resp = await comFila("tdc-sd1", async () => {
+        const atual = body.substituir === true ? null : await objLoad(TDC_SD1_OBJ);
+        const usuarios = atual && Array.isArray(atual.usuarios) ? atual.usuarios.slice() : [];
+        const ix = new Map(usuarios.map((u, i) => [u, i]));
+        const uIdx = (nome) => { const n = txt(nome, 60).toLowerCase(); if (!ix.has(n)) { ix.set(n, usuarios.length); usuarios.push(n); } return ix.get(n); };
+        const antigas = atual && Array.isArray(atual.rows) ? atual.rows : [];
+        const chaveNota = (r) => String(r[0]).replace(/^0+(?=\d)/, "") + "|" + String(r[1] || "");
+        const existentes = new Set(antigas.map(chaveNota));
+        // o SD1 é reenviado todo dia com peças novas: cada nota que vier na planilha SUBSTITUI a versão guardada
+        // (se foi corrigida, vale a nova); notas que não vieram na planilha continuam como estavam.
+        const incoming = [];
+        for (const r of body.rows) incoming.push([txt(r[0], 30), txt(r[1], 10), txt(r[2], 80), txt(r[3], 40), txt(r[4], 40), Number(r[5]), txt(r[6], 10), txt(r[7], 10), txt(r[8], 5), uIdx(body.usuarios[Number(r[9])]), txt(r[10], 10), txt(r[11], 10), txt(r[12], 10), txt(r[13], 10)]);
+        const vindas = new Set(incoming.map(chaveNota));
+        const rows = antigas.filter((r) => !vindas.has(chaveNota(r))).concat(incoming);
+        const notasNovas = [...vindas].filter((k) => !existentes.has(k)).length;
+        const novas = incoming.filter((r) => !existentes.has(chaveNota(r))).length;
+        if (rows.length > 400000) throw new Error("SD1 acumulado grande demais");
+        const obj = { v: 1, savedAt: new Date().toISOString(), por: sess.usuario || "admin", arquivo: txt(body.arquivo, 120), total: rows.length, usuarios, rows };
+        await objSave(TDC_SD1_OBJ, obj);
+        return { ok: true, savedAt: obj.savedAt, total: obj.total, novas, notasNovas, notasAtualizadas: vindas.size - notasNovas, recebidas: body.rows.length };
+      });
+      return sendJson(res, 200, resp);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar o SD1")); }
+  }
+  if (pathname === "/api/entradas-tdc/fichas" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
+    try {
+      const d = await objLoad(TDC_FICHAS_OBJ);
+      return sendJson(res, 200, d || { v: 1, fichas: {} });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o fichário")); }
+  }
+  if (pathname === "/api/entradas-tdc/fichas" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "alteracoes"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const id = String((body && body.id) || "");
+    if (!id || id.length > 300) return sendJson(res, 400, { error: "id da ficha inválido" });
+    const f = (body && body.ficha) || {};
+    const txt = (v, n) => String(v == null ? "" : v).slice(0, n);
+    const status = ["confirmado", "descartado", "pendente"].includes(f.status) ? f.status : null;
+    if (!body.remover && !status) return sendJson(res, 400, { error: "status inválido" });
+    try {
+      const resp = await comFila("tdc-fichas", async () => {
+        const d = (await objLoad(TDC_FICHAS_OBJ)) || { v: 1, fichas: {} };
+        d.fichas = d.fichas || {};
+        if (body.remover === true) { if (!id.startsWith("MANUAL|")) throw Object.assign(new Error("só fichas manuais podem ser removidas"), { http: 400 }); delete d.fichas[id]; }
+        else {
+          if (!d.fichas[id] && Object.keys(d.fichas).length >= 20000) throw Object.assign(new Error("fichário cheio"), { http: 400 });
+          const fisico = f.fisicoQtd === "" || f.fisicoQtd == null ? "" : Number(f.fisicoQtd);
+          d.fichas[id] = {
+            status, tipo: txt(f.tipo, 30), obs: txt(f.obs, 1000), fisicoQtd: Number.isFinite(fisico) ? fisico : "", fisicoLote: txt(f.fisicoLote, 40),
+            // ficha manual: guarda os campos da própria ficha
+            ...(id.startsWith("MANUAL|") ? { nota: txt(f.nota, 30), serie: txt(f.serie, 10), fornecedor: txt(f.fornecedor, 80), produto: txt(f.produto, 40), lote: txt(f.lote, 40), loteFisico: txt(f.loteFisico, 40), qtdNota: Number(f.qtdNota) || 0, qtdFisica: f.qtdFisica === "" || f.qtdFisica == null ? "" : Number(f.qtdFisica) || 0, dtEntrada: txt(f.dtEntrada, 10), usuarioTDC: txt(f.usuarioTDC, 60) } : {}),
+            por: sess.usuario || "admin", em: new Date().toISOString(),
+          };
+        }
+        d.atualizadoEm = new Date().toISOString();
+        await objSave(TDC_FICHAS_OBJ, d);
+        return { ok: true, ficha: d.fichas[id] || null, atualizadoEm: d.atualizadoEm };
+      });
+      return sendJson(res, 200, resp);
+    } catch (e) { return e && e.http === 400 ? sendJson(res, 400, { error: e.message }) : sendJson(res, 500, erroPublico(e, "erro ao salvar a ficha")); }
+  }
+
+  if (pathname === "/api/entradas-tdc/notas" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
+    try { return sendJson(res, 200, (await objLoad(TDC_NOTAS_OBJ)) || { v: 1, notas: {} }); }
+    catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar as notas")); }
+  }
+  if (pathname === "/api/entradas-tdc/notas" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "alteracoes"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const txt = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    const nota = txt(body && body.nota, 30), serie = txt(body && body.serie, 10);
+    if (!nota || !/^[0-9A-Za-z._-]+$/.test(nota)) return sendJson(res, 400, { error: "informe o número da nota" });
+    const chave = (/^\d+$/.test(nota) ? nota.replace(/^0+(?=\d)/, "") : nota.toUpperCase()) + "|" + serie;
+    try {
+      const resp = await comFila("tdc-notas", async () => {
+        const d = (await objLoad(TDC_NOTAS_OBJ)) || { v: 1, notas: {} };
+        d.notas = d.notas || {};
+        if (body.remover === true) delete d.notas[chave];
+        else {
+          if (!d.notas[chave] && Object.keys(d.notas).length >= 5000) throw Object.assign(new Error("limite de notas em conferência atingido"), { http: 400 });
+          if (!d.notas[chave]) d.notas[chave] = { nota, serie, por: sess.usuario || "admin", em: new Date().toISOString() };
+        }
+        await objSave(TDC_NOTAS_OBJ, d);
+        return { ok: true, notas: d.notas };
+      });
+      return sendJson(res, 200, resp);
+    } catch (e) { return e && e.http === 400 ? sendJson(res, 400, { error: e.message }) : sendJson(res, 500, erroPublico(e, "erro ao salvar a nota")); }
   }
 
   if (pathname === "/api/alteracao-separacao" && method === "GET") {
