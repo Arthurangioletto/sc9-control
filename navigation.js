@@ -103,6 +103,24 @@
   };
 })(window);
 
+/* Operational details stay in the document flow; product records retain Sheet. */
+(function(root){
+  const R=root.React,h=R.createElement;
+  root.SC9UI.InlineDetails=function InlineDetails({title,subtitle,children,onClose,footer,closeLabel='Recolher lista'}){
+    const reference=R.useRef(null),id=R.useId();
+    R.useEffect(()=>{
+      const section=reference.current;if(!section)return;
+      const previous=root.document.activeElement;
+      section.scrollIntoView({behavior:'smooth',block:'start'});section.focus({preventScroll:true});
+      return()=>{if(previous?.isConnected&&(section.contains(root.document.activeElement)||root.document.activeElement===root.document.body))previous.focus({preventScroll:true});};
+    },[title]);
+    return h('section',{ref:reference,className:'sc9-inline-details',tabIndex:-1,'aria-labelledby':id,'aria-describedby':subtitle?id+'-subtitle':undefined,onKeyDown:event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();onClose();}}},
+      h('div',{className:'sc9-inline-details-heading'},h('div',null,h('h2',{id},title),subtitle&&h('p',{id:id+'-subtitle'},subtitle)),h('button',{type:'button',className:'sc9-ui-button',onClick:onClose,'aria-label':closeLabel},closeLabel)),
+      h('p',{className:'sc9-inline-details-help'},'Até 50 pedidos por página. A exportação inclui a lista completa.'),
+      h('div',{className:'sc9-inline-details-body'},children),footer&&h('div',{className:'sc9-inline-details-footer'},footer));
+  };
+})(window);
+
 /* SB8 analyses contain their own follow-up views. */
 (function (root) {
   const R = root.React, h = R.createElement;
