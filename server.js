@@ -16,6 +16,7 @@ const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pas
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
 // (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
 const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "operation-overview.js", "operation-flow.js", "operation-shipping.js", "operation-handoff.js", "operation-transfers.js", "inventory-presentation.js", "operation-live.js", "operation-productivity.js", "inventory-integrity.js", "stock-position.js", "stock-import.js"]);
+SERVABLE.add("ui-workspaces.js");
 // ---- Armazenamento AUTOSSUFICIENTE (não depende do storage.js) ----
 // Arquivos próprios, separados do snapshot do SC9, pra atualizar o SC9 todo dia
 // nunca apagar nada disso:
