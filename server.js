@@ -15,7 +15,7 @@ const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
 // (que não têm segredo nenhum dentro, mas não custa não servir código-fonte à toa)
-const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "operation-overview.js", "operation-flow.js", "operation-shipping.js", "operation-handoff.js", "operation-transfers.js", "inventory-presentation.js", "operation-live.js", "operation-productivity.js", "inventory-integrity.js", "stock-position.js", "stock-import.js", "entradas-tdc.js", "entradas-tdc-ui.js"]);
+const SERVABLE = new Set(["index.html", "bundle.js", "navigation.js", "navigation.css", "lot-filters.js", "lot-records.js", "expiry-panel.js", "operation-overview.js", "operation-flow.js", "operation-shipping.js", "operation-handoff.js", "operation-transfers.js", "inventory-presentation.js", "operation-live.js", "operation-productivity.js", "inventory-integrity.js", "stock-position.js", "stock-import.js", "entradas-tdc.js", "entradas-tdc-ui.js", "entradas-tdc-relatorio.js"]);
 // ---- Armazenamento AUTOSSUFICIENTE (não depende do storage.js) ----
 // Arquivos próprios, separados do snapshot do SC9, pra atualizar o SC9 todo dia
 // nunca apagar nada disso:
@@ -36,6 +36,7 @@ const MOV_ANALISE_OBJ = "movimentacao-analise.json"; // cópia COMPACTA da movim
 const TDC_SD1_OBJ = "entradas-tdc-sd1.json"; // NF de entrada (SD1) do TDC no armazém 59, acumulada entre uploads
 const TDC_FICHAS_OBJ = "entradas-tdc-fichas.json"; // revisões do estoque (confirmar/descartar) e fichas manuais
 const TDC_NOTAS_OBJ = "entradas-tdc-notas.json"; // notas que o estoque está conferindo (número digitado pela pessoa)
+const TDC_FOTO_PREFIX = "entradas-tdc-foto-"; // uma foto por objeto: entradas-tdc-foto-<id>.json
 const CONTROLE_SD3_OBJ = "controle-sd3.json"; // { coberturaAte, desde, semRegistro, atualizadoEm, atualizadoPor }
 const usingSupabase = Boolean(SB_URL && SB_KEY);
 let snapshotCache = null, snapshotRead = null, snapshotGeneration = 0;
@@ -2124,6 +2125,8 @@ async function handleApi(req, res, pathname) {
           const fisico = f.fisicoQtd === "" || f.fisicoQtd == null ? "" : Number(f.fisicoQtd);
           d.fichas[id] = {
             status, tipo: txt(f.tipo, 30), obs: txt(f.obs, 1000), fisicoQtd: Number.isFinite(fisico) ? fisico : "", fisicoLote: txt(f.fisicoLote, 40),
+            // fotos do pacote (ids devolvidos por /api/entradas-tdc/fotos) e o que o Protheus mostrava na hora do relato
+            fotos: (Array.isArray(f.fotos) ? f.fotos : []).map(String).filter((x) => /^[a-f0-9]{24}$/.test(x)).slice(0, 4), protheus: txt(f.protheus, 800),
             // ficha manual: guarda os campos da própria ficha
             ...(id.startsWith("MANUAL|") ? { nota: txt(f.nota, 30), serie: txt(f.serie, 10), fornecedor: txt(f.fornecedor, 80), produto: txt(f.produto, 40), lote: txt(f.lote, 40), loteFisico: txt(f.loteFisico, 40), qtdNota: Number(f.qtdNota) || 0, qtdFisica: f.qtdFisica === "" || f.qtdFisica == null ? "" : Number(f.qtdFisica) || 0, dtEntrada: txt(f.dtEntrada, 10), usuarioTDC: txt(f.usuarioTDC, 60) } : {}),
             por: sess.usuario || "admin", em: new Date().toISOString(),
@@ -2137,6 +2140,35 @@ async function handleApi(req, res, pathname) {
     } catch (e) { return e && e.http === 400 ? sendJson(res, 400, { error: e.message }) : sendJson(res, 500, erroPublico(e, "erro ao salvar a ficha")); }
   }
 
+  // Foto do pacote como prova do erro. O navegador já reduz a imagem (JPEG ~1400px); aqui só valida e guarda.
+  if (pathname === "/api/entradas-tdc/fotos" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "alteracoes"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(String((body && body.dataUrl) || ""));
+    if (!m) return sendJson(res, 400, { error: "envie uma imagem JPEG, PNG ou WebP" });
+    const bin = Buffer.from(m[2], "base64");
+    if (bin.length > 900 * 1024) return sendJson(res, 400, { error: "foto grande demais (máx. 900 KB depois de reduzida)" });
+    const ok = (m[1] === "image/jpeg" && bin[0] === 0xff && bin[1] === 0xd8) || (m[1] === "image/png" && bin.slice(0, 4).toString("hex") === "89504e47") || (m[1] === "image/webp" && bin.slice(0, 4).toString() === "RIFF");
+    if (!ok) return sendJson(res, 400, { error: "o arquivo não parece ser uma imagem válida" });
+    try {
+      const id = crypto.randomBytes(12).toString("hex");
+      await objSave(TDC_FOTO_PREFIX + id + ".json", { v: 1, mime: m[1], b64: m[2], por: sess.usuario || "admin", em: new Date().toISOString() });
+      return sendJson(res, 200, { ok: true, id });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar a foto")); }
+  }
+  if (pathname === "/api/entradas-tdc/fotos" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
+    const id = String(new URL(req.url, "http://localhost").searchParams.get("id") || "");
+    if (!/^[a-f0-9]{24}$/.test(id)) return sendJson(res, 400, { error: "id da foto inválido" });
+    try {
+      const d = await objLoad(TDC_FOTO_PREFIX + id + ".json");
+      if (!d || !d.b64) return sendJson(res, 404, { error: "foto não encontrada" });
+      const bin = Buffer.from(d.b64, "base64");
+      res.writeHead(200, { "Content-Type": d.mime, "Content-Length": bin.length, "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; img-src 'self' data:; sandbox" });
+      return res.end(bin);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar a foto")); }
+  }
   if (pathname === "/api/entradas-tdc/notas" && method === "GET") {
     if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
     try { return sendJson(res, 200, (await objLoad(TDC_NOTAS_OBJ)) || { v: 1, notas: {} }); }
