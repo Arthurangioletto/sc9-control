@@ -89,6 +89,15 @@
 .sc9-tdc-msg.ok{background:#E8F6F1;color:#06695A;border:1px solid #BFE5DA}
 .sc9-tdc-msg.info{background:#EEF1FD;color:#34419A;border:1px solid #CDD5F6}
 .sc9-tdc-empty{text-align:center;padding:50px 20px;color:var(--sc9-dim,#6B7496)}
+.sc9-tdc-nota{background:var(--sc9-panel,#fff);border:1px solid var(--sc9-border-soft,#E5E9F3);border-radius:14px;padding:16px 18px;margin-bottom:14px}
+.sc9-tdc-nota-h{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
+.sc9-tdc-nota-h h3{margin:0;font-size:15px}
+.sc9-tdc-pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:650;background:#EEF1FD;color:#34419A}
+.sc9-tdc-pill.bad{background:#FDECEA;color:#8E241B}.sc9-tdc-pill.ok{background:#E8F6F1;color:#06695A}.sc9-tdc-pill.warn{background:#FFF3DC;color:#8A5A0B}
+.sc9-tdc-table td.l,.sc9-tdc-table th.l{text-align:left}
+.sc9-tdc-warn{font-size:11.5px;color:#8A5A0B;background:#FFF8EA;border:1px solid #F0DDB0;border-radius:8px;padding:6px 9px;margin-top:6px}
+.sc9-tdc-buscar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.sc9-tdc-buscar .sc9-tdc-in{font-size:16px;padding:10px 12px}
 .sc9-tdc-modal{position:fixed;inset:0;z-index:80;background:rgba(20,25,50,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
 .sc9-tdc-modal>div{background:#fff;border-radius:14px;padding:22px;width:min(640px,100%)}
 `;
@@ -155,8 +164,8 @@
         a.manual&&h('button',{className:'sc9-tdc-btn bad',disabled:busy,onClick:async()=>{setBusy(true);try{await onRemove(a);}catch(e){setErr(e.message);setBusy(false);}}},'Remover')));
   }
 
-  function FichaManual({onClose,onSave,usuario}){
-    const [f,setF]=useState({tipo:'qtd_maior',nota:'',serie:'',fornecedor:'',produto:'',lote:'',loteFisico:'',qtdNota:'',qtdFisica:'',dtEntrada:'',usuarioTDC:'',obs:''});
+  function FichaManual({onClose,onSave,usuario,inicial}){
+    const [f,setF]=useState({tipo:'qtd_maior',nota:'',serie:'',fornecedor:'',produto:'',lote:'',loteFisico:'',qtdNota:'',qtdFisica:'',dtEntrada:'',usuarioTDC:'',obs:'',...(inicial||{})});
     const [err,setErr]=useState('');const [busy,setBusy]=useState(false);
     const set=k=>e=>setF({...f,[k]:e.target.value});
     const campo=(k,rot,tipo)=>h('div',{className:'sc9-tdc-field',key:k},h('label',null,rot),h('input',{className:'sc9-tdc-in',type:tipo||'text',value:f[k],onChange:set(k)}));
@@ -238,21 +247,92 @@
     root.XLSX.writeFile(wb,'Sumula_Entradas_TDC_'+new Date().toISOString().slice(0,10)+'.xlsx');
   }
 
+
+  /* ------------------------------ conferência por nota ------------------------------ */
+  const SITUACAO=(i)=>{
+    if(i.erroForte)return {t:'Divergência: '+i.tipos.map(t=>M.TIPOS[t]?M.TIPOS[t].curto:t).join(', '),c:'bad'};
+    if(i.erro)return {t:'Suspeita — conferir no físico',c:'warn'};
+    if(i.aguardandoSubir)return {t:'Parado no 59 há '+i.diasSemSubir+' dias',c:'warn'};
+    if(i.subiu>=i.qtNota)return {t:'Subiu tudo'+(i.diasAteConcluir!=null?' em '+i.diasAteConcluir+' d':''),c:'ok'};
+    if(i.subiu>0)return {t:'Subiu parte ('+fmtN(i.subiu)+' de '+fmtN(i.qtNota)+')',c:'warn'};
+    return {t:'Ainda não subiu',c:''};
+  };
+  function NotaCard({reg,res,fObj,achados,onRemover,onFichas,onManual,onVincular}){
+    const itens=res?res.itens.filter(i=>M.combinaNota(i,[reg])):[];
+    const nome='NF '+reg.nota+(reg.serie?'/'+reg.serie:'');
+    if(!itens.length)return h('div',{className:'sc9-tdc-nota'},h('div',{className:'sc9-tdc-nota-h'},h('h3',null,nome),h('button',{className:'sc9-tdc-btn bad',onClick:()=>onRemover(reg)},'Tirar da conferência')),
+      h('div',{className:'sc9-tdc-msg info'},'Esta nota não está no SD1 que está no painel. Envie o SD1 mais recente na aba Dados.'));
+    const base=itens[0];
+    const erros=itens.filter(i=>i.erroForte).length,susp=itens.filter(i=>!i.erroForte&&i.erro).length;
+    const fichas=achados.filter(a=>a.nota&&M.combinaNota(a,[reg]));
+    const cands=(res.candidatos||[]).filter(c=>{const d=M.diasEntre(base.dtEntrada,c.dtEntrada);return d!==null&&d>=0&&d<=7&&!Object.keys(fObj).some(k=>k.startsWith('MANUAL|VINC|'+c.id+'|'));});
+    return h('div',{className:'sc9-tdc-nota'},
+      h('div',{className:'sc9-tdc-nota-h'},
+        h('div',null,h('h3',null,nome,' · ',base.fornecedor||'fornecedor não informado'),h('div',{className:'sc9-tdc-meta'},'Entrada no 59: ',h('b',null,fmtD(base.dtEntrada)),base.hora&&' às '+base.hora,base.usuarioTDC&&h('span',null,' · lançada por ',h('b',null,base.usuarioTDC)),' · ',itens.length,' item(ns) na nota')),
+        h('div',{className:'sc9-tdc-act'},
+          erros?h('span',{className:'sc9-tdc-pill bad'},erros+' item(ns) com divergência'):susp?h('span',{className:'sc9-tdc-pill warn'},susp+' suspeita(s)'):h('span',{className:'sc9-tdc-pill ok'},'Sem divergência no Protheus'),
+          h('button',{className:'sc9-tdc-btn',onClick:()=>onFichas(reg)},'Fichas ('+fichas.length+')'),
+          h('button',{className:'sc9-tdc-btn bad',onClick:()=>onRemover(reg)},'Tirar'))),
+      h('div',{style:{overflowX:'auto'}},h('table',{className:'sc9-tdc-table'},
+        h('thead',null,h('tr',null,[['Produto','l'],['Lote da nota','l'],['Qtd. nota',''],['Subiu pro 01',''],['Situação','l'],['','']].map(([c,k],ix)=>h('th',{key:ix,className:k},c)))),
+        h('tbody',null,itens.map((i,ix)=>{const sit=SITUACAO(i);return h(R.Fragment,{key:ix},
+          h('tr',null,h('td',{className:'l'},h('b',null,i.produto)),h('td',{className:'l'},i.lote||'—'),h('td',null,fmtN(i.qtNota)),h('td',null,fmtN(i.subiu)),h('td',{className:'l'},h('span',{className:'sc9-tdc-pill '+sit.c},sit.t)),
+            h('td',null,h('button',{className:'sc9-tdc-btn',title:'Registrar um erro que o Protheus não mostrou',onClick:()=>onManual({nota:i.nota,serie:i.serie,fornecedor:i.fornecedor,produto:i.produto,lote:i.lote,qtdNota:i.qt==null?i.qtNota:i.qtNota,dtEntrada:i.dtEntrada,usuarioTDC:i.usuarioTDC})},'+ erro'))),
+          (i.eventos.length>0||i.outrasNotas.length>0)&&h('tr',null,h('td',{colSpan:6,className:'l',style:{textAlign:'left'}},
+            i.outrasNotas.length>0&&h('div',{className:'sc9-tdc-warn'},'⚠ O mesmo produto/lote também está em outra nota: '+i.outrasNotas.map(o=>'NF '+o.nota+(o.serie?'/'+o.serie:'')+' ('+fmtD(o.dtDigit)+', '+fmtN(o.qt)+' pç)').join('; ')+'. O Protheus não diz de qual nota é cada movimentação: as de baixo foram atribuídas a esta nota por serem posteriores à entrada dela e anteriores à da próxima. Confira.'),
+            i.eventos.length>0&&h('details',{className:'sc9-tdc-ev'},h('summary',null,'Movimentações no Protheus ('+i.eventos.length+')'),h('ul',null,i.eventos.map((m,k)=>h('li',{key:k},fmtD(m.dia),' · ',m.cf,' · doc ',m.doc,' · ',m.dir==='saida'?'saída ':'entrada ',h('b',null,fmtN(m.qt)),' pç · arm ',m.armazem,' · lote ',m.lote,m.usuario&&' · '+m.usuario)))))));})))),
+      cands.length>0&&h('details',{className:'sc9-tdc-ev',style:{marginTop:10}},h('summary',null,'Entradas manuais no 59 sem nota, até 7 dias depois ('+cands.length+') — algum desses veio junto com esta nota?'),
+        h('ul',null,cands.map(c=>h('li',{key:c.id,style:{display:'flex',gap:10,alignItems:'center',justifyContent:'space-between'}},h('span',null,fmtD(c.dtEntrada),' · produto ',h('b',null,c.produto),' · lote ',c.lote,' · ',h('b',null,fmtN(c.qtdFisica)),' pç',c.corrigidoPor&&c.corrigidoPor.length?' · por '+c.corrigidoPor.join(', '):''),
+          h('button',{className:'sc9-tdc-btn',onClick:()=>onVincular(c,base,reg)},'Era desta nota'))))));
+  }
+  function Notas({sd1All,sd1Raw,res,notasReg,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,onIrDados}){
+    const [num,setNum]=useState(''),[serie,setSerie]=useState(''),[busca,setBusca]=useState(null),[busy,setBusy]=useState(false),[err,setErr]=useState('');
+    const buscar=()=>{
+      setErr('');const b=M.buscarNota(sd1All,num,serie);
+      if(!M.normNota(num)){setErr('Digite o número da nota.');return;}
+      setBusca({...b,nota:num.trim(),serieEscolhida:serie.trim()});
+    };
+    const escolherSerie=sr=>{setSerie(sr);const b=M.buscarNota(sd1All,num,sr);setBusca({...b,nota:num.trim(),serieEscolhida:sr});};
+    const adicionar=async()=>{setBusy(true);setErr('');try{await onAdd(num.trim(),(busca&&busca.serieEscolhida)||(busca&&busca.series.length===1?busca.series[0]:''));setNum('');setSerie('');setBusca(null);}catch(e){setErr(e.message);}finally{setBusy(false);}};
+    const regs=Object.values(notasReg).sort((a,b)=>String(b.em).localeCompare(String(a.em)));
+    const itens=busca?busca.itens:[];
+    const ambigua=busca&&busca.series.length>1&&!busca.serieEscolhida;
+    return h('div',null,
+      h('div',{className:'sc9-tdc-card',style:{marginBottom:16}},
+        h('h2',null,'Qual nota você vai conferir?'),
+        h('p',{className:'sc9-tdc-sub'},'Digite o número da nota de entrada. O painel puxa do SD1 só os itens dessa nota (nunca por produto ou lote soltos, para não misturar com outra nota) e confere o que subiu pro 01.'),
+        !sd1All.length?h('div',{className:'sc9-tdc-msg info'},'Ainda não há SD1 no painel. ',h('button',{className:'sc9-tdc-btn pri',onClick:onIrDados},'Enviar o SD1')):
+        h('div',{className:'sc9-tdc-buscar'},
+          h('div',{className:'sc9-tdc-field'},h('label',null,'Número da nota'),h('input',{className:'sc9-tdc-in',value:num,inputMode:'numeric',placeholder:'ex.: 000123',onChange:e=>{setNum(e.target.value);setBusca(null);},onKeyDown:e=>{if(e.key==='Enter')buscar();},autoFocus:true})),
+          h('div',{className:'sc9-tdc-field',style:{width:110}},h('label',null,'Série (opcional)'),h('input',{className:'sc9-tdc-in',value:serie,onChange:e=>{setSerie(e.target.value);setBusca(null);},onKeyDown:e=>{if(e.key==='Enter')buscar();}})),
+          h('button',{className:'sc9-tdc-btn pri',style:{padding:'11px 18px'},onClick:buscar},'Buscar no SD1')),
+        err&&h('div',{className:'sc9-tdc-msg err'},err),
+        busca&&!itens.length&&h('div',{className:'sc9-tdc-msg err'},'A nota '+busca.nota+' não está no SD1 enviado. Confira o número'+(sd1Raw?' ou envie um SD1 mais recente (o atual vai até a entrada de '+fmtD(sd1All.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''))+')':'')+'.'),
+        ambigua&&h('div',{className:'sc9-tdc-msg info'},'Existe a nota '+busca.nota+' em mais de uma série. Qual é a sua? ',busca.series.map(sr=>h('button',{key:sr,className:'sc9-tdc-chip',style:{marginLeft:6},onClick:()=>escolherSerie(sr)},'Série '+(sr||'(em branco)')))),
+        busca&&itens.length>0&&!ambigua&&h('div',{style:{marginTop:12}},
+          h('p',{className:'sc9-tdc-sub',style:{margin:'0 0 6px'}},'Achei ',h('b',null,itens.length+' item(ns)'),' na NF ',h('b',null,busca.nota),' · ',itens[0].fornecedor||'fornecedor não informado',' · entrada em ',fmtD(itens[0].dtDigit),':'),
+          h('table',{className:'sc9-tdc-table'},h('thead',null,h('tr',null,[['Produto','l'],['Lote','l'],['Qtd. na nota','']].map(([c,k])=>h('th',{key:c,className:k},c)))),h('tbody',null,itens.map((l,i)=>h('tr',{key:i},h('td',{className:'l'},h('b',null,l.produto)),h('td',{className:'l'},l.lote||'—'),h('td',null,fmtN(l.qt)))))),
+          h('div',{className:'sc9-tdc-act',style:{marginTop:12}},h('button',{className:'sc9-tdc-btn ok',disabled:busy,onClick:adicionar},busy?'Adicionando…':'✓ Conferir esta nota')))),
+      regs.length?h('div',null,h('h2',{style:{fontSize:14,margin:'4px 0 10px'}},'Notas em conferência ('+regs.length+')'),regs.map(r=>h(NotaCard,{key:r.nota+'|'+r.serie,reg:r,res,fObj,achados,onRemover,onFichas,onManual,onVincular}))):
+        h('div',{className:'sc9-tdc-card sc9-tdc-empty'},'Nenhuma nota em conferência ainda. Digite o número de uma nota acima.'));
+  }
+
   /* ------------------------------ painel principal ------------------------------ */
   function Painel({onFechar,sessao}){
-    const [aba,setAba]=useState('painel');
+    const [aba,setAba]=useState('notas');
     const [sd3Raw,setSd3Raw]=useState(null),[sd1Raw,setSd1Raw]=useState(null),[fichas,setFichas]=useState({fichas:{}});
     const [load,setLoad]=useState({sd3:'carregando',sd1:'carregando'});
     const [erro,setErro]=useState('');
     const [de,setDe]=useState(''),[ate,setAte]=useState('');
     const [fStatus,setFStatus]=useState('pendente'),[fTipo,setFTipo]=useState(''),[busca,setBusca]=useState('');
-    const [manual,setManual]=useState(false);const [soConf,setSoConf]=useState(true);
+    const [manual,setManual]=useState(null);const [soConf,setSoConf]=useState(true);const [notasReg,setNotasReg]=useState({});const [escopo,setEscopo]=useState('notas');
 
     const carregar=useCallback(async()=>{
       setErro('');
       api('/api/movimentacao-analise').then(d=>{setSd3Raw(d);setLoad(l=>({...l,sd3:'ok'}));}).catch(e=>setLoad(l=>({...l,sd3:e.status===404?'vazio':'erro:'+e.message})));
       api('/api/entradas-tdc/sd1').then(d=>{setSd1Raw(d);setLoad(l=>({...l,sd1:'ok'}));}).catch(e=>setLoad(l=>({...l,sd1:e.status===404?'vazio':'erro:'+e.message})));
       api('/api/entradas-tdc/fichas').then(d=>setFichas(d&&d.fichas?d:{fichas:{}})).catch(e=>setErro('Fichário: '+e.message));
+      api('/api/entradas-tdc/notas').then(d=>setNotasReg((d&&d.notas)||{})).catch(e=>setErro('Notas: '+e.message));
     },[]);
     useEffect(()=>{carregar();},[carregar]);
     useEffect(()=>{const k=e=>{if(e.key==='Escape'&&!manual)onFechar();};root.addEventListener('keydown',k);return()=>root.removeEventListener('keydown',k);},[manual,onFechar]);
@@ -262,15 +342,22 @@
     const sd1=useMemo(()=>sd1All.filter(l=>(!de||l.dtDigit>=de)&&(!ate||l.dtDigit<=ate)),[sd1All,de,ate]);
     const fObj=fichas.fichas||{};
     const ignorar=useMemo(()=>new Set(Object.keys(fObj).filter(k=>fObj[k].status==='descartado')),[fObj]);
-    const res=useMemo(()=>sd1.length?M.analisar(sd1,sd3,{ignorar}):null,[sd1,sd3,ignorar]);
+    const regsLista=useMemo(()=>Object.values(notasReg),[notasReg]);
+    const res=useMemo(()=>sd1.length?M.analisar(sd1,sd3,{ignorar,notas:escopo==='notas'?regsLista:undefined}):null,[sd1,sd3,ignorar,escopo,regsLista]);
+    const resAll=useMemo(()=>sd1All.length?M.analisar(sd1All,sd3,{ignorar,notas:regsLista}):null,[sd1All,sd3,ignorar,regsLista]);
     const achados=useMemo(()=>{
       const auto=res?M.aplicarRevisoes(res.findings,fObj):[];
       const man=Object.keys(fObj).filter(k=>k.startsWith('MANUAL|')).map(k=>M.fichaManualParaFinding(k,fObj[k]));
       return [...man,...auto];
     },[res,fObj]);
+    const achadosAll=useMemo(()=>resAll?M.aplicarRevisoes(resAll.findings,fObj):[],[resAll,fObj]);
     const sd3Faixa=useMemo(()=>{let a='',b='';for(const m of sd3){if(!m.dia)continue;if(!a||m.dia<a)a=m.dia;if(!b||m.dia>b)b=m.dia;}return [a,b];},[sd3]);
 
     const salvarFicha=async(id,ficha)=>{const r=await api('/api/entradas-tdc/fichas',{id,ficha});setFichas(f=>({...f,fichas:{...f.fichas,[id]:r.ficha}}));};
+    const addNota=async(nota,serie)=>{const r=await api('/api/entradas-tdc/notas',{nota,serie});setNotasReg(r.notas||{});};
+    const removerNota=async reg=>{const r=await api('/api/entradas-tdc/notas',{nota:reg.nota,serie:reg.serie,remover:true});setNotasReg(r.notas||{});};
+    const abrirFichasNota=reg=>{setBusca(reg.nota);setFStatus('todas');setFTipo('');setAba('ficharios');};
+    const vincular=async(c,base,reg)=>{await salvarFicha('MANUAL|VINC|'+c.id+'|'+reg.nota+'|'+(reg.serie||''),{status:'confirmado',tipo:'item_fora_nota',obs:'Entrada manual de '+fmtN(c.qtdFisica)+' pç vinculada pelo estoque à NF '+reg.nota+(c.movimentos&&c.movimentos[0]?' (doc '+c.movimentos[0].doc+')':''),nota:base.nota,serie:base.serie,fornecedor:base.fornecedor,produto:c.produto,lote:c.lote,loteFisico:'',qtdNota:0,qtdFisica:c.qtdFisica,fisicoQtd:c.qtdFisica,fisicoLote:'',dtEntrada:c.dtEntrada,usuarioTDC:base.usuarioTDC});};
     const removerFicha=async a=>{await api('/api/entradas-tdc/fichas',{id:a.id,remover:true,ficha:{status:'pendente'}});setFichas(f=>{const n={...f.fichas};delete n[a.id];return {...f,fichas:n};});};
 
     const cont=useMemo(()=>({pendente:achados.filter(a=>a.status==='pendente').length,confirmado:achados.filter(a=>a.status==='confirmado').length,descartado:achados.filter(a=>a.status==='descartado').length,todas:achados.length}),[achados]);
@@ -293,26 +380,29 @@
     const semUsuario=r&&r.porUsuario.length===1&&r.porUsuario[0].usuario==='(sem usuário)';
     const fazerSumula=()=>{try{baixarSumula(res||{resumo:{notas:0,notasErro:0,itens:0,itensErro:0,pecasNota:0,pecasDivergentes:0,porTipo:Object.fromEntries(M.TIPOS_MANUAL.map(t=>[t,{achados:0,pecas:0}])),porUsuario:[],diasMediaLimpos:null,diasMediaComErro:null},itens:[],cobertura:{sd1De:'',sd1Ate:''}},achados,soConf,(de||ate)?'Entradas de '+fmtD(de||(res&&res.cobertura.sd1De))+' a '+fmtD(ate||(res&&res.cobertura.sd1Ate)):'');}catch(e){setErro(e.message);}};
 
-    const semDados=!sd1.length;
+    const semNotas=escopo==='notas'&&!regsLista.length;
+    const semDados=!sd1.length||semNotas||!res;
     const Aba=(id,txt)=>h('button',{className:'sc9-tdc-tab',role:'tab','aria-selected':aba===id,onClick:()=>setAba(id)},txt);
 
     return h('div',{className:'sc9-tdc-overlay',role:'dialog','aria-label':'Entradas do TDC no armazém 59'},
       h('div',{className:'sc9-tdc-top'},
         h('h1',null,'Entradas do TDC no 59',h('small',null,'Nota de entrada (SD1) × movimentação 59 → 01 (SD3): o que subiu diferente da nota')),
-        h('div',{className:'sc9-tdc-tabs',role:'tablist'},Aba('painel','Dashboard'),Aba('ficharios','Fichário'+(cont.pendente?' ('+cont.pendente+')':'')),Aba('dados','Dados')),
+        h('div',{className:'sc9-tdc-tabs',role:'tablist'},Aba('notas','Notas'+(regsLista.length?' ('+regsLista.length+')':'')),Aba('painel','Dashboard'),Aba('ficharios','Fichário'+(cont.pendente?' ('+cont.pendente+')':'')),Aba('dados','Dados')),
         h('button',{className:'sc9-tdc-btn pri',onClick:fazerSumula,title:'Baixa o Excel com Súmula, Por usuário, Detalhe e Tempo'},'⬇ Baixar súmula (Excel)'),
         h('button',{className:'sc9-tdc-btn',onClick:onFechar,'aria-label':'Fechar'},'✕ Fechar')),
       h('div',{className:'sc9-tdc-body'},
         erro&&h('div',{className:'sc9-tdc-msg err'},erro),
-        manual&&h(FichaManual,{onClose:()=>setManual(false),onSave:salvarFicha,usuario:sessao&&(sessao.nome||sessao.usuario)}),
+        manual&&h(FichaManual,{onClose:()=>setManual(null),onSave:salvarFicha,inicial:manual===true?null:manual,usuario:sessao&&(sessao.nome||sessao.usuario)}),
+        aba==='notas'&&h(Notas,{sd1All,sd1Raw,res:resAll,notasReg,fObj,achados:achadosAll,onAdd:addNota,onRemover:removerNota,onFichas:abrirFichasNota,onManual:setManual,onVincular:vincular,onIrDados:()=>setAba('dados')}),
         aba==='painel'&&h('div',null,
           h('div',{className:'sc9-tdc-toolbar'},
             h('span',{className:'sc9-tdc-meta'},'Entradas de'),h('input',{type:'date',value:de,onChange:e=>setDe(e.target.value)}),h('span',{className:'sc9-tdc-meta'},'até'),h('input',{type:'date',value:ate,onChange:e=>setAte(e.target.value)}),
             (de||ate)&&h('button',{className:'sc9-tdc-btn',onClick:()=>{setDe('');setAte('');}},'Limpar período'),
+            h('select',{value:escopo,onChange:e=>setEscopo(e.target.value),title:'O que entra nos números'},h('option',{value:'notas'},'Só as notas que informei'+(regsLista.length?' ('+regsLista.length+')':'')),h('option',{value:'todas'},'Todas as notas do SD1')),
             h('span',{style:{flex:1}}),
             h('label',{className:'sc9-tdc-meta'},h('input',{type:'checkbox',checked:soConf,onChange:e=>setSoConf(e.target.checked)}),' Súmula só com erros confirmados')),
           semDados?h('div',{className:'sc9-tdc-card sc9-tdc-empty'},
-            load.sd1==='carregando'?'Carregando…':load.sd1==='vazio'||!sd1All.length?h('div',null,h('p',{style:{fontSize:15,fontWeight:650,color:'var(--sc9-ink,#1B2138)'}},'Ainda não há SD1 no painel'),h('p',null,'Envie a planilha de entradas (SD1) do armazém 59 na aba Dados e o dashboard se monta sozinho.'),h('button',{className:'sc9-tdc-btn pri',onClick:()=>setAba('dados')},'Enviar o SD1')):'Nenhuma entrada no período escolhido.'):
+            load.sd1==='carregando'?'Carregando…':semNotas&&sd1All.length?h('div',null,h('p',{style:{fontSize:15,fontWeight:650,color:'var(--sc9-ink,#1B2138)'}},'Nenhuma nota em conferência'),h('p',null,'Digite o número de uma nota na aba Notas, ou escolha “Todas as notas do SD1” acima.'),h('button',{className:'sc9-tdc-btn pri',onClick:()=>setAba('notas')},'Informar uma nota')):load.sd1==='vazio'||!sd1All.length?h('div',null,h('p',{style:{fontSize:15,fontWeight:650,color:'var(--sc9-ink,#1B2138)'}},'Ainda não há SD1 no painel'),h('p',null,'Envie a planilha de entradas (SD1) do armazém 59 na aba Dados e o dashboard se monta sozinho.'),h('button',{className:'sc9-tdc-btn pri',onClick:()=>setAba('dados')},'Enviar o SD1')):'Nenhuma entrada no período escolhido.'):
           h('div',null,
             load.sd3!=='ok'&&h('div',{className:'sc9-tdc-msg info'},'A movimentação (SD3) ainda não está no painel — sem ela só dá pra medir o que foi lançado à mão no fichário. O admin envia na tela de Alteração.'),
             h('div',{className:'sc9-tdc-kpis'},

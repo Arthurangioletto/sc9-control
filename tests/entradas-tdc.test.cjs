@@ -147,3 +147,28 @@ test('ignorar descartados refaz o resumo; revisão sobrescreve físico e tipo', 
   const a = T.aplicarRevisoes(r.findings, { [r.findings[0].id]: { status: 'confirmado', tipo: 'qtd_menor', fisicoQtd: 5, fisicoLote: 'zz' } })[0];
   assert.strictEqual(a.tipo, 'qtd_menor'); assert.strictEqual(a.qtdFisica, 5); assert.strictEqual(a.diferenca, 3); assert.strictEqual(a.loteFisico, 'ZZ');
 });
+test('buscarNota: acha pelo número digitado (com/sem zeros) e separa séries', () => {
+  const l = [sd1('000123', 'P1', 'L1', 8, '2026-10-01'), sd1('000123', 'P2', 'L2', 3, '2026-10-01'), sd1('000124', 'P1', 'L1', 8, '2026-10-05'), { ...sd1('123', 'P9', 'L9', 1, '2026-10-01'), serie: '2' }];
+  const b = T.buscarNota(l, '123');
+  assert.strictEqual(b.itens.length, 3); assert.deepStrictEqual(b.series.sort(), ['1', '2']);
+  assert.strictEqual(T.buscarNota(l, '123', '2').itens.length, 1);
+  assert.strictEqual(T.buscarNota(l, '999').itens.length, 0);
+});
+test('escopo por nota: mesmo lote em outra nota não se mistura, e o item fora da nota vira candidato', () => {
+  // NF 1 (01/10) e NF 2 (08/10) com o MESMO produto/lote. Ajuste manual dia 09/10 pertence à NF 2 (a mais recente), não à NF 1.
+  const s1 = [sd1('1', 'P1', 'L1', 8, '2026-10-01'), sd1('2', 'P1', 'L1', 5, '2026-10-08')];
+  const s3 = [
+    ...transf('T1', 'P1', 8, '2026-10-02', '59', 'L1', '01', 'L1'),
+    mv({ tp: 5, cf: 'DE0', doc: 'M1', produto: 'P1', qt: 2, dia: '2026-10-09', armazem: '59', lote: 'L1' }),
+    mv({ tp: 5, cf: 'DE0', doc: 'M2', produto: 'P7', qt: 4, dia: '2026-10-03', armazem: '59', lote: 'LZ' }),
+  ];
+  const r1 = T.analisar(s1, s3, { hoje: '2026-10-10', notas: [{ nota: '000001' }] });
+  assert.strictEqual(r1.findings.length, 0); assert.strictEqual(r1.itens.length, 1); assert.strictEqual(r1.itens[0].subiu, 8);
+  assert.deepStrictEqual(r1.itens[0].outrasNotas.map((o) => o.nota), ['2']);
+  const r2 = T.analisar(s1, s3, { hoje: '2026-10-10', notas: [{ nota: '2' }] });
+  assert.strictEqual(r2.findings.length, 1); assert.strictEqual(r2.findings[0].tipo, 'qtd_maior'); assert.strictEqual(r2.findings[0].nota, '2');
+  assert.strictEqual(r2.resumo.notas, 1);
+  assert.strictEqual(r2.candidatos.length, 1); assert.strictEqual(r2.candidatos[0].produto, 'P7');
+  const todas = T.analisar(s1, s3, { hoje: '2026-10-10' });
+  assert.strictEqual(todas.resumo.notas, 2);
+});

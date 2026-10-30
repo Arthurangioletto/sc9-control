@@ -21,6 +21,16 @@
     return '';
   }
   const paraHora=v=>{if(v==null||v==='')return '';if(v instanceof Date)return p2(v.getUTCHours())+':'+p2(v.getUTCMinutes());if(typeof v==='number'&&v>0&&v<1){const mins=Math.round(v*1440);return p2(Math.floor(mins/60)%24)+':'+p2(mins%60);}const m=String(v).trim().match(/^(\d{1,2}):(\d{2})/);return m?p2(m[1])+':'+m[2]:'';};
+  const normNota=v=>{const s=String(v==null?'':v).trim();return /^\d+$/.test(s)?s.replace(/^0+(?=\d)/,''):s.toUpperCase();};
+  const combinaNota=(l,regs)=>regs.some(r=>normNota(r.nota)===normNota(l.nota)&&(!r.serie||String(r.serie).trim()===String(l.serie||'').trim()));
+  /* acha no SD1 os itens de UMA nota (pelo número digitado). Se houver várias séries com o mesmo número e a série não foi dita, devolve as séries para a pessoa escolher. */
+  function buscarNota(sd1,nota,serie){
+    const alvo=normNota(nota);if(!alvo)return {itens:[],series:[]};
+    let itens=sd1.filter(l=>normNota(l.nota)===alvo);
+    const series=[...new Set(itens.map(l=>String(l.serie||'').trim()))];
+    if(serie&&String(serie).trim())itens=itens.filter(l=>String(l.serie||'').trim()===String(serie).trim());
+    return {itens,series};
+  }
   const diasEntre=(a,b)=>{if(!a||!b)return null;const pa=a.split('-').map(Number),pb=b.split('-').map(Number);return Math.round((Date.UTC(pb[0],pb[1]-1,pb[2])-Date.UTC(pa[0],pa[1]-1,pa[2]))/86400000);};
   const hojeISO=()=>{const d=new Date();return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate());};
 
@@ -187,11 +197,21 @@
       const aguardando=!subs.length&&!fa.length;
       const diasSemSubir=aguardando?diasEntre(l.dtDigit,HOJE):null;
       const dtCorr=fa.flatMap(f=>f.movimentos.map(m=>m.dia)).sort().pop()||'';
-      return {nota:l.nota,serie:l.serie,fornecedor:l.fornecedor,produto:l.produto,lote:l.lote,qtNota:l.qt,dtEntrada:l.dtDigit,hora:l.hora,usuarioTDC:l.usuario,subiu,
+      const ve=ev.get(l._i)||{manIn:[],manOut:[]},vistoE=new Set();
+      const eventos=[...subs.map(info),...ve.manIn.map(info),...ve.manOut.map(info),...fa.flatMap(f=>f.movimentos)].filter(m=>{const k=[m.dia,m.doc,m.cf,m.dir,m.qt,m.lote,m.armazem].join('|');if(vistoE.has(k))return false;vistoE.add(k);return true;}).sort((a,b)=>a.dia.localeCompare(b.dia));
+      const outrasNotas=(grupos.get(keyPL(l.produto,l.lote))||[]).filter(x=>x._i!==l._i&&(x.nota!==l.nota||x.serie!==l.serie)).map(x=>({nota:x.nota,serie:x.serie,dtDigit:x.dtDigit,qt:x.qt}));
+      return {nota:l.nota,serie:l.serie,fornecedor:l.fornecedor,produto:l.produto,lote:l.lote,qtNota:l.qt,dtEntrada:l.dtDigit,hora:l.hora,usuarioTDC:l.usuario,subiu,eventos,outrasNotas,
         diasAteSubir:pri?diasEntre(l.dtDigit,pri):null,diasAteConcluir:ult&&subiu>=l.qt?diasEntre(l.dtDigit,ult):null,erroForte:fs.length>0,erro:fa.length>0,tipos:[...new Set(fa.map(f=>f.tipo))],
         diasAteCorrigir:dtCorr?diasEntre(l.dtDigit,dtCorr):null,aguardandoSubir:aguardando&&diasSemSubir!==null&&diasSemSubir>SEM_SUBIR,diasSemSubir};
     });
-    return {findings:findings.sort((a,b)=>(b.dtEntrada||'').localeCompare(a.dtEntrada||'')||String(a.nota).localeCompare(String(b.nota))),itens,resumo:resumir(itens,ativos,linhas),
+    /* "item fora da nota" não tem nota (por definição): vira candidato para a pessoa vincular à nota certa */
+    const candidatos=findings.filter(f=>!f.nota);
+    let fin=findings,itn=itens,atv=ativos;
+    if(Array.isArray(opt.notas)){
+      const regs=opt.notas;
+      fin=findings.filter(f=>f.nota&&combinaNota(f,regs));itn=itens.filter(i=>combinaNota(i,regs));atv=ativos.filter(f=>f.nota&&combinaNota(f,regs));
+    }
+    return {findings:fin.sort((a,b)=>(b.dtEntrada||'').localeCompare(a.dtEntrada||'')||String(a.nota).localeCompare(String(b.nota))),itens:itn,candidatos,resumo:resumir(itn,atv,linhas),
       cobertura:{sd1De:dataMin,sd1Ate:linhas.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),linhasSD1:linhas.length,movimentosSD3:noTDC.length}};
   }
   const media=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
@@ -244,7 +264,7 @@
     return {resumo,porUsuario,detalhe:det,tempo};
   }
 
-  const api={norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,analisar,resumir,aplicarRevisoes,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
+  const api={normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,analisar,resumir,aplicarRevisoes,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.SC9EntradasTDC=api;
   if(root.document&&root.React&&typeof root.SC9EntradasTDCMount==='undefined'&&typeof require==='undefined'){/* a tela é carregada por entradas-tdc-ui.js */}

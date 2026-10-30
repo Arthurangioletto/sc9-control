@@ -35,6 +35,7 @@ const SALDO_OBJ = "saldo-lotes.json";
 const MOV_ANALISE_OBJ = "movimentacao-analise.json"; // cópia COMPACTA da movimentação (só linhas com lote) pra análise de alteração
 const TDC_SD1_OBJ = "entradas-tdc-sd1.json"; // NF de entrada (SD1) do TDC no armazém 59, acumulada entre uploads
 const TDC_FICHAS_OBJ = "entradas-tdc-fichas.json"; // revisões do estoque (confirmar/descartar) e fichas manuais
+const TDC_NOTAS_OBJ = "entradas-tdc-notas.json"; // notas que o estoque está conferindo (número digitado pela pessoa)
 const CONTROLE_SD3_OBJ = "controle-sd3.json"; // { coberturaAte, desde, semRegistro, atualizadoEm, atualizadoPor }
 const usingSupabase = Boolean(SB_URL && SB_KEY);
 let snapshotCache = null, snapshotRead = null, snapshotGeneration = 0;
@@ -2128,6 +2129,35 @@ async function handleApi(req, res, pathname) {
       });
       return sendJson(res, 200, resp);
     } catch (e) { return e && e.http === 400 ? sendJson(res, 400, { error: e.message }) : sendJson(res, 500, erroPublico(e, "erro ao salvar a ficha")); }
+  }
+
+  if (pathname === "/api/entradas-tdc/notas" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
+    try { return sendJson(res, 200, (await objLoad(TDC_NOTAS_OBJ)) || { v: 1, notas: {} }); }
+    catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar as notas")); }
+  }
+  if (pathname === "/api/entradas-tdc/notas" && method === "POST") {
+    const sess = await exigir(req, res, ["admin", "operador"], "alteracoes"); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    const txt = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
+    const nota = txt(body && body.nota, 30), serie = txt(body && body.serie, 10);
+    if (!nota || !/^[0-9A-Za-z._-]+$/.test(nota)) return sendJson(res, 400, { error: "informe o número da nota" });
+    const chave = (/^\d+$/.test(nota) ? nota.replace(/^0+(?=\d)/, "") : nota.toUpperCase()) + "|" + serie;
+    try {
+      const resp = await comFila("tdc-notas", async () => {
+        const d = (await objLoad(TDC_NOTAS_OBJ)) || { v: 1, notas: {} };
+        d.notas = d.notas || {};
+        if (body.remover === true) delete d.notas[chave];
+        else {
+          if (!d.notas[chave] && Object.keys(d.notas).length >= 5000) throw Object.assign(new Error("limite de notas em conferência atingido"), { http: 400 });
+          if (!d.notas[chave]) d.notas[chave] = { nota, serie, por: sess.usuario || "admin", em: new Date().toISOString() };
+        }
+        await objSave(TDC_NOTAS_OBJ, d);
+        return { ok: true, notas: d.notas };
+      });
+      return sendJson(res, 200, resp);
+    } catch (e) { return e && e.http === 400 ? sendJson(res, 400, { error: e.message }) : sendJson(res, 500, erroPublico(e, "erro ao salvar a nota")); }
   }
 
   if (pathname === "/api/alteracao-separacao" && method === "GET") {

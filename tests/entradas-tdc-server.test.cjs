@@ -74,3 +74,15 @@ test('fichário: confirma, descarta, remove só manual, carimba quem revisou', a
   assert.strictEqual((await req('/api/entradas-tdc/fichas', { cookie: admin, body: { id: man, remover: true, ficha: {} } })).status, 200);
   assert.strictEqual((await req('/api/entradas-tdc/fichas', { cookie: admin })).data.fichas[man], undefined);
 });
+test('notas em conferência: adiciona sem duplicar (zeros à esquerda), valida e remove', async () => {
+  assert.strictEqual((await req('/api/entradas-tdc/notas')).status, 401);
+  assert.strictEqual((await req('/api/entradas-tdc/notas', { cookie: semPerfil })).status, 403);
+  assert.strictEqual((await req('/api/entradas-tdc/notas', { cookie: comPerfil, body: { nota: '' } })).status, 400);
+  assert.strictEqual((await req('/api/entradas-tdc/notas', { cookie: comPerfil, body: { nota: '1;DROP' } })).status, 400);
+  await req('/api/entradas-tdc/notas', { cookie: comPerfil, body: { nota: '000123', serie: '1' } });
+  const r = await req('/api/entradas-tdc/notas', { cookie: comPerfil, body: { nota: '123', serie: '1' } });
+  assert.strictEqual(Object.keys(r.data.notas).length, 1); assert.strictEqual(r.data.notas['123|1'].por, 'estoque');
+  assert.strictEqual(Object.keys((await req('/api/entradas-tdc/notas', { cookie: admin })).data.notas).length, 1);
+  const d = await req('/api/entradas-tdc/notas', { cookie: admin, body: { nota: '123', serie: '1', remover: true } });
+  assert.strictEqual(Object.keys(d.data.notas).length, 0);
+});
