@@ -441,6 +441,23 @@ const HISTORICO_SALDO_MAX = 60; // snapshots guardados por achado (uns 2 meses s
 const STOCK_OBJ = 'cadastro-sb8-atual.json';
 const stockUploads = new Map();
 let stockPositionCache,stockGeneration=0;
+const stockBackupName=name=>/^cadastro-saldos-backup-[0-9a-f-]{36}\.json$/.test(String(name||''));
+async function stockBackupsList(){
+  if(SB_URL&&SB_KEY){
+    const response=await fetch(`${SB_URL.replace(/\/$/,'')}/storage/v1/object/list/${SB_BUCKET}`,{method:'POST',headers:{Authorization:`Bearer ${SB_KEY}`,apikey:SB_KEY,'Content-Type':'application/json'},body:JSON.stringify({prefix:'',search:'cadastro-saldos-backup-',limit:100,offset:0,sortBy:{column:'created_at',order:'desc'}})});
+    if(!response.ok)throw Error('Não foi possível consultar os backups do SB8.');
+    return (await response.json()).filter(item=>stockBackupName(item.name)).map(item=>({name:item.name,savedAt:item.created_at}));
+  }
+  if(!fs.existsSync(LOCAL_DIR))return [];
+  return fs.readdirSync(LOCAL_DIR).filter(stockBackupName).map(name=>({name,savedAt:fs.statSync(path.join(LOCAL_DIR,name)).mtime.toISOString()})).sort((a,b)=>b.savedAt.localeCompare(a.savedAt)).slice(0,100);
+}
+function stockBackupPosition(backup){
+  if(!backup||!Object.hasOwn(backup,'position'))throw Error('Backup inválido ou não encontrado.');
+  if(backup.position===null)return {rows:null};
+  if(!backup.position||!Array.isArray(backup.position.rows))throw Error('Posição do backup inválida.');
+  backup.position.rows.forEach(Stock.normalize);
+  return backup.position;
+}
 async function stockPositionLoad(){if(stockPositionCache===undefined){const generation=stockGeneration,data=(await objLoad(STOCK_OBJ))||{rows:null,updatedAt:null};if(generation===stockGeneration)stockPositionCache=data;}return stockPositionCache;}
 async function stockPositionSave(position){
   if(SB_URL&&SB_KEY)return objSave(STOCK_OBJ,position);
@@ -1862,16 +1879,37 @@ async function handleApi(req, res, pathname) {
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar lembretes")); }
   }
 
-  // Staging never changes live balances. Apply commits one complete position.
+  if(pathname==='/api/cadastro-saldos/backups'&&method==='GET'){
+    const sess=await exigir(req,res,['admin']);if(!sess)return;
+    try{return sendJson(res,200,{backups:await stockBackupsList()});}catch(e){return sendJson(res,400,erroPublico(e,'Erro ao consultar backups.'));}
+  }
+  // Staging never changes live balances. Missing records are always retained.
   if (pathname === '/api/cadastro-saldos' && ['GET','POST'].includes(method)) {
     const sess=await exigir(req,res,['admin','operador'],'cadastro');if(!sess)return;
     try {
       if(method==='GET')return await sendCachedSnapshot(req,res,await stockPositionLoad());
       const body=await readJsonBody(req),owner=String(sess.usuario||sess.user||'admin');
+      if(['preverRestauracao','restaurar'].includes(body.acao)){
+        if(sess.role!=='admin')return sendJson(res,403,{error:'A restauração exige administrador.'});
+        if(!stockBackupName(body.backup))throw Error('Nome de backup inválido.');
+        return await comFila('cadastro-saldos',async()=>{
+          const current=await objLoad(STOCK_OBJ),backup=await objLoad(body.backup),previous=stockBackupPosition(backup);
+          const version=current?.updatedAt||null;
+          const rows=previous.rows===null?Stock.seed((await cadastroAchadosCarregar()).achados).rows:previous.rows;
+          const summary={records:rows.length,positive:rows.filter(row=>Number(row.saldo)>0).length,units:rows.filter(row=>Number(row.saldo)>0).reduce((sum,row)=>sum+Number(row.saldo),0),legacy:previous.rows===null};
+          if(body.acao==='preverRestauracao')return sendJson(res,200,{ok:true,backup:body.backup,savedAt:backup.savedAt,version,...summary});
+          if(!Object.hasOwn(body,'version')||body.version!==version)throw Error('Os saldos mudaram. Confira novamente a prévia de restauração.');
+          const safety='cadastro-saldos-backup-'+crypto.randomUUID()+'.json';
+          await objSave(safety,{position:current,savedAt:new Date().toISOString(),reason:'antes da restauração'});
+          const restored={...previous,updatedAt:new Date().toISOString(),source:{name:'Restauração do backup',backup:body.backup},restoredBy:owner};
+          await stockPositionSave(restored);stockGeneration++;stockPositionCache=restored;stockUploads.clear();
+          return sendJson(res,200,{ok:true,...summary,backup:safety,updatedAt:restored.updatedAt});
+        });
+      }
       for(const [id,upload]of stockUploads)if(Date.now()-upload.created>30*60*1000)stockUploads.delete(id);
       if(body.acao==='iniciar'){
         if(stockUploads.size>=3)return sendJson(res,409,{error:'Há importações em andamento. Aguarde ou cancele a anterior.'});
-        if(!['present','scopes','complete'].includes(body.mode))return sendJson(res,400,{error:'Modo inválido.'});
+        if(body.mode!=='present')return sendJson(res,400,{error:'Substituição total desativada. Atualize somente os registros presentes no arquivo.'});
         const current=await objLoad(STOCK_OBJ),id=crypto.randomUUID();
         stockUploads.set(id,{owner,created:Date.now(),rows:[],next:0,mode:body.mode,source:{name:String(body.name||'SB8').slice(0,200)},version:current?.updatedAt||null});
         return sendJson(res,200,{id});
@@ -1890,8 +1928,8 @@ async function handleApi(req, res, pathname) {
         if((current?.updatedAt||null)!==upload.version)throw Error('Outra importação atualizou os saldos. Refaça a prévia com o arquivo.');
         if(body.acao==='aplicar'&&!upload.previewed)throw Error('Confira a prévia antes de aplicar.');
         const baseline=current||upload.baseline;
-        const seed=baseline?null:Stock.seed((await cadastroAchadosCarregar()).achados);
-        const previous=baseline||{rows:seed.rows,baselineAmbiguous:seed.ambiguous};
+        const seed=Array.isArray(baseline?.rows)?null:Stock.seed((await cadastroAchadosCarregar()).achados);
+        const previous=seed?{...baseline,rows:seed.rows,baselineAmbiguous:seed.ambiguous}:baseline;
         const result=Stock.update(previous,upload.rows,{mode:upload.mode,source:upload.source});
         if(body.acao==='prever'){upload.previewed=true;upload.baseline=previous;return {ok:true,stats:result.stats,baselineAmbiguous:previous.baselineAmbiguous||0};}
         const backup='cadastro-saldos-backup-'+crypto.randomUUID()+'.json';
