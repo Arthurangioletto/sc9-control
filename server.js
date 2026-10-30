@@ -454,6 +454,7 @@ async function stockBackupsList(){
 function stockBackupPosition(backup){
   if(!backup||!Object.hasOwn(backup,'position'))throw Error('Backup inválido ou não encontrado.');
   if(backup.position===null)return {rows:null};
+  if(backup.position?.rows===null)return backup.position;
   if(!backup.position||!Array.isArray(backup.position.rows))throw Error('Posição do backup inválida.');
   backup.position.rows.forEach(Stock.normalize);
   return backup.position;

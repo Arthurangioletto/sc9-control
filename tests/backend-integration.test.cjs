@@ -74,6 +74,7 @@ await check('Saldo atual: prévia, commit atômico, isolamento de histórico, ba
  }
  const id=await stage(12),stale=await stage(4);
  assert.equal((await req('/api/cadastro-saldos',{cookie:admin})).data.rows,null);
+ const legacyAgain='cadastro-saldos-backup-'+crypto.randomUUID()+'.json';fs.writeFileSync(path.join(dir,'data',legacyAgain),JSON.stringify({position:(await req('/api/cadastro-saldos',{cookie:admin})).data,savedAt:new Date().toISOString()}));assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'preverRestauracao',backup:legacyAgain}})).data.legacy,true);
  const result=await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id}});assert.equal(result.status,200);assert(result.data.backup);
  assert.equal((await req('/api/cadastro-saldos',{cookie:admin,body:{acao:'aplicar',id:stale}})).status,400);
  const snapshot=(await req('/api/cadastro-saldos',{cookie:admin})).data;assert.equal(snapshot.rows.find(r=>r.produto==='STOCK').saldo,12);
