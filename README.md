@@ -334,3 +334,11 @@ Os textos do índice passam a refletir a função existente: volumes de pedidos 
 As tabelas da equipe recebem busca por nome, participação, ordenação e paginação de dez pessoas. Esses controles afetam somente a tabela, mantendo os gráficos e indicadores no recorte principal. Os registros e a abertura da página pelo nome são os originais. Peças fracionadas são preservadas nos TOP 5, na carga e nas tabelas; taxas da tabela usam vírgula decimal. O módulo `operation-productivity.js` não grava dados. O bloqueio adicional, a comparação de pessoas, os gráficos e as funções de acompanhamento permanecem disponíveis.
 
 Validação: 56 testes de produtividade e das telas já evoluídas, além de 24 verificações de integração do servidor. Conferência local com 134 pedidos fictícios e 13 pessoas por função: paginação, busca, elegibilidade, ordenação, abertura da pessoa, filtro por armazém, datas e status combinados, recorte vazio e celular de 390 px sem extravasamento horizontal da página. A prévia usa credenciais exclusivas de teste; nenhuma credencial de produção foi modificada.
+
+## Card Atrasados no resumo
+
+O card Atrasados volta aos indicadores principais com o critério anterior: status Atrasado em separação/conferência, excluindo os pedidos que aguardam faturamento. Ele substitui o card de prioridade Separação/conferência, evitando duplicar a mesma contagem. Aguardando faturamento e Confirmar despacho continuam disponíveis.
+
+Ao selecionar Atrasados, a lista aparece na própria página, abaixo dos indicadores, sem abrir o painel lateral. A tabela original mantém a coluna de dias desde a liberação até o corte, ordenação, paginação de 50 pedidos, exportação da lista completa e acesso à timeline. Trocar o recorte atualiza a lista e reinicia sua paginação. O botão de recolher devolve o foco ao card. As demais consultas do resumo mantêm seu comportamento.
+
+Validação final: 58 testes de resumo, produtividade e telas já evoluídas. Conferência local adicional com 55 pedidos fictícios de atraso: contagem, segunda página, quantidades fracionadas, filtro de armazém reiniciando a lista e celular de 390 px sem extravasamento da página ou abertura de painel lateral.

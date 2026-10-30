@@ -64,3 +64,23 @@ test('observações automáticas aguardam a base e usam o mesmo recorte do resum
  context.p={warehousesPresent:['RJ']};context.ae=[orders[4]];context.T={total:1};vm.runInNewContext(expression,context);
  assert.strictEqual(observed.view,context.T);assert.strictEqual(observed.trend,context.ae);assert.strictEqual(observed.compareRows,context.ae);assert.strictEqual(observed.heatmap,context.ae);
 });
+
+test('card Atrasados restaura o critério anterior e mostra a lista na página sem painel lateral',()=>{
+ let state=[],cursor=0,inlineRows,opened,focused=0;const R={createElement:(type,props,...children)=>({type,props:{...props,children}}),useMemo:fn=>fn(),useState:initial=>{const index=cursor++;if(!(index in state))state[index]=initial;return[state[index],value=>state[index]=value];},useRef:()=>({current:{scrollIntoView(){},focus(){focused++;}}}),useEffect:()=>{}};
+ const root={React:R,SC9UI:{Sheet:'sheet'}};vm.runInNewContext(fs.readFileSync(require.resolve('../operation-overview.js'),'utf8'),{window:root});
+ function nodes(tree,predicate){const result=[];function visit(node){if(!node||typeof node!=='object')return;if(predicate(node))result.push(node);for(const child of [node.props?.children||[]].flat(Infinity))visit(child);}visit(tree);return result;}
+ const props={orders,billingOrders:[orders[2]],warehouses:['Cambuci','RJ'],labels:{},scope:'Todos',cutoff:'2026-10-29',filters:[],onOpenOrder:order=>opened=order,renderOrders:()=> 'Lista lateral',renderLateOrders:(value,open)=>{inlineRows=value;return R.createElement('button',{onClick:()=>open(value[0])},'Consultar timeline');}};
+ function render(overrides={}){cursor=0;return root.SC9OperationOverview({...props,...overrides});}
+ let out=render(),card=nodes(out,node=>node.type==='button'&&node.props['aria-label']?.startsWith('Atrasados:'))[0];assert.match(card.props['aria-label'],/^Atrasados: 1\./);assert.equal(card.props['aria-expanded'],false);assert.equal(nodes(out,node=>node.props.id==='sc9-overview-late').length,0);
+ card.props.onClick();out=render();assert.equal(inlineRows.length,1);assert.strictEqual(inlineRows[0],orders[1]);assert.equal(nodes(out,node=>node.type==='sheet').length,0);assert.equal(nodes(out,node=>node.props.id==='sc9-overview-late').length,1);
+ nodes(out,node=>node.type==='button'&&node.props.children.includes('Consultar timeline'))[0].props.onClick();assert.strictEqual(opened,orders[1]);
+ out=render({orders:[orders[3]],billingOrders:[]});assert.match(JSON.stringify(out),/Nenhum pedido atrasado em separação/);assert.equal(nodes(out,node=>node.type==='sheet').length,0);
+ nodes(out,node=>node.type==='button'&&node.props.children.includes('Recolher atrasados'))[0].props.onClick();assert.equal(focused,1);out=render();assert.equal(nodes(out,node=>node.props.id==='sc9-overview-late').length,0);
+});
+
+test('lista restaurada usa tabela original com atraso, exportação, timeline e reinício por recorte',()=>{
+ const s=fs.readFileSync(require.resolve('../bundle.js'),'utf8'),a=s.indexOf('renderLateOrders:(sc9Rows,sc9Open)=>'),b=s.indexOf(',renderOrders:',a);assert(a>0&&b>a);let result;
+ const render=vm.runInNewContext('('+s.slice(a+'renderLateOrders:'.length,b)+')',{React:{createElement:(type,props)=>result={type,props}},Ol:'original-table',f:'RJ',r:'2026-10-29',x:{day:'2026-10-28',status:'Atrasado',item:'P1'},Ce:new Date('2026-10-29')});
+ const open=()=>{};render([orders[1]],open);assert.equal(result.type,'original-table');assert.strictEqual(result.props.orders[0],orders[1]);assert.strictEqual(result.props.onOpenOrder,open);assert.equal(result.props.showDelay,true);assert.equal(result.props.key,'RJ|2026-10-29|2026-10-28|Atrasado|P1');assert.equal(result.props.quantityFmt(2.125),'2,125');
+ const table=s.slice(s.indexOf('function Ol('),s.indexOf('function ',s.indexOf('function Ol(')+12));assert(table.includes('onClick:()=>Fr(E,a,o)'));assert(table.includes('p=50'));
+});
