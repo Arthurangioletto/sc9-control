@@ -364,6 +364,9 @@ function carregarEstatico(name, cb) {
     });
   });
 }
+
+SERVABLE.add("ui-workspaces.js");
+
 function serveStatic(req, res, urlPath) {
   // qualquer coisa fora da lista (inclusive rotas de navegação tipo /alguma-coisa)
   // cai no index.html — é o comportamento normal de uma SPA
