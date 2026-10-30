@@ -99,6 +99,12 @@
 .sc9-tdc-warn{font-size:11.5px;color:#8A5A0B;background:#FFF8EA;border:1px solid #F0DDB0;border-radius:8px;padding:6px 9px;margin-top:6px}
 .sc9-tdc-buscar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
 .sc9-tdc-buscar .sc9-tdc-in{font-size:16px;padding:10px 12px}
+.sc9-tdc-fotos{display:flex;gap:8px;flex-wrap:wrap}
+.sc9-tdc-foto{position:relative;width:84px;height:84px}
+.sc9-tdc-foto img{width:100%;height:100%;object-fit:cover;border-radius:10px;border:1px solid var(--sc9-border,#D3DAEA)}
+.sc9-tdc-foto button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:#B3261E;color:#fff;cursor:pointer;line-height:1}
+.sc9-tdc-foto-add{display:flex;align-items:center;justify-content:center;text-align:center;width:120px;height:84px;border:2px dashed var(--sc9-border,#D3DAEA);border-radius:10px;color:var(--sc9-accent,#4F63D2);font-size:12px;font-weight:600;cursor:pointer;padding:6px}
+.sc9-tdc-ev-box{background:#EEF1FD;border:1px solid #CDD5F6;border-radius:10px;padding:10px 12px;font-size:12px;color:#34419A;margin:8px 0;line-height:1.55}
 .sc9-tdc-modal{position:fixed;inset:0;z-index:80;background:rgba(20,25,50,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
 .sc9-tdc-modal>div{background:#fff;border-radius:14px;padding:22px;width:min(640px,100%)}
 `;
@@ -124,18 +130,59 @@
   const Bar=({label,value,max,color,right})=>h('div',{className:'sc9-tdc-bar'},h('span',null,label),h('div',null,h('i',{style:{width:(max?Math.max(value/max*100,value?2:0):0)+'%','--c':color}})),h('b',null,right==null?fmtN(value):right));
   const Kpi=({t,v,sub,tone})=>h('div',{className:'sc9-tdc-kpi '+(tone||'')},h('span',null,t),h('strong',null,v),h('em',null,sub));
 
+
+  /* ------------------------------ fotos do pacote ------------------------------ */
+  const URL_FOTO=id=>'/api/entradas-tdc/fotos?id='+id;
+  function reduzirFoto(file,maxLado=1400,maxBytes=650*1024){
+    return new Promise((resolve,reject)=>{
+      if(!/^image\//.test(file.type||'')){reject(new Error('Escolha um arquivo de imagem.'));return;}
+      const url=URL.createObjectURL(file),img=new Image();
+      img.onload=()=>{
+        URL.revokeObjectURL(url);
+        const k=Math.min(1,maxLado/Math.max(img.width,img.height)),c=root.document.createElement('canvas');
+        c.width=Math.max(1,Math.round(img.width*k));c.height=Math.max(1,Math.round(img.height*k));
+        c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+        let q=0.82,out=c.toDataURL('image/jpeg',q);
+        while(out.length*0.75>maxBytes&&q>0.4){q-=0.1;out=c.toDataURL('image/jpeg',q);}
+        out.length*0.75>maxBytes?reject(new Error('A foto ficou grande demais mesmo reduzida. Tire outra com menos zoom.')):resolve(out);
+      };
+      img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('Não consegui abrir essa imagem.'));};
+      img.src=url;
+    });
+  }
+  function FotoCampo({ids,onChange,disabled}){
+    const [busy,setBusy]=useState(false),[err,setErr]=useState('');
+    const add=async files=>{
+      setErr('');setBusy(true);
+      try{
+        let atual=ids.slice();
+        for(const f of Array.from(files)){
+          if(atual.length>=4){setErr('No máximo 4 fotos por ficha.');break;}
+          const r=await api('/api/entradas-tdc/fotos',{dataUrl:await reduzirFoto(f)});
+          atual=[...atual,r.id];onChange(atual);
+        }
+      }catch(e){setErr(e.message);}finally{setBusy(false);}
+    };
+    return h('div',{className:'sc9-tdc-field'},
+      h('label',null,'Foto do pacote (prova do erro)'),
+      h('div',{className:'sc9-tdc-fotos'},
+        ids.map(id=>h('div',{className:'sc9-tdc-foto',key:id},h('a',{href:URL_FOTO(id),target:'_blank',rel:'noopener'},h('img',{src:URL_FOTO(id),alt:'Foto do pacote'})),!disabled&&h('button',{type:'button',title:'Remover foto','aria-label':'Remover foto',onClick:()=>onChange(ids.filter(x=>x!==id))},'×'))),
+        ids.length<4&&!disabled&&h('label',{className:'sc9-tdc-foto-add'},busy?'Enviando…':'+ Tirar / escolher foto',h('input',{type:'file',accept:'image/*',capture:'environment',multiple:true,disabled:busy,style:{display:'none'},onChange:e=>{add(e.target.files);e.target.value='';}}))),
+      err&&h('div',{className:'sc9-tdc-msg err'},err));
+  }
+
   /* ------------------------------ fichas ------------------------------ */
   function Ficha({a,onSave,onRemove}){
     const rev=a.revisao||{};
     const [tipo,setTipo]=useState(a.tipo);
     const [qtd,setQtd]=useState(rev.fisicoQtd!==undefined&&rev.fisicoQtd!==''?rev.fisicoQtd:(a.qtdFisica==null?'':a.qtdFisica));
     const [lote,setLote]=useState(rev.fisicoLote||a.loteFisico||'');
-    const [obs,setObs]=useState(rev.obs||'');
+    const [obs,setObs]=useState(rev.obs||'');const [fotos,setFotos]=useState(rev.fotos||[]);
     const [busy,setBusy]=useState(false);const [err,setErr]=useState('');
     const T=M.TIPOS[a.tipo]||{rotulo:a.tipo,cor:'#4F63D2'};
     const salvar=async status=>{
       setBusy(true);setErr('');
-      try{await onSave(a,{status,tipo,obs,fisicoQtd:qtd===''?'':Number(qtd),fisicoLote:lote});}
+      try{await onSave(a,{status,tipo,obs,fotos,fisicoQtd:qtd===''?'':Number(qtd),fisicoLote:lote});}
       catch(e){setErr(e.message);}finally{setBusy(false);}
     };
     const est=a.status==='confirmado'?'confirmado':a.status==='descartado'?'descartado':'';
@@ -155,7 +202,8 @@
       h('div',{className:'sc9-tdc-row2'},
         h('div',{className:'sc9-tdc-field'},h('label',null,'Tipo de erro'),h('select',{className:'sc9-tdc-in',value:tipo,onChange:e=>setTipo(e.target.value)},M.TIPOS_MANUAL.map(t=>h('option',{key:t,value:t},M.TIPOS[t].rotulo)))),
         h('div',{className:'sc9-tdc-field'},h('label',null,rev.por?'Revisado por '+rev.por:'Revisão'),h('div',{className:'sc9-tdc-meta'},rev.em?fmtDH(rev.em):'ainda não revisada'))),
-      h('textarea',{className:'sc9-tdc-ta',placeholder:'Observação do estoque (ex.: conferi 10 caixas no físico, nota dizia 8)',value:obs,onChange:e=>setObs(e.target.value)}),
+      h(FotoCampo,{ids:fotos,onChange:setFotos}),
+      h('textarea',{className:'sc9-tdc-ta',placeholder:'Justificativa do estoque (ex.: conferi 10 caixas no físico, nota dizia 8)',value:obs,onChange:e=>setObs(e.target.value)}),
       err&&h('div',{className:'sc9-tdc-msg err'},err),
       h('div',{className:'sc9-tdc-act'},
         a.status!=='confirmado'&&h('button',{className:'sc9-tdc-btn ok',disabled:busy,onClick:()=>salvar('confirmado')},'✓ Confirmar erro'),
@@ -165,25 +213,68 @@
         a.manual&&h('button',{className:'sc9-tdc-btn bad',disabled:busy,onClick:async()=>{setBusy(true);try{await onRemove(a);}catch(e){setErr(e.message);setBusy(false);}}},'Remover')));
   }
 
-  function FichaManual({onClose,onSave,usuario,inicial}){
+  function resumoProtheus(it){
+    if(!it)return '';
+    const sub=it.subiu>0?`Subiu ${fmtN(it.subiu)} de ${fmtN(it.qtNota)} pç pro 01`:'Nada subiu pro 01 ainda (nos dados carregados)';
+    const ev=(it.eventos||[]).slice(0,4).map(m=>`${fmtD(m.dia)} ${m.cf} doc ${m.doc} ${m.dir==='saida'?'saída':'entrada'} ${fmtN(m.qt)} pç (arm ${m.armazem}, lote ${m.lote})`).join('; ');
+    return sub+'.'+(ev?' Movimentações: '+ev+'.':'');
+  }
+  function FichaManual({onClose,onSave,usuario,inicial,sd1All,analisarNota}){
     const [f,setF]=useState({tipo:'qtd_maior',nota:'',serie:'',fornecedor:'',produto:'',lote:'',loteFisico:'',qtdNota:'',qtdFisica:'',dtEntrada:'',usuarioTDC:'',obs:'',...(inicial||{})});
+    const [fotos,setFotos]=useState([]);const [itensNota,setItensNota]=useState([]);const [series,setSeries]=useState([]);const [achou,setAchou]=useState(inicial&&inicial.nota?'sim':'');
     const [err,setErr]=useState('');const [busy,setBusy]=useState(false);
-    const set=k=>e=>setF({...f,[k]:e.target.value});
-    const campo=(k,rot,tipo)=>h('div',{className:'sc9-tdc-field',key:k},h('label',null,rot),h('input',{className:'sc9-tdc-in',type:tipo||'text',value:f[k],onChange:set(k)}));
+    const set=k=>e=>setF(x=>({...x,[k]:e.target.value}));
+    const foraDaNota=f.tipo==='item_fora_nota';
+    const buscarNota=useCallback((nota,serie)=>{
+      const b=M.buscarNota(sd1All||[],nota,serie);
+      if(!M.normNota(nota)){setAchou('');setItensNota([]);setSeries([]);return;}
+      if(!b.itens.length){setAchou('nao');setItensNota([]);setSeries([]);return;}
+      if(b.series.length>1&&!serie){setAchou('serie');setSeries(b.series);setItensNota([]);return;}
+      const base=b.itens[0];setAchou('sim');setSeries([]);setItensNota(b.itens);
+      setF(x=>({...x,serie:base.serie||'',fornecedor:forn(base.fornecedor),dtEntrada:base.dtDigit||'',usuarioTDC:base.usuario||x.usuarioTDC}));
+    },[sd1All]);
+    // ao digitar o número da nota, puxa do SD1 tudo o que é da nota (com um pequeno atraso para não buscar a cada tecla)
+    useEffect(()=>{const t=setTimeout(()=>buscarNota(f.nota,f.serie&&achou==='serie'?f.serie:''),450);return()=>clearTimeout(t);},[f.nota]);// eslint-disable-line
+    const escolherSerie=sr=>{setF(x=>({...x,serie:sr}));buscarNota(f.nota,sr);};
+    const escolherItem=ix=>{
+      const l=itensNota[Number(ix)];if(!l)return;
+      setF(x=>({...x,produto:l.produto,lote:l.lote,qtdNota:l.qt}));
+    };
+    const itemSel=itensNota.findIndex(l=>l.produto===f.produto&&l.lote===f.lote);
+    const resNota=useMemo(()=>achou==='sim'&&analisarNota?analisarNota(f.nota,f.serie):null,[achou,f.nota,f.serie]);// eslint-disable-line
+    const itemRes=useMemo(()=>resNota&&f.produto?resNota.itens.find(i=>M.normNota(i.nota)===M.normNota(f.nota)&&i.produto===f.produto&&i.lote===f.lote):null,[resNota,f.nota,f.produto,f.lote]);
+    const protheus=foraDaNota?'':resumoProtheus(itemRes);
+    const jaApontado=resNota&&f.produto&&!foraDaNota?resNota.findings.find(x=>x.produto===f.produto&&x.lote===f.lote&&x.tipo===f.tipo&&x.confianca==='forte'):null;
+    const campo=(k,rot,tipo,extra)=>h('div',{className:'sc9-tdc-field',key:k},h('label',null,rot),h('input',{className:'sc9-tdc-in',type:tipo||'text',value:f[k]==null?'':f[k],onChange:set(k),...(extra||{})}));
     const salvar=async()=>{
-      if(!f.produto.trim()){setErr('Informe o produto.');return;}
+      if(!f.produto.trim()){setErr('Informe o produto (escolha na lista de itens da nota ou digite).');return;}
       setBusy(true);setErr('');
-      try{await onSave('MANUAL|'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),{...f,status:'confirmado',fisicoQtd:f.qtdFisica,fisicoLote:f.loteFisico,qtdNota:Number(f.qtdNota)||0,qtdFisica:f.qtdFisica===''?'':Number(f.qtdFisica)});onClose();}
+      try{await onSave('MANUAL|'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),{...f,fotos,protheus,status:'confirmado',fisicoQtd:f.qtdFisica,fisicoLote:f.loteFisico,qtdNota:foraDaNota?0:(Number(f.qtdNota)||0),qtdFisica:f.qtdFisica===''?'':Number(f.qtdFisica)});onClose();}
       catch(e){setErr(e.message);setBusy(false);}
     };
     return h('div',{className:'sc9-tdc-modal',onClick:e=>{if(e.target===e.currentTarget)onClose();}},h('div',null,
-      h('h2',{style:{margin:'0 0 4px',fontSize:16}},'Nova ficha manual'),
-      h('p',{className:'sc9-tdc-sub'},'Para um erro que você viu no físico e o Protheus não mostrou. Entra no dashboard e na súmula como confirmado por '+(usuario||'você')+'.'),
-      h('div',{className:'sc9-tdc-field',style:{marginBottom:10}},h('label',null,'Tipo de erro'),h('select',{className:'sc9-tdc-in',value:f.tipo,onChange:set('tipo')},M.TIPOS_MANUAL.map(t=>h('option',{key:t,value:t},M.TIPOS[t].rotulo)))),
-      h('div',{className:'sc9-tdc-row2'},campo('nota','Nota'),campo('serie','Série'),campo('fornecedor','Fornecedor'),campo('dtEntrada','Data da entrada','date'),campo('produto','Produto *'),campo('lote','Lote da nota'),campo('qtdNota','Qtd. na nota','number'),campo('qtdFisica','Qtd. física','number'),campo('loteFisico','Lote físico'),campo('usuarioTDC','Quem lançou no TDC')),
-      h('div',{className:'sc9-tdc-field',style:{marginTop:10}},h('label',null,'Observação'),h('textarea',{className:'sc9-tdc-ta',value:f.obs,onChange:set('obs')})),
+      h('h2',{style:{margin:'0 0 4px',fontSize:16}},'Reportar um erro de entrada'),
+      h('p',{className:'sc9-tdc-sub'},'Digite o número da nota: o painel preenche o que é da nota (fornecedor, data, itens). Escolha o item com problema, diga o que encontrou no físico e anexe a foto do pacote. Fica confirmado por '+(usuario||'você')+'.'),
+      h('div',{className:'sc9-tdc-row2',style:{marginBottom:10}},
+        h('div',{className:'sc9-tdc-field'},h('label',null,'Número da nota'),h('input',{className:'sc9-tdc-in',value:f.nota,inputMode:'numeric',placeholder:'ex.: 000123',autoFocus:!(inicial&&inicial.nota),onChange:e=>{set('nota')(e);setAchou('');}})),
+        h('div',{className:'sc9-tdc-field'},h('label',null,'Tipo de erro'),h('select',{className:'sc9-tdc-in',value:f.tipo,onChange:e=>{const v=e.target.value;setF(x=>({...x,tipo:v,...(v==='item_fora_nota'?{qtdNota:0}:{})}));}},M.TIPOS_MANUAL.map(t=>h('option',{key:t,value:t},M.TIPOS[t].rotulo))))),
+      achou==='nao'&&h('div',{className:'sc9-tdc-msg info'},'Essa nota não está no SD1 enviado. Você ainda pode preencher à mão abaixo.'),
+      achou==='serie'&&h('div',{className:'sc9-tdc-msg info'},'Essa nota existe em mais de uma série. Qual é a sua? ',series.map(sr=>h('button',{key:sr,type:'button',className:'sc9-tdc-chip',style:{marginLeft:6},onClick:()=>escolherSerie(sr)},'Série '+(sr||'(em branco)')))),
+      achou==='sim'&&h('div',{className:'sc9-tdc-msg ok'},'NF '+f.nota+(f.serie?'/'+f.serie:'')+' · '+(f.fornecedor||'fornecedor não informado')+' · entrada em '+fmtD(f.dtEntrada)+' · '+itensNota.length+' item(ns) na nota.'),
+      achou==='sim'&&!foraDaNota&&h('div',{className:'sc9-tdc-field',style:{marginBottom:10}},h('label',null,'Qual item da nota está errado?'),
+        h('select',{className:'sc9-tdc-in',value:itemSel>=0?itemSel:'',onChange:e=>escolherItem(e.target.value)},h('option',{value:''},'— escolha o item —'),itensNota.map((l,ix)=>h('option',{key:ix,value:ix},l.produto+' · lote '+(l.lote||'—')+' · '+fmtN(l.qt)+' pç na nota')))),
+      foraDaNota&&h('div',{className:'sc9-tdc-msg info'},'Item que chegou e não estava na nota: digite o produto e o lote que apareceram no pacote.'),
+      protheus&&h('div',{className:'sc9-tdc-ev-box'},h('b',null,'O que o Protheus mostra: '),protheus),
+      jaApontado&&h('div',{className:'sc9-tdc-msg info'},'O Protheus já apontou este erro neste item: ',jaApontado.descricao,' Para não contar em dobro, confirme a ficha dele no Fichário e anexe a foto lá. Se for outro problema, siga com este relato.'),
+      h('div',{className:'sc9-tdc-row2'},
+        campo('produto','Produto *'),campo('lote',foraDaNota?'Lote do pacote':'Lote da nota'),
+        !foraDaNota&&campo('qtdNota','Qtd. na nota','number',{readOnly:itemSel>=0}),campo('qtdFisica','Qtd. física (contada)','number'),
+        f.tipo==='lote_trocado'&&campo('loteFisico','Lote que veio no físico'),
+        campo('usuarioTDC','Quem lançou no TDC')),
+      h('div',{style:{marginTop:10}},h(FotoCampo,{ids:fotos,onChange:setFotos})),
+      h('div',{className:'sc9-tdc-field',style:{marginTop:10}},h('label',null,'Justificativa (o que estava errado)'),h('textarea',{className:'sc9-tdc-ta',placeholder:'ex.: nota dizia 8 peças, contei 10 no pacote',value:f.obs,onChange:set('obs')})),
       err&&h('div',{className:'sc9-tdc-msg err'},err),
-      h('div',{className:'sc9-tdc-act',style:{marginTop:12}},h('button',{className:'sc9-tdc-btn pri',disabled:busy,onClick:salvar},'Salvar ficha'),h('button',{className:'sc9-tdc-btn',onClick:onClose},'Cancelar'))));
+      h('div',{className:'sc9-tdc-act',style:{marginTop:12}},h('button',{className:'sc9-tdc-btn pri',disabled:busy,onClick:salvar},'Salvar relato'),h('button',{className:'sc9-tdc-btn',onClick:onClose},'Cancelar'))));
   }
 
   /* ------------------------------ envio do SD1 ------------------------------ */
@@ -259,8 +350,9 @@
 
   /* ------------------------------ súmula (Excel) ------------------------------ */
   function baixarSumula(res,achados,somenteConfirmados,periodo){
+    const baseUrl=root.location&&root.location.origin||'';
     if(!root.XLSX)throw new Error('SheetJS não carregou');
-    const s=M.linhasSumula(res,achados,{somenteConfirmados,periodo});
+    const s=M.linhasSumula(res,achados,{somenteConfirmados,periodo,baseUrl});
     const wb=root.XLSX.utils.book_new();
     const add=(nome,aoa,larg)=>{const ws=root.XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=larg.map(w=>({wch:w}));root.XLSX.utils.book_append_sheet(wb,ws,nome);};
     add('Súmula',s.resumo,[42,20,12,22]);
@@ -343,6 +435,54 @@
         h('div',{className:'sc9-tdc-card sc9-tdc-empty'},'Nenhuma nota em conferência ainda. Digite o número de uma nota acima.'));
   }
 
+
+  /* ------------------------------ exportar relatório ------------------------------ */
+  async function fotoParaDataUrl(id){
+    const r=await fetch(URL_FOTO(id),{credentials:'same-origin'});if(!r.ok)throw new Error('foto');
+    const b=await r.blob();
+    return await new Promise((ok,no)=>{const fr=new FileReader();fr.onload=()=>ok(fr.result);fr.onerror=no;fr.readAsDataURL(b);});
+  }
+  function baixarArquivo(nome,conteudo,tipo){
+    const url=URL.createObjectURL(new Blob([conteudo],{type:tipo}));const a=root.document.createElement('a');a.href=url;a.download=nome;root.document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);
+  }
+  function Exportar({res,achados,sessao,escopoRotulo,soConf,onExcel,onFechar}){
+    const Rp=root.SC9EntradasTDCRelatorio;
+    const conf=achados.filter(a=>a.status==='confirmado'||a.manual);
+    const datas=conf.map(a=>a.dtEntrada).filter(Boolean).sort();
+    const [de,setDe]=useState(datas[0]||''),[ate,setAte]=useState(datas[datas.length-1]||'');
+    const [busy,setBusy]=useState(''),[err,setErr]=useState('');
+    const dentro=d=>(!de||(d&&d>=de))&&(!ate||(d&&d<=ate));
+    const doPeriodo=conf.filter(a=>dentro(a.dtEntrada||''));
+    const nFotos=doPeriodo.reduce((s,a)=>s+((a.fotos||[]).length),0);
+    const montar=async()=>{
+      const dados=Rp.montarRelatorio(res||{itens:[]},achados,{de,ate,escopo:escopoRotulo});
+      const ids=[...new Set(dados.erros.flatMap(e=>e.fotos||[]))],fotos={};let feitas=0;
+      for(const id of ids){setBusy('Preparando fotos ('+(++feitas)+'/'+ids.length+')…');try{fotos[id]=await fotoParaDataUrl(id);}catch(e){/* foto indisponível: o cartão mostra "sem foto" */}}
+      return Rp.gerarHTML(dados,{fotos,geradoEm:new Date(),geradoPor:sessao&&(sessao.nome||sessao.usuario)||'',cobertura:{sd1Ate:res&&res.cobertura.sd1Ate,sd3Ate:res&&res.cobertura.sd3Ate}});
+    };
+    const nomeArq=()=>'Relatorio_Entradas_TDC_'+(de||'inicio')+'_a_'+(ate||'hoje')+'.html';
+    const abrir=async()=>{
+      setErr('');const w=root.open('','_blank');// abre já, no clique, para o navegador não bloquear
+      try{setBusy('Montando relatório…');const html=await montar();
+        if(w){w.document.open();w.document.write(html);w.document.close();}else baixarArquivo(nomeArq(),html,'text/html;charset=utf-8');}
+      catch(e){setErr(e.message);if(w)w.close();}finally{setBusy('');}
+    };
+    const baixar=async()=>{setErr('');try{setBusy('Montando relatório…');baixarArquivo(nomeArq(),await montar(),'text/html;charset=utf-8');}catch(e){setErr(e.message);}finally{setBusy('');}};
+    return h('div',{className:'sc9-tdc-modal',onClick:e=>{if(e.target===e.currentTarget&&!busy)onFechar();}},h('div',null,
+      h('h2',{style:{margin:'0 0 4px',fontSize:16}},'Exportar'),
+      h('p',{className:'sc9-tdc-sub'},'O relatório traz só os erros confirmados pelo estoque no período (pela data da entrada da nota), com gráficos, a foto de cada pacote ao lado, o que o Protheus mostra e a justificativa. A data e a hora da geração ficam no cabeçalho.'),
+      h('div',{className:'sc9-tdc-row2',style:{marginBottom:10}},
+        h('div',{className:'sc9-tdc-field'},h('label',null,'De (data da entrada)'),h('input',{className:'sc9-tdc-in',type:'date',value:de,onChange:e=>setDe(e.target.value)})),
+        h('div',{className:'sc9-tdc-field'},h('label',null,'Até'),h('input',{className:'sc9-tdc-in',type:'date',value:ate,onChange:e=>setAte(e.target.value)}))),
+      h('div',{className:'sc9-tdc-msg '+(doPeriodo.length?'ok':'info')},doPeriodo.length?`${doPeriodo.length} erro(s) confirmado(s) no período · ${nFotos} foto(s).`:'Nenhum erro confirmado neste período ainda. Confirme fichas no Fichário ou reporte um erro.'),
+      err&&h('div',{className:'sc9-tdc-msg err'},err),busy&&h('div',{className:'sc9-tdc-msg info'},busy),
+      h('div',{className:'sc9-tdc-act',style:{marginTop:12}},
+        h('button',{className:'sc9-tdc-btn pri',disabled:Boolean(busy),onClick:abrir},'Abrir relatório (imprimir / PDF)'),
+        h('button',{className:'sc9-tdc-btn',disabled:Boolean(busy),onClick:baixar},'Baixar .html'),
+        h('button',{className:'sc9-tdc-btn',disabled:Boolean(busy),onClick:()=>onExcel(de,ate)},'Baixar Excel (dados)'),
+        h('button',{className:'sc9-tdc-btn',onClick:onFechar,disabled:Boolean(busy)},'Fechar'))));
+  }
+
   /* ------------------------------ painel principal ------------------------------ */
   function Painel({onFechar,sessao}){
     const [aba,setAba]=useState('notas');
@@ -351,7 +491,7 @@
     const [erro,setErro]=useState('');
     const [de,setDe]=useState(''),[ate,setAte]=useState('');
     const [fStatus,setFStatus]=useState('pendente'),[fTipo,setFTipo]=useState(''),[busca,setBusca]=useState('');
-    const [manual,setManual]=useState(null);const [soConf,setSoConf]=useState(true);const [notasReg,setNotasReg]=useState({});const [grupoEnt,setGrupoEnt]=useState('');const [escopo,setEscopo]=useState('notas');
+    const [exportando,setExportando]=useState(false);const [manual,setManual]=useState(null);const [soConf,setSoConf]=useState(true);const [notasReg,setNotasReg]=useState({});const [grupoEnt,setGrupoEnt]=useState('');const [escopo,setEscopo]=useState('notas');
 
     const carregar=useCallback(async()=>{
       setErro('');
@@ -381,6 +521,7 @@
     const sd3Faixa=useMemo(()=>{let a='',b='';for(const m of sd3){if(!m.dia)continue;if(!a||m.dia<a)a=m.dia;if(!b||m.dia>b)b=m.dia;}return [a,b];},[sd3]);
 
     const salvarFicha=async(id,ficha)=>{const r=await api('/api/entradas-tdc/fichas',{id,ficha});setFichas(f=>({...f,fichas:{...f.fichas,[id]:r.ficha}}));};
+    const analisarNota=(nota,serie)=>sd1All.length?M.analisar(sd1All,sd3,{ignorar,notas:[{nota,serie}]}):null;
     const addNota=async(nota,serie)=>{const r=await api('/api/entradas-tdc/notas',{nota,serie});setNotasReg(r.notas||{});};
     const removerNota=async reg=>{const r=await api('/api/entradas-tdc/notas',{nota:reg.nota,serie:reg.serie,remover:true});setNotasReg(r.notas||{});};
     const abrirFichasNota=reg=>{setBusca(reg.nota);setFStatus('todas');setFTipo('');setAba('ficharios');};
@@ -405,7 +546,11 @@
     const maxUser=r?Math.max(1,...r.porUsuario.map(u=>u.notasErro)):1;
     const maxDia=r?Math.max(1,...r.porDia.map(d=>d.notas)):1;
     const semUsuario=r&&r.porUsuario.length===1&&r.porUsuario[0].usuario==='(sem usuário)';
-    const fazerSumula=()=>{try{baixarSumula(res||{resumo:{notas:0,notasErro:0,itens:0,itensErro:0,pecasNota:0,pecasDivergentes:0,porTipo:Object.fromEntries(M.TIPOS_MANUAL.map(t=>[t,{achados:0,pecas:0}])),porUsuario:[],diasMediaLimpos:null,diasMediaComErro:null},itens:[],cobertura:{sd1De:'',sd1Ate:''}},achados,soConf,(de||ate)?'Entradas de '+fmtD(de||(res&&res.cobertura.sd1De))+' a '+fmtD(ate||(res&&res.cobertura.sd1Ate)):'');}catch(e){setErro(e.message);}};
+    const VAZIO={resumo:{notas:0,notasErro:0,itens:0,itensErro:0,pecasNota:0,pecasDivergentes:0,porTipo:Object.fromEntries(M.TIPOS_MANUAL.map(t=>[t,{achados:0,pecas:0}])),porUsuario:[],diasMediaLimpos:null,diasMediaComErro:null},itens:[],cobertura:{sd1De:'',sd1Ate:''}};
+    const fazerSumula=(d1,a1)=>{try{
+      const dd=d1!==undefined?d1:de,aa=a1!==undefined?a1:ate;
+      const lista=achados.filter(x=>(!dd||(x.dtEntrada&&x.dtEntrada>=dd))&&(!aa||(x.dtEntrada&&x.dtEntrada<=aa)));
+      baixarSumula(res||VAZIO,lista,soConf,(dd||aa)?'Entradas de '+fmtD(dd||(res&&res.cobertura.sd1De))+' a '+fmtD(aa||(res&&res.cobertura.sd1Ate)):'');}catch(e){setErro(e.message);}};
 
     const sd1Ate=useMemo(()=>sd1All.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),[sd1All]);
     const fresco=useMemo(()=>{
@@ -424,11 +569,12 @@
       h('div',{className:'sc9-tdc-top'},
         h('h1',null,'Entradas do TDC no 59',h('small',null,'Nota de entrada (SD1) × movimentação 59 → 01 (SD3): o que subiu diferente da nota')),
         h('div',{className:'sc9-tdc-tabs',role:'tablist'},Aba('notas','Notas'+(regsLista.length?' ('+regsLista.length+')':'')),Aba('painel','Dashboard'),Aba('ficharios','Fichário'+(cont.pendente?' ('+cont.pendente+')':'')),Aba('dados','Dados')),
-        h('button',{className:'sc9-tdc-btn pri',onClick:fazerSumula,title:'Baixa o Excel com Súmula, Por usuário, Detalhe e Tempo'},'⬇ Baixar súmula (Excel)'),
+        h('button',{className:'sc9-tdc-btn pri',onClick:()=>setExportando(true),title:'Relatório com fotos e gráficos, ou Excel com os dados'},'⬇ Exportar relatório'),
         h('button',{className:'sc9-tdc-btn',onClick:onFechar,'aria-label':'Fechar'},'✕ Fechar')),
       h('div',{className:'sc9-tdc-body'},
         erro&&h('div',{className:'sc9-tdc-msg err'},erro),
-        manual&&h(FichaManual,{onClose:()=>setManual(null),onSave:salvarFicha,inicial:manual===true?null:manual,usuario:sessao&&(sessao.nome||sessao.usuario)}),
+        exportando&&h(Exportar,{res,achados,sessao,escopoRotulo:escopo==='notas'?'notas informadas':'todas as notas do SD1',soConf,onExcel:(d,a)=>fazerSumula(d,a),onFechar:()=>setExportando(false)}),
+        manual&&h(FichaManual,{sd1All,analisarNota,onClose:()=>setManual(null),onSave:async(id,f)=>{await salvarFicha(id,f);if(f.nota&&!regsLista.some(r=>M.normNota(r.nota)===M.normNota(f.nota)&&(!r.serie||r.serie===f.serie)))await addNota(f.nota,f.serie).catch(()=>{});},inicial:manual===true?null:manual,usuario:sessao&&(sessao.nome||sessao.usuario)}),
         aba==='notas'&&h(Notas,{fresco,sd1All,sd1Raw,res:resAll,notasReg,fObj,achados:achadosAll,onAdd:addNota,onRemover:removerNota,onFichas:abrirFichasNota,onManual:setManual,onVincular:vincular,onIrDados:()=>setAba('dados')}),
         aba==='painel'&&h('div',null,
           h('div',{className:'sc9-tdc-toolbar'},

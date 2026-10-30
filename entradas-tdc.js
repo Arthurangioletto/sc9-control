@@ -251,7 +251,7 @@
   function aplicarRevisoes(findings,revisoes){
     return findings.map(f=>{
       const r=(revisoes||{})[f.id];if(!r)return {...f,revisao:null,status:'pendente'};
-      const o={...f,revisao:r,status:r.status||'pendente'};
+      const o={...f,revisao:r,status:r.status||'pendente',fotos:Array.isArray(r.fotos)?r.fotos:[],protheus:r.protheus||''};
       if(r.tipo&&TIPOS[r.tipo])o.tipo=r.tipo;
       if(r.fisicoLote)o.loteFisico=normLote(r.fisicoLote);
       if(r.fisicoQtd!==''&&r.fisicoQtd!=null&&Number.isFinite(Number(r.fisicoQtd))){o.qtdFisica=Number(r.fisicoQtd);o.diferenca=Math.abs(o.qtdFisica-(f.qtdNota||0));}
@@ -259,13 +259,13 @@
   }
   function fichaManualParaFinding(id,r){
     return {id,manual:true,tipo:r.tipo,confianca:'forte',nota:r.nota||'',serie:r.serie||'',fornecedor:r.fornecedor||'',produto:normProd(r.produto),lote:normLote(r.lote),loteFisico:normLote(r.loteFisico),qtdNota:num(r.qtdNota),qtdFisica:r.qtdFisica===''||r.qtdFisica==null?null:num(r.qtdFisica),
-      diferenca:Math.abs(num(r.qtdFisica)-num(r.qtdNota))||0,dtEntrada:r.dtEntrada||'',usuarioTDC:r.usuarioTDC||'',corrigidoPor:[r.por].filter(Boolean),movimentos:[],descricao:r.obs||'Lançado manualmente pelo estoque.',revisao:r,status:r.status||'confirmado'};
+      diferenca:Math.abs(num(r.qtdFisica)-num(r.qtdNota))||0,dtEntrada:r.dtEntrada||'',usuarioTDC:r.usuarioTDC||'',corrigidoPor:[r.por].filter(Boolean),movimentos:[],descricao:r.protheus||'Lançado manualmente pelo estoque.',fotos:Array.isArray(r.fotos)?r.fotos:[],protheus:r.protheus||'',revisao:r,status:r.status||'confirmado'};
   }
 
   /* ============================ linhas do Excel da súmula ============================ */
   const fmtD=iso=>iso?iso.split('-').reverse().join('/'):'';
   const pct=x=>Math.round(x*1000)/10;
-  function linhasSumula(res,achados,{somenteConfirmados=true,periodo=''}={}){
+  function linhasSumula(res,achados,{somenteConfirmados=true,periodo='',baseUrl=''}={}){
     const lista=achados.filter(a=>a.status!=='descartado'&&(!somenteConfirmados||a.status==='confirmado'||a.manual));
     const r=res.resumo,cob=res.cobertura;
     const resumo=[['SÚMULA — ENTRADAS DO TDC NO ARMAZÉM 59 (SD1 x SD3)'],[periodo||('Entradas de '+fmtD(cob.sd1De)+' a '+fmtD(cob.sd1Ate))],
@@ -274,8 +274,8 @@
       ['Peças da nota',r.pecasNota],['Peças divergentes',r.pecasDivergentes],['Dias médios até subir (sem erro)',r.diasMediaLimpos==null?'':Math.round(r.diasMediaLimpos*10)/10],['Dias médios até subir (com erro)',r.diasMediaComErro==null?'':Math.round(r.diasMediaComErro*10)/10],[],
       ['Tipo de erro','Ocorrências (auto)','Peças','Confirmadas/lançadas'],...TIPOS_MANUAL.map(t=>[TIPOS[t].rotulo,r.porTipo[t].achados,r.porTipo[t].pecas,achados.filter(a=>a.tipo===t&&(a.status==='confirmado'||a.manual)).length])];
     const porUsuario=[['Usuário (quem lançou no TDC)','Notas','Notas com divergência','% notas com divergência','Itens','Itens com divergência','Peças divergentes'],...r.porUsuario.map(u=>[u.usuario,u.notas,u.notasErro,pct(u.pctNotas)+'%',u.itens,u.itensErro,u.pecasDiv])];
-    const det=[['Status','Tipo','Confiança','Nota','Série','Fornecedor','Produto','Lote da nota','Lote físico','Qtd. na nota','Qtd. física','Diferença','Data da entrada','Quem lançou (TDC)','Quem corrigiu (estoque)','O que o Protheus mostra','Observação do estoque','Confirmado por','Em'],
-      ...lista.map(a=>[a.status==='confirmado'?'Confirmado':a.manual?'Lançado à mão':'Pendente',TIPOS[a.tipo]?TIPOS[a.tipo].rotulo:a.tipo,a.confianca==='forte'?'Forte':'Suspeita',a.nota,a.serie,a.fornecedor,a.produto,a.lote,(a.revisao&&a.revisao.fisicoLote)||a.loteFisico||'',a.qtdNota,(a.revisao&&a.revisao.fisicoQtd!==undefined&&a.revisao.fisicoQtd!==''?a.revisao.fisicoQtd:a.qtdFisica)??'',a.diferenca,fmtD(a.dtEntrada),a.usuarioTDC,(a.corrigidoPor||[]).join(', '),a.descricao,(a.revisao&&a.revisao.obs)||'',(a.revisao&&a.revisao.por)||'',a.revisao&&a.revisao.em?String(a.revisao.em).slice(0,10).split('-').reverse().join('/'):''])];
+    const det=[['Status','Tipo','Confiança','Nota','Série','Fornecedor','Produto','Lote da nota','Lote físico','Qtd. na nota','Qtd. física','Diferença','Data da entrada','Quem lançou (TDC)','Quem corrigiu (estoque)','O que o Protheus mostra','Observação do estoque','Confirmado por','Em','Fotos'],
+      ...lista.map(a=>[a.status==='confirmado'?'Confirmado':a.manual?'Lançado à mão':'Pendente',TIPOS[a.tipo]?TIPOS[a.tipo].rotulo:a.tipo,a.confianca==='forte'?'Forte':'Suspeita',a.nota,a.serie,a.fornecedor,a.produto,a.lote,(a.revisao&&a.revisao.fisicoLote)||a.loteFisico||'',a.qtdNota,(a.revisao&&a.revisao.fisicoQtd!==undefined&&a.revisao.fisicoQtd!==''?a.revisao.fisicoQtd:a.qtdFisica)??'',a.diferenca,fmtD(a.dtEntrada),a.usuarioTDC,(a.corrigidoPor||[]).join(', '),a.descricao,(a.revisao&&a.revisao.obs)||'',(a.revisao&&a.revisao.por)||'',a.revisao&&a.revisao.em?String(a.revisao.em).slice(0,10).split('-').reverse().join('/'):'',(a.fotos&&a.fotos.length)?(a.fotos.length+' foto(s)'+(baseUrl?': '+a.fotos.map(id=>baseUrl+'/api/entradas-tdc/fotos?id='+id).join(' '):'')):''])];
     const tempo=[['Nota','Fornecedor','Produto','Lote','Qtd. na nota','Entrada','Usuário TDC','Dias até começar a subir','Dias até concluir','Teve divergência?','Aguardando subir (> limite)'],...res.itens.map(i=>[i.nota,i.fornecedor,i.produto,i.lote,i.qtNota,fmtD(i.dtEntrada),i.usuarioTDC,i.diasAteSubir??'',i.diasAteConcluir??'',i.erroForte?'Sim':'Não',i.aguardandoSubir?'Sim ('+i.diasSemSubir+' dias)':''])];
     return {resumo,porUsuario,detalhe:det,tempo};
   }

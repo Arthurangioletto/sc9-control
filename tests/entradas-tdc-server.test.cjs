@@ -6,7 +6,7 @@ const fs = require('fs'), path = require('path'), os = require('os'), crypto = r
 
 const root = path.resolve(__dirname, '..');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-tdc-'));
-for (const f of ['server.js', 'index.html', 'bundle.js', 'entradas-tdc.js', 'entradas-tdc-ui.js', 'stock-position.js', 'stock-import.js', 'inventory-integrity.js', 'navigation.js', 'navigation.css', 'lot-filters.js', 'lot-records.js', 'expiry-panel.js', 'operation-overview.js', 'operation-flow.js', 'operation-shipping.js', 'operation-handoff.js', 'operation-transfers.js', 'inventory-presentation.js', 'operation-live.js', 'operation-productivity.js']) fs.copyFileSync(path.join(root, f), path.join(dir, f));
+for (const f of ['server.js', 'index.html', 'bundle.js', 'entradas-tdc.js', 'entradas-tdc-ui.js', 'stock-position.js', 'stock-import.js', 'inventory-integrity.js', 'navigation.js', 'navigation.css', 'lot-filters.js', 'lot-records.js', 'expiry-panel.js', 'operation-overview.js', 'operation-flow.js', 'operation-shipping.js', 'operation-handoff.js', 'operation-transfers.js', 'inventory-presentation.js', 'operation-live.js', 'operation-productivity.js', 'entradas-tdc-relatorio.js']) fs.copyFileSync(path.join(root, f), path.join(dir, f));
 delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
 process.env.PORT = '0'; process.env.APP_PASSWORD = 'tdc-' + crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomBytes(32).toString('hex'); process.env.NODE_ENV = 'test';
 const server = require(path.join(dir, 'server.js'));
@@ -92,4 +92,24 @@ test('SD1 reenviado: nota que vem de novo é substituída (corrigida), nota nova
   assert.strictEqual(r.data.notasNovas, 1); assert.strictEqual(r.data.notasAtualizadas, 1); assert.strictEqual(r.data.total, 3);
   const g = (await req('/api/entradas-tdc/sd1', { cookie: admin })).data.rows;
   assert.strictEqual(g.find((x) => x[0] === '10')[5], 6); assert.strictEqual(g.find((x) => x[0] === '11')[5], 7);
+});
+// JPEG mínimo válido (1x1)
+const JPG = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+test('fotos: valida, guarda e devolve só para quem tem perfil', async () => {
+  const dataUrl = 'data:image/jpeg;base64,' + JPG;
+  assert.strictEqual((await req('/api/entradas-tdc/fotos', { cookie: semPerfil, body: { dataUrl } })).status, 403);
+  assert.strictEqual((await req('/api/entradas-tdc/fotos', { cookie: comPerfil, body: { dataUrl: 'data:text/html;base64,PGI+' } })).status, 400);
+  assert.strictEqual((await req('/api/entradas-tdc/fotos', { cookie: comPerfil, body: { dataUrl: 'data:image/jpeg;base64,' + Buffer.from('nao sou imagem').toString('base64') } })).status, 400);
+  assert.strictEqual((await req('/api/entradas-tdc/fotos', { cookie: comPerfil, body: { dataUrl: 'data:image/jpeg;base64,' + Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(1000 * 1024)]).toString('base64') } })).status, 400);
+  const up = await req('/api/entradas-tdc/fotos', { cookie: comPerfil, body: { dataUrl } });
+  assert.strictEqual(up.status, 200); assert.match(up.data.id, /^[a-f0-9]{24}$/);
+  const g = await fetch(base + '/api/entradas-tdc/fotos?id=' + up.data.id, { headers: { Cookie: comPerfil } });
+  assert.strictEqual(g.status, 200); assert.strictEqual(g.headers.get('content-type'), 'image/jpeg'); assert.strictEqual(g.headers.get('x-content-type-options'), 'nosniff');
+  assert.strictEqual((await fetch(base + '/api/entradas-tdc/fotos?id=' + up.data.id)).status, 401);
+  assert.strictEqual((await fetch(base + '/api/entradas-tdc/fotos?id=' + up.data.id, { headers: { Cookie: semPerfil } })).status, 403);
+  assert.strictEqual((await fetch(base + '/api/entradas-tdc/fotos?id=../../x', { headers: { Cookie: comPerfil } })).status, 400);
+  assert.strictEqual((await fetch(base + '/api/entradas-tdc/fotos?id=' + 'a'.repeat(24), { headers: { Cookie: comPerfil } })).status, 404);
+  // a ficha guarda só ids válidos, no máximo 4
+  const f = await req('/api/entradas-tdc/fichas', { cookie: comPerfil, body: { id: 'x|1', ficha: { status: 'confirmado', fotos: [up.data.id, '../etc', 'zz', up.data.id, up.data.id, up.data.id, up.data.id], protheus: 'subiu 10 de 8' } } });
+  assert.strictEqual(f.data.ficha.fotos.length, 4); assert.ok(f.data.ficha.fotos.every((x) => /^[a-f0-9]{24}$/.test(x))); assert.strictEqual(f.data.ficha.protheus, 'subiu 10 de 8');
 });
