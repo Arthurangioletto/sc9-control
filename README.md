@@ -292,3 +292,15 @@ Os indicadores de Recebimento mantêm as contagens e os identificadores de filtr
 As áreas de bipagem ganham destaque e identificação acessível, com campo em largura adequada no celular. Tabelas e cabeçalhos usam o padrão visual compartilhado. Regras de bipagem, Enter, duplicidade, reenvio, desfazer, alterações, volumes, confirmação na Entrega, exportação, retenção e permissões permanecem as mesmas. O módulo legível `operation-handoff.js` não faz requisições nem grava dados.
 
 Validação: 33 testes de apresentação operacional, Expedição, Fluxo, Resumo, navegação, permissões e painel lateral, além de 24 verificações de integração. Conferência local com registros fictícios de correspondência e divergência, bipes duplicados nas duas telas, filtro de recebimento e celular de 390 px sem extravasamento horizontal.
+
+## Controle 02 → 01: prioridade e navegação
+
+O Controle apresenta os indicadores existentes em cards, com identificação explícita de que consideram todos os registros. Pessoa e divergência continuam sendo filtros do histórico. O resumo usa a função original de totais, preservando critérios de status, observação, recebimentos e prazo de atenção (4 horas) e atraso (24 horas). A quantidade enviada pendente exibe também valores decimais.
+
+Os atalhos permitem ir à fila de conferência, abrir o histórico completo e mostrar divergências/observações. Os atalhos do histórico removem a seleção de pessoa para apresentar o conjunto indicado pelos totais, preservando o bloqueio de acesso existente. Nenhum resumo permite contornar esse bloqueio.
+
+A prioridade destaca a entrega pendente mais antiga com data válida até a consulta. Datas ausentes, inválidas e futuras não são usadas nessa prioridade; as pendências continuam na fila existente. O botão Localizar lote para conferir leva ao card e foca o campo original de quantidade recebida, sem preencher ou confirmar valores. O tempo é contado desde o registro e não comprova paralisação física.
+
+A movimentação de apoio dos armazéns 01 e 02 permanece disponível em seção expansível para os mesmos perfis. O formulário de nova transferência, os cards da fila, os cabeçalhos e as tabelas seguem o padrão visual compartilhado e se adaptam ao celular. Registro, bipagem, validação de quantidade e saldo, conferência com SD3, confirmação, persistência, filtros originais, exportação, exclusão e permissões mantêm as mesmas funções.
+
+O módulo legível `operation-transfers.js` apresenta o resumo e a prioridade sem gravar dados. Validação: 37 testes de Controle e telas já evoluídas, além de 24 verificações de integração do servidor. Conferência local com transferências fictícias de pendência, confirmação e divergência, recebimento decimal preservado após recarregar, foco na pendência mais antiga, atalhos, bloqueio do histórico e viewport móvel de 390 px.
