@@ -280,3 +280,15 @@ A interface identifica as fontes: SC9 pelo término de conferência, SF2 pelo n�
 O tempo médio entre fim de conferência e faturamento mantém o cálculo existente: notas anteriores ao término contam como zero minuto. Um atalho permite consultar esses pedidos. A timeline passa a distinguir nota já existente sem confirmação na Entrega de pedido sem nota, corrigindo apenas o texto apresentado.
 
 O módulo `operation-shipping.js` reutiliza o painel lateral, a tabela e os estilos das etapas anteriores, sem dependências novas. Dados de produção, importações e perfis permanecem preservados. Validação: 28 testes de Expedição, Fluxo, Resumo, navegação, permissões e painel lateral, mais 24 verificações de integração do servidor; conferência local com dados fictícios em computador e viewport de 390 px.
+
+## Saída e Recebimento: apresentação operacional
+
+As telas de Saída para expedição e Recebimento identificam o dia consultado, a consulta histórica, o carregamento e falhas de atualização. O contexto informa a atualização automática apenas durante a consulta do dia, após o carregamento e sem erro. Na Saída histórica, avisa que os novos bipes continuam sendo registrados no dia atual. No Recebimento histórico, informa o modo de consulta e o retorno a Hoje para bipar.
+
+A Saída apresenta resumo de registros, registros sem alteração pendente, alterações pendentes e registros sem dado SC9. A contagem usa registros, incluindo reenvios; não pressupõe pedidos únicos. O grupo sem dado SC9 pode se sobrepor aos demais. O resumo é somente leitura.
+
+Os indicadores de Recebimento mantêm as contagens e os identificadores de filtro existentes. Os cards distinguem recebidos, recebidos sem saída registrada, saída sem recebimento, pedidos que não saem hoje, sem confirmação na Entrega e confirmados na Entrega. As contagens usam o dia consultado; transportadora e busca filtram a lista de recebidos. Saída sem recebimento permanece informativa e a lista de divergências continua disponível. Os indicadores podem se sobrepor.
+
+As áreas de bipagem ganham destaque e identificação acessível, com campo em largura adequada no celular. Tabelas e cabeçalhos usam o padrão visual compartilhado. Regras de bipagem, Enter, duplicidade, reenvio, desfazer, alterações, volumes, confirmação na Entrega, exportação, retenção e permissões permanecem as mesmas. O módulo legível `operation-handoff.js` não faz requisições nem grava dados.
+
+Validação: 33 testes de apresentação operacional, Expedição, Fluxo, Resumo, navegação, permissões e painel lateral, além de 24 verificações de integração. Conferência local com registros fictícios de correspondência e divergência, bipes duplicados nas duas telas, filtro de recebimento e celular de 390 px sem extravasamento horizontal.
