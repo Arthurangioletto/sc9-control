@@ -2075,18 +2075,21 @@ async function handleApi(req, res, pathname) {
         const usuarios = atual && Array.isArray(atual.usuarios) ? atual.usuarios.slice() : [];
         const ix = new Map(usuarios.map((u, i) => [u, i]));
         const uIdx = (nome) => { const n = txt(nome, 60).toLowerCase(); if (!ix.has(n)) { ix.set(n, usuarios.length); usuarios.push(n); } return ix.get(n); };
-        const rows = atual && Array.isArray(atual.rows) ? atual.rows.slice() : [];
-        const chave = (r) => [r[0], r[1], r[3], r[4], r[5], r[7]].join("|");
-        const vistos = new Set(rows.map(chave));
-        let novas = 0;
-        for (const r of body.rows) {
-          const linha = [txt(r[0], 30), txt(r[1], 10), txt(r[2], 80), txt(r[3], 40), txt(r[4], 40), Number(r[5]), txt(r[6], 10), txt(r[7], 10), txt(r[8], 5), uIdx(body.usuarios[Number(r[9])]), txt(r[10], 10), txt(r[11], 10)];
-          const k = chave(linha); if (vistos.has(k)) continue; vistos.add(k); rows.push(linha); novas++;
-        }
+        const antigas = atual && Array.isArray(atual.rows) ? atual.rows : [];
+        const chaveNota = (r) => String(r[0]).replace(/^0+(?=\d)/, "") + "|" + String(r[1] || "");
+        const existentes = new Set(antigas.map(chaveNota));
+        // o SD1 é reenviado todo dia com peças novas: cada nota que vier na planilha SUBSTITUI a versão guardada
+        // (se foi corrigida, vale a nova); notas que não vieram na planilha continuam como estavam.
+        const incoming = [];
+        for (const r of body.rows) incoming.push([txt(r[0], 30), txt(r[1], 10), txt(r[2], 80), txt(r[3], 40), txt(r[4], 40), Number(r[5]), txt(r[6], 10), txt(r[7], 10), txt(r[8], 5), uIdx(body.usuarios[Number(r[9])]), txt(r[10], 10), txt(r[11], 10), txt(r[12], 10), txt(r[13], 10)]);
+        const vindas = new Set(incoming.map(chaveNota));
+        const rows = antigas.filter((r) => !vindas.has(chaveNota(r))).concat(incoming);
+        const notasNovas = [...vindas].filter((k) => !existentes.has(k)).length;
+        const novas = incoming.filter((r) => !existentes.has(chaveNota(r))).length;
         if (rows.length > 400000) throw new Error("SD1 acumulado grande demais");
         const obj = { v: 1, savedAt: new Date().toISOString(), por: sess.usuario || "admin", arquivo: txt(body.arquivo, 120), total: rows.length, usuarios, rows };
         await objSave(TDC_SD1_OBJ, obj);
-        return { ok: true, savedAt: obj.savedAt, total: obj.total, novas, recebidas: body.rows.length };
+        return { ok: true, savedAt: obj.savedAt, total: obj.total, novas, notasNovas, notasAtualizadas: vindas.size - notasNovas, recebidas: body.rows.length };
       });
       return sendJson(res, 200, resp);
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar o SD1")); }

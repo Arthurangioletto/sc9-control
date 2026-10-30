@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const T = require('../entradas-tdc.js');
 
-const sd1 = (nota, produto, lote, qt, dtDigit, usuario = 'tdc1') => ({ nota, serie: '1', fornecedor: 'FORN', produto, lote, qt, armazem: '59', dtDigit, emissao: dtDigit, hora: '09:00', usuario, validade: '' });
+const sd1 = (nota, produto, lote, qt, dtDigit, usuario = 'tdc1') => ({ nota, serie: '1', fornecedor: 'FORN', produto, lote, qt, armazem: '59', dtDigit, emissao: dtDigit, hora: '09:00', usuario, validade: '', tipo: '', cfop: '' });
 const mv = (o) => ({ estornado: false, usuario: 'est1', ...o });
 // par de transferência RE4 (saída) + DE4 (entrada)
 const transf = (doc, produto, qt, dia, armOrig, loteOrig, armDest, loteDest) => [
@@ -98,7 +98,7 @@ test('estornado é ignorado', () => {
   assert.strictEqual(r.findings.filter((f) => f.produto === 'P8').length, 0);
 });
 test('item aguardando subir passa do limite', () => {
-  const r = T.analisar([sd1('200', 'PX', 'LX', 3, '2026-10-01')], transf('Z', 'PY', 1, '2026-09-25', '59', 'LY', '01', 'LY'), { hoje: '2026-10-10' });
+  const r = T.analisar([sd1('200', 'PX', 'LX', 3, '2026-10-01')], [...transf('Z', 'PY', 1, '2026-09-25', '59', 'LY', '01', 'LY'), ...transf('Z2', 'PY', 1, '2026-10-09', '59', 'LY', '01', 'LY')], { hoje: '2026-10-10' });
   assert.strictEqual(r.itens[0].aguardandoSubir, true); assert.strictEqual(r.resumo.aguardando, 1);
 });
 test('ids são estáveis e revisões se aplicam', () => {
@@ -174,7 +174,7 @@ test('escopo por nota: mesmo lote em outra nota não se mistura, e o item fora d
 });
 test('nota anterior ao período da movimentação não vira "parada"', () => {
   const s1 = [sd1('1', 'P1', 'L1', 8, '2026-01-10'), sd1('2', 'P2', 'L2', 3, '2026-10-01')];
-  const s3 = [...transf('T', 'P9', 1, '2026-09-20', '59', 'L9', '01', 'L9')];
+  const s3 = [...transf('T', 'P9', 1, '2026-09-20', '59', 'L9', '01', 'L9'), ...transf('T2', 'P9', 1, '2026-10-20', '59', 'L9', '01', 'L9')];
   const r = T.analisar(s1, s3, { hoje: '2026-10-30' });
   assert.strictEqual(r.itens.find((i) => i.nota === '1').semCobertura, true);
   assert.strictEqual(r.itens.find((i) => i.nota === '1').aguardandoSubir, false);
@@ -186,4 +186,20 @@ test('lerSD1 soma itens repetidos da mesma nota/produto/lote', () => {
   const d = T.detectarColunasSD1(aoa);
   const l = T.lerSD1(aoa, d.mapa, d.linhaCab);
   assert.strictEqual(l.length, 2); assert.strictEqual(l.find((x) => x.lote === 'L').qt, 5);
+});
+test('SD3 desatualizado: nota depois do último SD3 não vira "parada"', () => {
+  const r = T.analisar([sd1('1', 'P1', 'L1', 3, '2026-10-20')], transf('T', 'P9', 1, '2026-10-21', '59', 'L9', '01', 'L9'), { hoje: '2026-10-30' });
+  assert.strictEqual(r.itens[0].aguardandoSubir, false); assert.strictEqual(r.itens[0].depoisSD3, false);
+  const r2 = T.analisar([sd1('1', 'P1', 'L1', 3, '2026-10-25')], transf('T', 'P9', 1, '2026-10-21', '59', 'L9', '01', 'L9'), { hoje: '2026-10-30' });
+  assert.strictEqual(r2.itens[0].depoisSD3, true); assert.strictEqual(r2.itens[0].aguardandoSubir, false); assert.strictEqual(r2.cobertura.sd3Ate, '2026-10-21');
+});
+test('CFOP: devolução de venda, consignação, bonificação e origem', () => {
+  assert.deepStrictEqual([T.infoCFOP('1201').grupo, T.infoCFOP('2201').rotulo], ['devolucao', 'Devolução de venda (produção própria) (interestadual)']);
+  assert.strictEqual(T.infoCFOP('1918').grupo, 'consig'); assert.strictEqual(T.infoCFOP('1910').grupo, 'bonif'); assert.strictEqual(T.infoCFOP('1913').grupo, 'consig');
+  assert.strictEqual(T.infoCFOP('9999').grupo, 'outras'); assert.strictEqual(T.infoCFOP('').rotulo, 'Sem CFOP');
+});
+test('lerSD1 lê Tipo Entrada e Cód. Fiscal do Protheus', () => {
+  const aoa = [['Documento', 'Produto', 'Lote', 'Quantidade', 'DT Digitacao', 'Tipo Entrada', 'Cod. Fiscal'], ['5', 'P', 'L', 2, '2026-10-01', 22, 1201]];
+  const d = T.detectarColunasSD1(aoa); const l = T.lerSD1(aoa, d.mapa, d.linhaCab);
+  assert.deepStrictEqual([l[0].tipo, l[0].cfop], ['22', '1201']);
 });

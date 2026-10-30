@@ -86,3 +86,10 @@ test('notas em conferência: adiciona sem duplicar (zeros à esquerda), valida e
   const d = await req('/api/entradas-tdc/notas', { cookie: admin, body: { nota: '123', serie: '1', remover: true } });
   assert.strictEqual(Object.keys(d.data.notas).length, 0);
 });
+test('SD1 reenviado: nota que vem de novo é substituída (corrigida), nota nova entra, as demais ficam', async () => {
+  await req('/api/entradas-tdc/sd1', { cookie: admin, body: { rows: [linha('10', 'P1', 'L1', 5, '2026-10-01'), linha('11', 'P2', 'L2', 7, '2026-10-01')], usuarios: ['a'], substituir: true } });
+  const r = await req('/api/entradas-tdc/sd1', { cookie: admin, body: { rows: [linha('10', 'P1', 'L1', 6, '2026-10-01'), linha('12', 'P3', 'L3', 1, '2026-10-02')], usuarios: ['a'] } });
+  assert.strictEqual(r.data.notasNovas, 1); assert.strictEqual(r.data.notasAtualizadas, 1); assert.strictEqual(r.data.total, 3);
+  const g = (await req('/api/entradas-tdc/sd1', { cookie: admin })).data.rows;
+  assert.strictEqual(g.find((x) => x[0] === '10')[5], 6); assert.strictEqual(g.find((x) => x[0] === '11')[5], 7);
+});

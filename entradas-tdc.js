@@ -47,10 +47,12 @@
     emissao:['emissao','dtemissao','dataemissao','d1emissao','dtemissaonf'],
     usuario:['usuario','usr','usuarioinclusao','d1userlgi','usuariodigitacao','digitadopor','incluidopor','user','login','nomeusuario','usuarioinclusaoentrada','operador'],
     hora:['hora','horadigitacao','d1hora','horaentrada','horainclusao'],
+    tipoEntrada:['tipoentrada','tipodeentrada','d1tes','tes'],
+    cfop:['codfiscal','cfop','d1cf','codigofiscal'],
     validade:['dtvalid','datavalidade','validade','d1dtvalid','dtvalidade','dtvalidlote','validlote'],
   };
   const OBRIGATORIOS=['nota','produto','lote','qt','dtDigit'];
-  const ROTULO_CAMPO={nota:'Nota (documento)',serie:'Série',fornecedor:'Fornecedor',produto:'Produto',lote:'Lote',qt:'Quantidade',armazem:'Armazém',dtDigit:'Data da entrada (digitação)',emissao:'Emissão',usuario:'Usuário que lançou',hora:'Hora da entrada',validade:'Validade'};
+  const ROTULO_CAMPO={nota:'Nota (documento)',serie:'Série',fornecedor:'Fornecedor',produto:'Produto',lote:'Lote',qt:'Quantidade',armazem:'Armazém',dtDigit:'Data da entrada (digitação)',emissao:'Emissão',usuario:'Usuário que lançou',hora:'Hora da entrada',validade:'Validade',tipoEntrada:'Tipo de entrada (TES)',cfop:'CFOP (Cód. Fiscal)'};
   function pontuar(h,campo){const n=norm(h);if(!n)return 0;let best=0;for(const sin of CAMPOS[campo]){if(n===sin)best=Math.max(best,3);else if(sin.length>=4&&(n.startsWith(sin)||n.endsWith(sin)))best=Math.max(best,2);else if(sin.length>=5&&n.includes(sin))best=Math.max(best,1);}return best;}
   /* aoa = matriz de linhas (primeira linha com dados pode não ser o cabeçalho). Devolve {linhaCab, mapa, faltando, cabecalhos} */
   function detectarColunasSD1(aoa){
@@ -73,7 +75,8 @@
       const qt=num(g(row,mapa.qt));if(!qt)continue;
       out.push({nota,serie:String(g(row,mapa.serie)==null?'':g(row,mapa.serie)).trim(),fornecedor:String(g(row,mapa.fornecedor)==null?'':g(row,mapa.fornecedor)).trim(),
         produto,lote,qt,armazem:mapa.armazem===undefined?'':normArm(g(row,mapa.armazem)),dtDigit:paraISO(g(row,mapa.dtDigit)),emissao:paraISO(g(row,mapa.emissao)),
-        hora:paraHora(g(row,mapa.hora)),usuario:String(g(row,mapa.usuario)==null?'':g(row,mapa.usuario)).trim().toLowerCase(),validade:paraISO(g(row,mapa.validade))});
+        hora:paraHora(g(row,mapa.hora)),usuario:String(g(row,mapa.usuario)==null?'':g(row,mapa.usuario)).trim().toLowerCase(),validade:paraISO(g(row,mapa.validade)),
+        tipo:String(g(row,mapa.tipoEntrada)==null?'':g(row,mapa.tipoEntrada)).trim().replace(/\.0+$/,''),cfop:String(g(row,mapa.cfop)==null?'':g(row,mapa.cfop)).trim().replace(/\.0+$/,'')});
     }
     /* a mesma nota costuma ter o mesmo produto/lote em mais de um item: soma, para cada nota+produto+lote ser uma linha só */
     const agr=new Map();
@@ -82,14 +85,20 @@
   }
   /* cópia compacta pro servidor (só o necessário; usuários em tabela) */
   function compactarSD1(linhas){const us=[],um=new Map();const ix=v=>{if(!um.has(v)){um.set(v,us.length);us.push(v);}return um.get(v);};
-    return {usuarios:us,rows:linhas.map(l=>[l.nota,l.serie,l.fornecedor,l.produto,l.lote,l.qt,l.armazem,l.dtDigit,l.hora,ix(l.usuario),l.emissao,l.validade])};}
-  function expandirSD1(obj){const us=(obj&&obj.usuarios)||[];return ((obj&&obj.rows)||[]).map(r=>({nota:String(r[0]),serie:r[1]||'',fornecedor:r[2]||'',produto:r[3],lote:r[4],qt:Number(r[5])||0,armazem:r[6]||'',dtDigit:r[7]||'',hora:r[8]||'',usuario:us[r[9]]||'',emissao:r[10]||'',validade:r[11]||''}));}
+    return {usuarios:us,rows:linhas.map(l=>[l.nota,l.serie,l.fornecedor,l.produto,l.lote,l.qt,l.armazem,l.dtDigit,l.hora,ix(l.usuario),l.emissao,l.validade,l.tipo||'',l.cfop||''])};}
+  function expandirSD1(obj){const us=(obj&&obj.usuarios)||[];return ((obj&&obj.rows)||[]).map(r=>({nota:String(r[0]),serie:r[1]||'',fornecedor:r[2]||'',produto:r[3],lote:r[4],qt:Number(r[5])||0,armazem:r[6]||'',dtDigit:r[7]||'',hora:r[8]||'',usuario:us[r[9]]||'',emissao:r[10]||'',validade:r[11]||'',tipo:r[12]||'',cfop:r[13]||''}));}
   /* movimentação compacta do servidor (/api/movimentacao-analise) -> registros com dia ISO */
   function expandirSD3(obj){
     const us=(obj&&obj.usuarios)||[],cs=(obj&&obj.cfs)||[];
     return ((obj&&obj.rows)||[]).map(r=>({tp:Number(r[0]),produto:normProd(r[1]),qt:Number(r[2])||0,armazem:normArm(r[3]),doc:String(r[4]||'').trim(),lote:normLote(r[5]),usuario:us[r[6]]||'',dia:r[7]||'',cf:String(cs[r[8]]||'').trim().toUpperCase(),estornado:!!r[9]}));
   }
 
+  /* CFOP (Código Fiscal de Operações) é padrão nacional: os 3 últimos dígitos dizem a operação; o 1º diz de onde veio (1 = mesmo estado, 2 = outro estado, 3 = exterior). O TES (Tipo de Entrada) é cadastro da empresa, mas carrega um CFOP. */
+  const CFOP={'201':['Devolução de venda (produção própria)','devolucao'],'202':['Devolução de venda (mercadoria adquirida)','devolucao'],'203':['Devolução de venda (ZFM)','devolucao'],'204':['Devolução de venda (ZFM)','devolucao'],
+    '918':['Devolução de consignação','consig'],'919':['Devolução simbólica de consignação','consig'],'913':['Retorno de demonstração / mostruário','consig'],'914':['Retorno de mercadoria p/ exposição ou feira','consig'],'916':['Retorno de conserto ou reparo','consig'],'917':['Entrada em consignação','consig'],
+    '910':['Bonificação, doação ou brinde','bonif'],'152':['Transferência entre estabelecimentos','transf'],'151':['Transferência de produção','transf'],'949':['Outra entrada','outras'],'556':['Compra para uso e consumo','compra'],'102':['Compra para comercialização','compra'],'101':['Compra para industrialização','compra'],'403':['Compra p/ comercialização (ST)','compra']};
+  const GRUPOS={devolucao:'Devolução de venda',consig:'Consignação / demonstração',bonif:'Bonificação / doação',transf:'Transferência',compra:'Compra',outras:'Outras entradas'};
+  function infoCFOP(c){const s=String(c||'').trim();if(!/^\d{4}$/.test(s))return {rotulo:s?('CFOP '+s):'Sem CFOP',grupo:'outras'};const origem={'1':'','2':' (interestadual)','3':' (exterior)'}[s[0]]||'';const x=CFOP[s.slice(1)];return x?{rotulo:x[0]+origem,grupo:x[1]}:{rotulo:'CFOP '+s,grupo:'outras'};}
   /* ============================ motor de análise ============================ */
   const TRANSF=new Set(['RE4','DE4','RE3','DE3']);
   const TIPOS={
@@ -126,7 +135,7 @@
     const grupos=new Map();for(const l of linhas){const k=keyPL(l.produto,l.lote);if(!grupos.has(k))grupos.set(k,[]);grupos.get(k).push(l);}
     for(const arr of grupos.values())arr.sort((a,b)=>(a.dtDigit||'').localeCompare(b.dtDigit||'')||a._i-b._i);
     const dataMin=linhas.reduce((m,l)=>l.dtDigit&&(!m||l.dtDigit<m)?l.dtDigit:m,'');
-    const sd3De=mov.reduce((m,x)=>!m||x.dia<m?x.dia:m,'');
+    const sd3De=mov.reduce((m,x)=>!m||x.dia<m?x.dia:m,''),sd3Ate=mov.reduce((m,x)=>!m||x.dia>m?x.dia:m,'');
     const dono=(prod,lote,dia)=>{const arr=grupos.get(keyPL(prod,lote));if(!arr)return null;let ach=null;for(const l of arr){if(!l.dtDigit||l.dtDigit<=dia)ach=l;}if(!ach)return null;const d=diasEntre(ach.dtDigit,dia);return d!==null&&d>=0&&d<=JANELA?ach:null;};
     const ev=new Map();const evDe=l=>{if(!ev.has(l._i))ev.set(l._i,{manIn:[],manOut:[],subidas:[],trocas:[],outrosLotes:[]});return ev.get(l._i);};
     const usado=new Set();
@@ -199,15 +208,17 @@
       const subiu=subs.reduce((s,m)=>s+m.qt,0),ult=subs.length?subs[subs.length-1].dia:'',pri=subs.length?subs[0].dia:'';
       const fa=porChave.get(chaveL(l))||[],fs=fa.filter(f=>f.confianca==='forte');
       const semCobertura=!sd3De||l.dtDigit<sd3De;
-      const aguardando=!subs.length&&!fa.length&&!semCobertura;
+      const depoisSD3=Boolean(sd3Ate)&&l.dtDigit>sd3Ate;
+      const diasCobertos=sd3Ate?diasEntre(l.dtDigit,sd3Ate):null;
+      const aguardando=!subs.length&&!fa.length&&!semCobertura&&diasCobertos!==null&&diasCobertos>SEM_SUBIR;
       const diasSemSubir=aguardando?diasEntre(l.dtDigit,HOJE):null;
       const dtCorr=fa.flatMap(f=>f.movimentos.map(m=>m.dia)).sort().pop()||'';
       const ve=ev.get(l._i)||{manIn:[],manOut:[]},vistoE=new Set();
       const eventos=[...subs.map(info),...ve.manIn.map(info),...ve.manOut.map(info),...fa.flatMap(f=>f.movimentos)].filter(m=>{const k=[m.dia,m.doc,m.cf,m.dir,m.qt,m.lote,m.armazem].join('|');if(vistoE.has(k))return false;vistoE.add(k);return true;}).sort((a,b)=>a.dia.localeCompare(b.dia));
       const outrasNotas=(grupos.get(keyPL(l.produto,l.lote))||[]).filter(x=>x._i!==l._i&&(x.nota!==l.nota||x.serie!==l.serie)).map(x=>({nota:x.nota,serie:x.serie,dtDigit:x.dtDigit,qt:x.qt}));
-      return {nota:l.nota,serie:l.serie,fornecedor:l.fornecedor,produto:l.produto,lote:l.lote,qtNota:l.qt,dtEntrada:l.dtDigit,hora:l.hora,usuarioTDC:l.usuario,subiu,eventos,outrasNotas,
+      return {nota:l.nota,serie:l.serie,fornecedor:l.fornecedor,tipo:l.tipo||'',cfop:l.cfop||'',produto:l.produto,lote:l.lote,qtNota:l.qt,dtEntrada:l.dtDigit,hora:l.hora,usuarioTDC:l.usuario,subiu,eventos,outrasNotas,
         diasAteSubir:pri?diasEntre(l.dtDigit,pri):null,diasAteConcluir:ult&&subiu>=l.qt?diasEntre(l.dtDigit,ult):null,erroForte:fs.length>0,erro:fa.length>0,tipos:[...new Set(fa.map(f=>f.tipo))],
-        semCobertura,diasAteCorrigir:dtCorr?diasEntre(l.dtDigit,dtCorr):null,aguardandoSubir:aguardando&&diasSemSubir!==null&&diasSemSubir>SEM_SUBIR,diasSemSubir};
+        semCobertura,depoisSD3,diasAteCorrigir:dtCorr?diasEntre(l.dtDigit,dtCorr):null,aguardandoSubir:aguardando&&diasSemSubir!==null&&diasSemSubir>SEM_SUBIR,diasSemSubir};
     });
     /* "item fora da nota" não tem nota (por definição): vira candidato para a pessoa vincular à nota certa */
     const candidatos=findings.filter(f=>!f.nota);
@@ -217,7 +228,7 @@
       fin=findings.filter(f=>f.nota&&combinaNota(f,regs));itn=itens.filter(i=>combinaNota(i,regs));atv=ativos.filter(f=>f.nota&&combinaNota(f,regs));
     }
     return {findings:fin.sort((a,b)=>(b.dtEntrada||'').localeCompare(a.dtEntrada||'')||String(a.nota).localeCompare(String(b.nota))),itens:itn,candidatos,resumo:resumir(itn,atv,linhas),
-      cobertura:{sd1De:dataMin,sd1Ate:linhas.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),linhasSD1:linhas.length,movimentosSD3:noTDC.length,sd3De}};
+      cobertura:{sd1De:dataMin,sd1Ate:linhas.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),linhasSD1:linhas.length,movimentosSD3:noTDC.length,sd3De,sd3Ate}};
   }
   const media=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
   function resumir(itens,findings,linhas){
@@ -269,7 +280,7 @@
     return {resumo,porUsuario,detalhe:det,tempo};
   }
 
-  const api={normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,analisar,resumir,aplicarRevisoes,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
+  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,analisar,resumir,aplicarRevisoes,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.SC9EntradasTDC=api;
   if(root.document&&root.React&&typeof root.SC9EntradasTDCMount==='undefined'&&typeof require==='undefined'){/* a tela é carregada por entradas-tdc-ui.js */}

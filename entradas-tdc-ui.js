@@ -233,7 +233,7 @@
       try{
         const comp=M.compactarSD1(linhas.filter(l=>l.dtDigit));
         const r=await api('/api/entradas-tdc/sd1',{...comp,arquivo:arq&&arq.name,substituir});
-        setMsg({t:'ok',m:`SD1 salvo: ${r.novas} linhas novas (de ${r.recebidas} enviadas). Total guardado: ${r.total}.`});
+        setMsg({t:'ok',m:`SD1 atualizado: ${r.notasNovas} nota(s) nova(s) e ${r.notasAtualizadas} já existente(s) atualizada(s). Total guardado: ${fmtN(r.total)} linhas.`});
         onEnviado&&onEnviado();
       }catch(e){setMsg({t:'err',m:e.message});}finally{setBusy(false);}
     };
@@ -253,7 +253,7 @@
         !mapa.usuario&&h('div',{className:'sc9-tdc-msg info'},'Sem a coluna de usuário não dá pra mostrar o ranking por pessoa do TDC (o restante funciona).'),
         !mapa.hora&&h('div',{className:'sc9-tdc-msg info'},'Sem a coluna de hora, os tempos são medidos em dias.'),
         h('div',{className:'sc9-tdc-msg ok'},`${linhas.length} linhas de itens lidas${semData?` (${semData} sem data de entrada serão ignoradas)`:''}. Exemplo: `+(linhas[0]?`NF ${linhas[0].nota} · produto ${linhas[0].produto} · lote ${linhas[0].lote||'—'} · ${linhas[0].qt} pç · ${fmtD(linhas[0].dtDigit)}`:'—')),
-        h('label',{style:{display:'block',margin:'8px 0',fontSize:12.5}},h('input',{type:'checkbox',checked:substituir,onChange:e=>setSubstituir(e.target.checked)}),' Substituir tudo que já foi enviado (por padrão eu só acrescento o que for novo)'),
+        h('label',{style:{display:'block',margin:'8px 0',fontSize:12.5}},h('input',{type:'checkbox',checked:substituir,onChange:e=>setSubstituir(e.target.checked)}),' Substituir tudo que já foi enviado (por padrão acrescento as notas novas e atualizo as que vierem de novo; o resto fica)'),
         h('button',{className:'sc9-tdc-btn pri',disabled:busy||faltando.length>0||!linhas.length,onClick:enviar},busy?'Enviando…':'Enviar SD1 para o painel')));
   }
 
@@ -275,6 +275,7 @@
   const SITUACAO=(i)=>{
     if(i.erroForte)return {t:'Divergência: '+i.tipos.map(t=>M.TIPOS[t]?M.TIPOS[t].curto:t).join(', '),c:'bad'};
     if(i.erro)return {t:'Suspeita — conferir no físico',c:'warn'};
+    if(i.depoisSD3&&!i.subiu)return {t:'Entrou depois da última movimentação carregada — atualize o SD3',c:'warn'};
     if(i.semCobertura&&!i.subiu)return {t:'Antes do período da movimentação (SD3) — sem como medir',c:''};
     if(i.aguardandoSubir)return {t:'Parado no 59 há '+i.diasSemSubir+' dias',c:'warn'};
     if(i.subiu>=i.qtNota)return {t:'Subiu tudo'+(i.diasAteConcluir!=null?' em '+i.diasAteConcluir+' d':''),c:'ok'};
@@ -292,7 +293,7 @@
     const cands=(res.candidatos||[]).filter(c=>{const d=M.diasEntre(base.dtEntrada,c.dtEntrada);return d!==null&&d>=0&&d<=7&&!Object.keys(fObj).some(k=>k.startsWith('MANUAL|VINC|'+c.id+'|'));});
     return h('div',{className:'sc9-tdc-nota'},
       h('div',{className:'sc9-tdc-nota-h'},
-        h('div',null,h('h3',null,nome,' · ',forn(base.fornecedor)||'fornecedor não informado'),h('div',{className:'sc9-tdc-meta'},'Entrada no 59: ',h('b',null,fmtD(base.dtEntrada)),base.hora&&' às '+base.hora,base.usuarioTDC&&h('span',null,' · lançada por ',h('b',null,base.usuarioTDC)),' · ',itens.length,' item(ns) na nota')),
+        h('div',null,h('h3',null,nome,' · ',forn(base.fornecedor)||'fornecedor não informado'),h('div',{className:'sc9-tdc-meta'},base.cfop&&h('span',null,h('b',null,M.infoCFOP(base.cfop).rotulo),' (CFOP '+base.cfop+(base.tipo?' · TES '+base.tipo:'')+') · '),'Entrada no 59: ',h('b',null,fmtD(base.dtEntrada)),base.hora&&' às '+base.hora,base.usuarioTDC&&h('span',null,' · lançada por ',h('b',null,base.usuarioTDC)),' · ',itens.length,' item(ns) na nota')),
         h('div',{className:'sc9-tdc-act'},
           erros?h('span',{className:'sc9-tdc-pill bad'},erros+' item(ns) com divergência'):susp?h('span',{className:'sc9-tdc-pill warn'},susp+' suspeita(s)'):h('span',{className:'sc9-tdc-pill ok'},'Sem divergência no Protheus'),
           h('button',{className:'sc9-tdc-btn',onClick:()=>onFichas(reg)},'Fichas ('+fichas.length+')'),
@@ -309,7 +310,7 @@
         h('ul',null,cands.map(c=>h('li',{key:c.id,style:{display:'flex',gap:10,alignItems:'center',justifyContent:'space-between'}},h('span',null,fmtD(c.dtEntrada),' · produto ',h('b',null,c.produto),' · lote ',c.lote,' · ',h('b',null,fmtN(c.qtdFisica)),' pç',c.corrigidoPor&&c.corrigidoPor.length?' · por '+c.corrigidoPor.join(', '):''),
           h('button',{className:'sc9-tdc-btn',onClick:()=>onVincular(c,base,reg)},'Era desta nota'))))));
   }
-  function Notas({sd1All,sd1Raw,res,notasReg,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,onIrDados}){
+  function Notas({fresco,sd1All,sd1Raw,res,notasReg,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,onIrDados}){
     const [num,setNum]=useState(''),[serie,setSerie]=useState(''),[busca,setBusca]=useState(null),[busy,setBusy]=useState(false),[err,setErr]=useState('');
     const buscar=()=>{
       setErr('');const b=M.buscarNota(sd1All,num,serie);
@@ -322,6 +323,7 @@
     const itens=busca?busca.itens:[];
     const ambigua=busca&&busca.series.length>1&&!busca.serieEscolhida;
     return h('div',null,
+      fresco&&fresco.aviso&&h('div',{className:'sc9-tdc-msg info'},fresco.aviso),
       h('div',{className:'sc9-tdc-card',style:{marginBottom:16}},
         h('h2',null,'Qual nota você vai conferir?'),
         h('p',{className:'sc9-tdc-sub'},'Digite o número da nota de entrada. O painel puxa do SD1 só os itens dessa nota (nunca por produto ou lote soltos, para não misturar com outra nota) e confere o que subiu pro 01.'),
@@ -349,7 +351,7 @@
     const [erro,setErro]=useState('');
     const [de,setDe]=useState(''),[ate,setAte]=useState('');
     const [fStatus,setFStatus]=useState('pendente'),[fTipo,setFTipo]=useState(''),[busca,setBusca]=useState('');
-    const [manual,setManual]=useState(null);const [soConf,setSoConf]=useState(true);const [notasReg,setNotasReg]=useState({});const [escopo,setEscopo]=useState('notas');
+    const [manual,setManual]=useState(null);const [soConf,setSoConf]=useState(true);const [notasReg,setNotasReg]=useState({});const [grupoEnt,setGrupoEnt]=useState('');const [escopo,setEscopo]=useState('notas');
 
     const carregar=useCallback(async()=>{
       setErro('');
@@ -363,7 +365,8 @@
 
     const sd3=useMemo(()=>sd3Raw?M.expandirSD3(sd3Raw):[],[sd3Raw]);
     const sd1All=useMemo(()=>sd1Raw?M.expandirSD1(sd1Raw):[],[sd1Raw]);
-    const sd1=useMemo(()=>sd1All.filter(l=>(!de||l.dtDigit>=de)&&(!ate||l.dtDigit<=ate)),[sd1All,de,ate]);
+    const sd1=useMemo(()=>sd1All.filter(l=>(!de||l.dtDigit>=de)&&(!ate||l.dtDigit<=ate)&&(!grupoEnt||M.infoCFOP(l.cfop).grupo===grupoEnt)),[sd1All,de,ate,grupoEnt]);
+    const gruposPresentes=useMemo(()=>{const m={};for(const l of sd1All){const g=M.infoCFOP(l.cfop).grupo;m[g]=(m[g]||0)+1;}return Object.keys(m).map(g=>[g,m[g]]);},[sd1All]);
     const fObj=fichas.fichas||{};
     const ignorar=useMemo(()=>new Set(Object.keys(fObj).filter(k=>fObj[k].status==='descartado')),[fObj]);
     const regsLista=useMemo(()=>Object.values(notasReg),[notasReg]);
@@ -404,6 +407,15 @@
     const semUsuario=r&&r.porUsuario.length===1&&r.porUsuario[0].usuario==='(sem usuário)';
     const fazerSumula=()=>{try{baixarSumula(res||{resumo:{notas:0,notasErro:0,itens:0,itensErro:0,pecasNota:0,pecasDivergentes:0,porTipo:Object.fromEntries(M.TIPOS_MANUAL.map(t=>[t,{achados:0,pecas:0}])),porUsuario:[],diasMediaLimpos:null,diasMediaComErro:null},itens:[],cobertura:{sd1De:'',sd1Ate:''}},achados,soConf,(de||ate)?'Entradas de '+fmtD(de||(res&&res.cobertura.sd1De))+' a '+fmtD(ate||(res&&res.cobertura.sd1Ate)):'');}catch(e){setErro(e.message);}};
 
+    const sd1Ate=useMemo(()=>sd1All.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),[sd1All]);
+    const fresco=useMemo(()=>{
+      const av=[];
+      if(sd1Raw)av.push('SD1 com entradas até '+fmtD(sd1Ate)+' (enviado em '+fmtDH(sd1Raw.savedAt)+')');else av.push('SD1 ainda não enviado');
+      if(load.sd3==='ok')av.push('SD3 (movimentação) até '+fmtD(sd3Faixa[1])+' (enviado em '+fmtDH(sd3Raw.savedAt)+')');else if(load.sd3!=='carregando')av.push('SD3 ainda não enviado pelo administrador');
+      let alerta='';
+      if(sd1Ate&&sd3Faixa[1]&&M.diasEntre(sd3Faixa[1],sd1Ate)>1)alerta=' ⚠ A movimentação está atrasada em relação ao SD1: o que subiu depois de '+fmtD(sd3Faixa[1])+' ainda não aparece. Peça ao administrador para atualizar o SD3 (campo "Movimentação interna" na tela inicial).';
+      return {aviso:av.join(' · ')+'.'+alerta};
+    },[sd1Raw,sd1Ate,load.sd3,sd3Raw,sd3Faixa]);
     const semNotas=escopo==='notas'&&!regsLista.length;
     const semDados=!sd1.length||semNotas||!res;
     const Aba=(id,txt)=>h('button',{className:'sc9-tdc-tab',role:'tab','aria-selected':aba===id,onClick:()=>setAba(id)},txt);
@@ -417,11 +429,12 @@
       h('div',{className:'sc9-tdc-body'},
         erro&&h('div',{className:'sc9-tdc-msg err'},erro),
         manual&&h(FichaManual,{onClose:()=>setManual(null),onSave:salvarFicha,inicial:manual===true?null:manual,usuario:sessao&&(sessao.nome||sessao.usuario)}),
-        aba==='notas'&&h(Notas,{sd1All,sd1Raw,res:resAll,notasReg,fObj,achados:achadosAll,onAdd:addNota,onRemover:removerNota,onFichas:abrirFichasNota,onManual:setManual,onVincular:vincular,onIrDados:()=>setAba('dados')}),
+        aba==='notas'&&h(Notas,{fresco,sd1All,sd1Raw,res:resAll,notasReg,fObj,achados:achadosAll,onAdd:addNota,onRemover:removerNota,onFichas:abrirFichasNota,onManual:setManual,onVincular:vincular,onIrDados:()=>setAba('dados')}),
         aba==='painel'&&h('div',null,
           h('div',{className:'sc9-tdc-toolbar'},
             h('span',{className:'sc9-tdc-meta'},'Entradas de'),h('input',{type:'date',value:de,onChange:e=>setDe(e.target.value)}),h('span',{className:'sc9-tdc-meta'},'até'),h('input',{type:'date',value:ate,onChange:e=>setAte(e.target.value)}),
             (de||ate)&&h('button',{className:'sc9-tdc-btn',onClick:()=>{setDe('');setAte('');}},'Limpar período'),
+            gruposPresentes.length>1&&h('select',{value:grupoEnt,onChange:e=>setGrupoEnt(e.target.value),title:'Tipo de entrada (CFOP)'},h('option',{value:''},'Todos os tipos de entrada'),gruposPresentes.map(([g,n])=>h('option',{key:g,value:g},M.GRUPOS[g]+' ('+fmtN(n)+' linhas)'))),
             h('select',{value:escopo,onChange:e=>setEscopo(e.target.value),title:'O que entra nos números'},h('option',{value:'notas'},'Só as notas que informei'+(regsLista.length?' ('+regsLista.length+')':'')),h('option',{value:'todas'},'Todas as notas do SD1')),
             h('span',{style:{flex:1}}),
             h('label',{className:'sc9-tdc-meta'},h('input',{type:'checkbox',checked:soConf,onChange:e=>setSoConf(e.target.checked)}),' Súmula só com erros confirmados')),
@@ -468,6 +481,11 @@
           h('p',{className:'sc9-tdc-sub'},'Cada ficha é uma entrada que o Protheus indica ter subido diferente da nota. Confira no físico, preencha o que de fato veio e confirme ou descarte. Só o confirmado vai para a súmula.'),
           lista.length?h('div',{className:'sc9-tdc-cards'},lista.map(a=>h(Ficha,{key:a.id+'|'+a.status+'|'+((a.revisao&&a.revisao.em)||''),a,onSave:(x,f)=>salvarFicha(x.id,x.manual?{...x.revisao,...f,nota:x.nota,serie:x.serie,fornecedor:x.fornecedor,produto:x.produto,lote:x.lote,loteFisico:f.fisicoLote,qtdNota:x.qtdNota,qtdFisica:f.fisicoQtd,dtEntrada:x.dtEntrada,usuarioTDC:x.usuarioTDC}:f),onRemove:removerFicha}))):
             h('div',{className:'sc9-tdc-card sc9-tdc-empty'},semDados&&!achados.length?'Envie o SD1 na aba Dados para o Protheus começar a apontar divergências.':'Nenhuma ficha neste filtro.')),
+        aba==='dados'&&h('div',{className:'sc9-tdc-card',style:{marginBottom:16}},h('h2',null,'Rotina do dia'),
+          h('ol',{className:'sc9-tdc-sub',style:{paddingLeft:18,margin:0}},
+            h('li',null,h('b',null,'SD1'),' (notas de entrada): suba aqui, no quadro 1 abaixo. Pode subir a planilha inteira todo dia — notas novas entram, as que já existem são atualizadas e as antigas continuam guardadas.'),
+            h('li',null,h('b',null,'SD3'),' (movimentação 59 → 01): é a mesma que o painel já usa. O administrador sobe na ',h('b',null,'tela inicial, campo “Movimentação interna”'),'. Suba também todo dia: é ela que mostra o que já subiu pro 01.'),
+            h('li',null,h('b',null,'Notas'),': na aba Notas, digite o número da nota que vai conferir. A análise é refeita na hora com o SD1 e o SD3 que estiverem salvos.'))),
         aba==='dados'&&h('div',{className:'sc9-tdc-grid2'},
           h('div',{className:'sc9-tdc-card'},h('h2',null,'1 · SD1 — nota de entrada'),
             h('p',{className:'sc9-tdc-sub'},sd1Raw?`Guardado: ${fmtN(sd1Raw.total)} linhas · enviado por ${sd1Raw.por||'—'} em ${fmtDH(sd1Raw.savedAt)}${sd1Raw.arquivo?' · '+sd1Raw.arquivo:''}.`:'Nenhum SD1 enviado ainda. Exporte do Protheus a tabela SD1 (itens da nota de entrada) do armazém 59 com: documento, produto, lote, quantidade, data de digitação e, se possível, usuário e hora.'),
