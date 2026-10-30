@@ -1864,7 +1864,7 @@ async function handleApi(req, res, pathname) {
 
   // Staging never changes live balances. Apply commits one complete position.
   if (pathname === '/api/cadastro-saldos' && ['GET','POST'].includes(method)) {
-    const sess=await exigir(req,res,method==='GET'?['admin','operador']:['admin'],'cadastro');if(!sess)return;
+    const sess=await exigir(req,res,['admin','operador'],'cadastro');if(!sess)return;
     try {
       if(method==='GET')return await sendCachedSnapshot(req,res,await stockPositionLoad());
       const body=await readJsonBody(req),owner=String(sess.usuario||sess.user||'admin');
