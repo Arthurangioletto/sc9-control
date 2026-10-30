@@ -342,3 +342,11 @@ O card Atrasados volta aos indicadores principais com o critério anterior: stat
 Ao selecionar Atrasados, a lista aparece na própria página, abaixo dos indicadores, sem abrir o painel lateral. A tabela original mantém a coluna de dias desde a liberação até o corte, ordenação, paginação de 50 pedidos, exportação da lista completa e acesso à timeline. Trocar o recorte atualiza a lista e reinicia sua paginação. O botão de recolher devolve o foco ao card. As demais consultas do resumo mantêm seu comportamento.
 
 Validação final: 58 testes de resumo, produtividade e telas já evoluídas. Conferência local adicional com 55 pedidos fictícios de atraso: contagem, segunda página, quantidades fracionadas, filtro de armazém reiniciando a lista e celular de 390 px sem extravasamento da página ou abertura de painel lateral.
+
+## Listas dos indicadores na própria página
+
+Pedidos no recorte, Atrasados, Em aberto, Enviados, Aguardando faturamento, Confirmar despacho e o comparativo por armazém passam a usar uma única lista na própria página. Selecionar outro indicador substitui a lista; selecionar novamente o indicador ativo ou Recolher lista fecha a consulta. O foco volta ao controle de origem ao recolher. Peças liberadas mantém o atalho direto para Produtos · Curva ABC.
+
+A tabela original mostra até 50 pedidos por página, conservando ordenação, exportação da lista completa, quantidades fracionadas e acesso à timeline. Atrasados mantém sua coluna de dias de atraso e os critérios anteriores. Os demais indicadores exibem o status. A paginação reinicia ao trocar de indicador, armazém, corte, dia, status, produto ou quantidade de resultados, evitando páginas vazias após reduzir o recorte. Não há mudança de classificação nem gravação de dados.
+
+Validação: 58 testes das telas já evoluídas. Conferência local com dados fictícios: limite de 50 linhas, segunda página, troca de indicador reiniciando a lista, recorte vazio, filas e comparativo sem painel lateral, atalho direto de peças e celular de 390 px com controles ajustados e rolagem da tabela sem alargar a página.
