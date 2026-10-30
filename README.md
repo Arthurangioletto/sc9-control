@@ -385,3 +385,10 @@ Validação final desta etapa: suíte completa com 166 testes, incluindo as veri
 ## Recuperação dos saldos SB8
 
 Administradores podem consultar os backups em Cadastro de Lotes → Importações → Recuperar posição anterior. Conferir backup mostra a data e os registros com saldo positivo antes da restauração. A restauração exige a versão da posição conferida, rejeita atualizações concorrentes, salva uma cópia de segurança da posição atual e invalida importações pendentes. Não modifica a base global, achados ou observações. Um backup anterior à primeira posição separada retorna à leitura dos achados preservados. A importação seguinte continua preservando os registros ausentes dessa base anterior.
+
+
+## Informações do pedido ao selecionar a linha
+
+A timeline original do pedido usa a consulta na própria página, com rolagem e foco automáticos. Antes, no Resumo, as informações apareciam abaixo da lista e podiam ficar fora da tela. O número do pedido passa a ser um botão acessível por teclado; o restante da linha continua aceitando clique. Voltar à lista de pedidos ou Escape fecha os detalhes e restaura o foco quando o controle de origem permanece disponível. A lista do Resumo conserva sua seleção, ordenação e página. A ficha lateral do produto permanece como exceção do Cadastro de Lotes.
+
+Validação: testes da tabela original e da integração da timeline, foco, Escape e preservação da paginação. Conferência local com 87 pedidos fictícios atrasados: abertura na segunda página, conteúdo original visível, retorno à segunda página e operação por Enter/Escape. Nenhuma base ou regra de classificação foi alterada.
