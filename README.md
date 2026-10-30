@@ -359,6 +359,12 @@ A consulta rola até a lista e recebe foco, sem bloquear a rolagem ou prender a 
 
 Validação: 61 testes das telas já evoluídas, incluindo o comportamento original da ficha lateral do produto e a verificação de que nenhum outro módulo usa esse painel. Conferência local com dados fictícios em Fluxo e Expedição: consultas sem dialog aberto, 50 linhas, segunda página, troca de indicador retornando à primeira página, fechamento por Escape e celular de 390 px sem extravasamento horizontal da página.
 
+## Importação do SB8 pelo perfil Cadastro
+
+Em Cadastro de Lotes → Importações, Atualizar saldo atual do SB8 fica disponível para administradores e usuários com perfil Cadastro, inclusive quem combina Saída e Cadastro. A posição atualizada é compartilhada entre os usuários autorizados. A liberação não concede acesso à administração nem às ações exclusivas de administrador.
+
+O fluxo mantém a prévia obrigatória, backup, proteção contra atualizações concorrentes e isolamento da importação por usuário. Os achados, marcações e observações anteriores permanecem preservados; a atualização atua na posição de saldos utilizada pelos vencimentos.
+
 ## Revisão conjunta das análises e administração
 
 Performance, Horários, Clientes, Produtos · Curva ABC e Tendências compartilham o contexto de armazém, corte de status, dia de liberação, status e produto herdado. O corte classifica o status e não limita automaticamente o período. Horários, clientes e tendências passam a usar a mesma lista filtrada dos indicadores; antes parte dessas análises utilizava somente o armazém. O histórico consolidado de tendência continua disponível no geral sem filtros adicionais; ao aplicar dia, status ou produto, utiliza apenas o recorte atual, evitando misturar o histórico global com uma seleção específica.

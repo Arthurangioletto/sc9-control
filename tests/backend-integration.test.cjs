@@ -84,6 +84,36 @@ await check('Saldo atual: prévia, commit atômico, isolamento de histórico, ba
  const backup=JSON.parse(fs.readFileSync(path.join(dir,'data',applied.data.backup),'utf8'));assert.equal(backup.position.rows.find(r=>r.produto==='STOCK').saldo,12);
  assert.doesNotMatch(String((await req('/'+applied.data.backup,{cookie:admin})).data),/STOCK-LOT/);
 });
+await check('Importação SB8 exige perfil Cadastro e não amplia os demais acessos',async()=>{
+ for(const usuario of ['audit-control','audit-geral','audit-saida','audit-recebimento','audit-despacho','audit-alteracoes']){
+  const login=await req('/api/login',{body:{usuario,password:'audit-local-123'}});assert.equal(login.status,200);
+  assert.equal((await req('/api/cadastro-saldos',{cookie:login.cookie})).status,403);
+  assert.equal((await req('/api/cadastro-saldos',{cookie:login.cookie,body:{acao:'iniciar',mode:'complete'}})).status,403);
+ }
+ for(const usuario of ['audit-cadastro','audit-adriano']){
+  const login=await req('/api/login',{body:{usuario,password:'audit-local-123'}});assert.equal(login.status,200);
+  assert.equal((await req('/api/cadastro-saldos',{cookie:login.cookie})).status,200);
+  assert.equal((await req('/api/usuarios',{cookie:login.cookie})).status,403);
+  assert.equal((await req('/api/cadastro-achados',{cookie:login.cookie,body:{acao:'apagarTudo'}})).status,403);
+  assert.equal((await req('/api/cadastro-achados',{cookie:login.cookie,body:{acao:'completarFiliais',preview:true,entries:[]}})).status,403);
+ }
+});
+await check('Cadastro e Saída com Cadastro importam SB8 com prévia, backup e isolamento por usuário',async()=>{
+ const cookies=[];for(const usuario of ['audit-cadastro','audit-adriano'])cookies.push((await req('/api/login',{body:{usuario,password:'audit-local-123'}})).cookie);
+ const findings=(await req('/api/cadastro-achados',{cookie:admin})).data,notesFile=path.join(dir,'data','cadastro-lembretes.json'),notes=fs.readFileSync(notesFile,'utf8');
+ for(let index=0;index<cookies.length;index++){
+  const cookie=cookies[index],other=cookies[1-index],produto='IMPORTADOR-'+index;
+  const begin=await req('/api/cadastro-saldos',{cookie,body:{acao:'iniciar',mode:'complete',name:'SB8-operador.xlsx'}});assert.equal(begin.status,200);const id=begin.data.id;
+  for(const outsider of [other,admin])for(const acao of ['lote','prever','aplicar','cancelar'])assert.equal((await req('/api/cadastro-saldos',{cookie:outsider,body:{acao,id,sequence:0,rows:[{}]}})).status,409);
+  assert.equal((await req('/api/cadastro-saldos',{cookie,body:{acao:'lote',id,sequence:0,rows:[{filial:'01',armazem:'RJ',produto,lote:'LOTE-'+index,saldo:2.125,dtValidade:'2027-01-01'}]}})).status,200);
+  assert.equal((await req('/api/cadastro-saldos',{cookie,body:{acao:'aplicar',id}})).status,400);
+  assert.equal((await req('/api/cadastro-saldos',{cookie,body:{acao:'prever',id}})).status,200);
+  assert(!(await req('/api/cadastro-saldos',{cookie:other})).data.rows.some(row=>row.produto===produto));
+  const applied=await req('/api/cadastro-saldos',{cookie,body:{acao:'aplicar',id}});assert.equal(applied.status,200);assert(applied.data.backup);assert(fs.existsSync(path.join(dir,'data',applied.data.backup)));
+  assert.equal((await req('/api/cadastro-saldos',{cookie:other})).data.rows.find(row=>row.produto===produto).saldo,2.125);
+ }
+ assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data,findings);assert.equal(fs.readFileSync(notesFile,'utf8'),notes);
+});
 await check('Administrador pode apagar todos os achados',async()=>{assert.equal((await req('/api/cadastro-achados',{cookie:admin,body:{acao:'apagarTudo'}})).status,200);assert.deepEqual((await req('/api/cadastro-achados',{cookie:admin})).data.achados,[]);});
 await check('Sessão é revogada ao desativar o operador',async()=>{assert.equal((await req('/api/usuarios',{cookie:admin,body:{acao:'desativar',usuario:'audit-control'}})).status,200);assert.equal((await req('/api/controle',{cookie:operator})).status,401);});
 tests.forEach(result=>console.log((result.ok?'PASS ':'FAIL ')+result.name+(result.error?' '+result.error:'')));const failed=tests.filter(result=>!result.ok);await new Promise(resolve=>server.close(resolve));process.exit(failed.length?1:0);
