@@ -10,7 +10,15 @@ const crypto = require("crypto");
 const util = require("util");
 
 const PORT = process.env.PORT || 3000;
-const APP_PASSWORD = process.env.APP_PASSWORD || ""; // vazio = sem senha (não recomendado em produção)
+const APP_PASSWORD = process.env.APP_PASSWORD || "";
+// SEGURANÇA: sem APP_PASSWORD o sistema ficava ABERTO (todo mundo virava administrador). Em produção
+// (Render define RENDER; NODE_ENV=production também conta) agora ele FECHA em vez de abrir: ninguém
+// entra até a variável ser configurada. Pra testar localmente sem senha, basta não estar em produção;
+// pra forçar o modo aberto de propósito: ALLOW_NO_PASSWORD=1.
+const EM_PRODUCAO = process.env.NODE_ENV === "production" || Boolean(process.env.RENDER);
+const SEM_SENHA_ABERTO = !APP_PASSWORD && (!EM_PRODUCAO || process.env.ALLOW_NO_PASSWORD === "1");
+const LEGACY_AUTH = process.env.LEGACY_AUTH !== "0"; // aceita o cabeçalho x-app-password / cookie antigo (LEGACY_AUTH=0 desliga)
+const TRUST_PROXY_HOPS = Math.max(0, Number(process.env.TRUST_PROXY_HOPS) || 0); // 0 = comportamento antigo; N = usa o N-ésimo IP contado do FIM do X-Forwarded-For
 const COOKIE_NAME = "sc9_auth";
 const PUBLIC_DIR = __dirname; // tudo solto na raiz do projeto agora — sem pasta "public"
 // só estes dois arquivos podem ser servidos por HTTP — evita expor server.js/storage.js
@@ -127,7 +135,10 @@ function parseCookies(header) {
   for (const part of header.split(";")) {
     const idx = part.indexOf("=");
     if (idx === -1) continue;
-    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    const v = part.slice(idx + 1).trim();
+    // cookie com "%" inválido não pode derrubar a requisição com erro 500
+    let dec = v; try { dec = decodeURIComponent(v); } catch { /* mantém o valor cru; não vai bater com nenhuma assinatura */ }
+    out[part.slice(0, idx).trim()] = dec;
   }
   return out;
 }
@@ -146,13 +157,18 @@ if (!process.env.SESSION_SECRET) {
     "(derruba sessões abertas). Configure SESSION_SECRET no Render (Environment) com um valor aleatório fixo pra evitar isso " +
     "e pra não depender de nada derivado da senha do administrador.");
 }
-const TTL_ADMIN_S = 60 * 60 * 24 * 30;
+const TTL_ADMIN_S = Math.round((Number(process.env.SESSION_TTL_ADMIN_H) || 24 * 30) * 3600); // padrão 30 dias (TV/painel fixo); reduza com SESSION_TTL_ADMIN_H
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
 const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
+// Impressão digital da senha do administrador dentro do token: trocar APP_PASSWORD derruba as sessões de admin.
+const SENHA_FP = crypto.createHmac("sha256", SESSION_SECRET).update("fp|" + APP_PASSWORD).digest("hex").slice(0, 16);
+// Sessões encerradas (logout) — o token é sem estado, então a lista de "revogados" fica aqui (em memória).
+const tokensRevogados = new Map(); // jti -> exp (segundos)
+setInterval(() => { const agora = Date.now() / 1000; for (const [j, e] of tokensRevogados) if (e < agora) tokensRevogados.delete(j); }, 10 * 60 * 1000).unref();
 function assinarToken(payload) {
   const b = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto.createHmac("sha256", SESSION_SECRET).update(b).digest("base64url");
@@ -166,6 +182,8 @@ function verificarToken(token) {
   try {
     const p = JSON.parse(Buffer.from(b, "base64url").toString("utf8"));
     if (!p || typeof p.exp !== "number" || p.exp * 1000 < Date.now()) return null;
+    if (typeof p.jti !== "string" || tokensRevogados.has(p.jti)) return null; // sem id (token antigo) ou já encerrado
+    if (p.r === "admin" && p.fp !== SENHA_FP) return null; // senha do administrador mudou
     return p;
   } catch { return null; }
 }
@@ -220,7 +238,7 @@ const usuarioPublico = (u) => ({ usuario: u.usuario, nome: u.nome, ativo: u.ativ
 class ErroHttp extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 
 async function getSession(req) {
-  if (!APP_PASSWORD) return ADMIN(); // sem senha configurada: todo mundo é administrador
+  if (!APP_PASSWORD) return SEM_SENHA_ABERTO ? ADMIN() : null; // sem senha: só abre fora de produção (ou com ALLOW_NO_PASSWORD=1)
   const cookies = parseCookies(req.headers.cookie);
   const p = verificarToken(cookies[SESSION_COOKIE]);
   if (p) {
@@ -230,10 +248,16 @@ async function getSession(req) {
     if (u && u.ativo !== false && (u.sv || 0) === (p.sv || 0)) return { usuario: u.usuario, nome: u.nome, role: "operador", perfis: perfisDe(u) };
     return null;
   }
-  // compatibilidade: cookie antigo (senha do administrador) e cabeçalho x-app-password
-  if (cookies["sc9_auth"] && timingSafeEqualStr(cookies["sc9_auth"], APP_PASSWORD)) return ADMIN();
-  const header = req.headers["x-app-password"];
-  if (header && timingSafeEqualStr(header, APP_PASSWORD)) return ADMIN();
+  // compatibilidade: cookie antigo (senha do administrador) e cabeçalho x-app-password.
+  // Agora com TRAVA: depois de 30 chutes errados em 10 min por esse caminho, ele fica fechado por 10 min
+  // (antes dava pra tentar senhas sem limite). LEGACY_AUTH=0 desliga de vez.
+  if (!LEGACY_AUTH) return null;
+  for (const [chave, valor] of [["legado-c", cookies["sc9_auth"]], ["legado-h", req.headers["x-app-password"]]]) {
+    if (!valor) continue;
+    if (bloqueadoN(chave, 30)) return null;
+    if (timingSafeEqualStr(valor, APP_PASSWORD)) return ADMIN();
+    registraFalha(chave);
+  }
   return null;
 }
 async function exigir(req, res, papeis, perfil) {
@@ -243,11 +267,20 @@ async function exigir(req, res, papeis, perfil) {
   if (perfil && sess.role !== "admin" && !(sess.perfis || []).includes(perfil)) { sendJson(res, 403, { error: "seu acesso não permite isso" }); return null; }
   return sess;
 }
+// operador precisa ter PELO MENOS UM dos perfis da lista (admin sempre passa) — usado onde várias telas compartilham a mesma rota
+async function exigirPerfis(req, res, perfis) {
+  const sess = await getSession(req);
+  if (!sess) { sendJson(res, 401, { error: "não autenticado" }); return null; }
+  if (sess.role !== "admin" && !(sess.perfis || []).some((p) => perfis.includes(p))) { sendJson(res, 403, { error: "seu acesso não permite isso" }); return null; }
+  return sess;
+}
+// mesmas telas que o painel já mostra a aba "Alteração de Pedido" (geral, saída, controle 02→01, revisão de alterações)
+const PERFIS_ALTERACAO = ["geral", "saida", "controle0201", "alteracoes"];
 function colocarCookie(req, res, sess, sv) {
   const https = req.headers["x-forwarded-proto"] === "https" || process.env.NODE_ENV === "production" || req.socket.encrypted;
   const secure = https ? "; Secure" : "";
   const ttl = sess.role === "admin" ? TTL_ADMIN_S : TTL_OPERADOR_S;
-  const token = assinarToken({ u: sess.usuario, r: sess.role, sv: sv || 0, exp: Math.floor(Date.now() / 1000) + ttl });
+  const token = assinarToken({ u: sess.usuario, r: sess.role, sv: sv || 0, jti: crypto.randomBytes(12).toString("hex"), fp: sess.role === "admin" ? SENHA_FP : undefined, exp: Math.floor(Date.now() / 1000) + ttl });
   res.setHeader("Set-Cookie", [
     `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Max-Age=${ttl}${secure}; Path=/`,
     `sc9_auth=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/`, // apaga o cookie antigo que guardava a senha
@@ -255,29 +288,51 @@ function colocarCookie(req, res, sess, sv) {
 }
 // trava de tentativas erradas (por IP + usuário)
 const falhas = new Map();
-const ipDe = (req) => String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-const bloqueado = (k) => { const f = falhas.get(k); return Boolean(f && f.n >= 8 && Date.now() - f.t < 10 * 60 * 1000); };
+// IP do cliente. Por padrão, o comportamento antigo (1º do X-Forwarded-For). Esse cabeçalho pode ser FALSIFICADO por
+// quem faz a requisição, então nada de segurança depende só dele: o bloqueio por conta (abaixo) vale sem IP.
+// Quando souber quantos proxies a Render coloca na frente, configure TRUST_PROXY_HOPS (ex.: 1) pra usar o IP
+// que o PROXY anotou (contado do fim da lista), que o cliente não consegue forjar.
+const ipDe = (req) => {
+  const xff = String(req.headers["x-forwarded-for"] || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!xff.length) return String(req.socket.remoteAddress || "");
+  if (TRUST_PROXY_HOPS > 0) return xff[Math.max(0, xff.length - TRUST_PROXY_HOPS)];
+  return xff[0];
+};
+const bloqueadoN = (k, max) => { const f = falhas.get(k); return Boolean(f && f.n >= max && Date.now() - f.t < 10 * 60 * 1000); };
+const bloqueado = (k) => bloqueadoN(k, 8);
+setInterval(() => { const agora = Date.now(); for (const [k, f] of falhas) if (agora - f.t > 15 * 60 * 1000) falhas.delete(k); }, 5 * 60 * 1000).unref();
 const registraFalha = (k) => { const f = falhas.get(k); const agora = Date.now(); falhas.set(k, !f || agora - f.t > 10 * 60 * 1000 ? { n: 1, t: agora } : { n: f.n + 1, t: f.t }); };
 
+// Limite do corpo POR ROTA (em bytes, medido na rede — comprimido ou não). Só os envios de planilha/snapshot
+// precisam de corpo grande; todo o resto (login, bipe, alteração...) cabe em 256 KB. O corpo DESCOMPRIMIDO
+// tem teto de 8x o limite da rota — antes não havia teto nenhum (uma "bomba gzip" de poucos KB virava GBs na memória).
+const LIMITE_CORPO_PADRAO = 1024 * 1024;
+const LIMITES_CORPO = {
+  "/api/save": MAX_BODY_BYTES, "/api/cadastro-achados": MAX_BODY_BYTES, "/api/movimentacao-analise": MAX_BODY_BYTES,
+  "/api/recebimento/entrega": 10 * 1024 * 1024, "/api/controle": 8 * 1024 * 1024, "/api/controle-sd3": 4 * 1024 * 1024, "/api/cadastro-saldos": 8 * 1024 * 1024,
+};
+const limiteDaRota = (pathname) => LIMITES_CORPO[pathname] || LIMITE_CORPO_PADRAO;
 function readJsonBody(req) {
+  const limite = req.limiteCorpo || LIMITE_CORPO_PADRAO;
   return new Promise((resolve, reject) => {
-    let size = 0;
+    let size = 0, estourou = false;
     const chunks = [];
     req.on("data", (chunk) => {
+      if (estourou) return;
       size += chunk.length;
-      // o limite vale sobre o tamanho COMPRIMIDO recebido pela rede — gzip já
-      // tolera um JSON bem maior do que isso antes de descomprimir.
-      if (size > MAX_BODY_BYTES) { reject(new Error("corpo da requisição excede o limite")); req.destroy(); return; }
+      // o limite vale sobre o tamanho recebido pela rede (comprimido, se vier em gzip)
+      if (size > limite) { estourou = true; chunks.length = 0; reject(new Error("corpo da requisição excede o limite")); req.destroy(); return; }
       chunks.push(chunk);
     });
     req.on("end", () => {
+      if (estourou) return;
       if (!chunks.length) return resolve(null);
       const buf = Buffer.concat(chunks);
       const ehGzip = (req.headers["content-encoding"] || "").toLowerCase().includes("gzip");
-      try {
-        const texto = ehGzip ? zlib.gunzipSync(buf).toString("utf8") : buf.toString("utf8");
-        resolve(JSON.parse(texto));
-      } catch (e) { reject(new Error(ehGzip ? "não consegui descomprimir o corpo da requisição" : "JSON inválido no corpo da requisição")); }
+      let texto;
+      try { texto = ehGzip ? zlib.gunzipSync(buf, { maxOutputLength: limite * 8 }).toString("utf8") : buf.toString("utf8"); }
+      catch (e) { return reject(new Error(e && e.code === "ERR_BUFFER_TOO_LARGE" ? "corpo da requisição excede o limite (descomprimido)" : "não consegui descomprimir o corpo da requisição")); }
+      try { resolve(JSON.parse(texto)); } catch { reject(new Error("JSON inválido no corpo da requisição")); }
     });
     req.on("error", reject);
   });
@@ -1096,9 +1151,17 @@ setInterval(() => { // limpeza periódica, senão o mapa cresce pra sempre
 
 async function handleApi(req, res, pathname) {
   const method = req.method;
+  res.setHeader("Cache-Control", "no-store"); // nada da API pode ficar guardado em cache do navegador/proxy
+  req.limiteCorpo = limiteDaRota(pathname);
 
   if (pathname !== "/api/health" && rateLimitExcedido(ipDe(req))) {
     return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
+  }
+
+  // corpo declarado maior que o limite da rota: recusa SEM ler (e sem login — vale pra todas as rotas)
+  if (method === "POST" && Number(req.headers["content-length"]) > req.limiteCorpo) {
+    res.setHeader("Connection", "close");
+    return sendJson(res, 413, { error: "corpo da requisição excede o limite" });
   }
 
   if (method === "POST" && req.headers["x-sc9-app"] !== "1") {
@@ -1111,12 +1174,13 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/health" && method === "GET") {
-    return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v6", time: new Date().toISOString() });
+    return sendJson(res, 200, { ok: true, time: new Date().toISOString() }); // público: só "está no ar" (sem detalhes de infraestrutura)
   }
 
   // DIAGNÓSTICO TEMPORÁRIO: mostra exatamente o que está guardado no servidor
   // pra um pedido específico, em cada etapa do caminho — só administrador.
-  if (pathname === "/api/debug-pedido" && method === "GET") {
+  const DEBUG_ON = process.env.ENABLE_DEBUG === "1"; // diagnósticos ficam DESLIGADOS por padrão (ENABLE_DEBUG=1 liga)
+  if (pathname === "/api/debug-pedido" && method === "GET" && DEBUG_ON) {
     if (!(await exigir(req, res, ["admin"]))) return;
     const ped = new URL(req.url, "http://localhost").searchParams.get("pedido");
     if (!ped) return sendJson(res, 400, { error: "informe ?pedido=NUMERO" });
@@ -1134,7 +1198,7 @@ async function handleApi(req, res, pathname) {
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro no diagnóstico")); }
   }
 
-  if (pathname === "/api/debug-fs" && method === "GET") {
+  if (pathname === "/api/debug-fs" && method === "GET" && DEBUG_ON) {
     if (!(await exigir(req, res, ["admin"]))) return;
     let listing = [];
     try { listing = fs.readdirSync(PUBLIC_DIR); } catch (e) { listing = ["ERRO ao listar: " + e.message]; }
@@ -1143,17 +1207,22 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/session" && method === "GET") {
     const s = await getSession(req);
-    return sendJson(res, 200, { needsPassword: Boolean(APP_PASSWORD), authed: Boolean(s), role: s ? s.role : null, usuario: s ? s.usuario : "", nome: s ? s.nome : "", perfis: s ? (s.perfis || []) : [] });
+    return sendJson(res, 200, { needsPassword: !SEM_SENHA_ABERTO, authed: Boolean(s), role: s ? s.role : null, usuario: s ? s.usuario : "", nome: s ? s.nome : "", perfis: s ? (s.perfis || []) : [] });
   }
 
   if (pathname === "/api/login" && method === "POST") {
     let body;
     try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
-    if (!APP_PASSWORD) return sendJson(res, 200, { ok: true, role: "admin", usuario: "admin", nome: "Administrador", note: "sem senha configurada" });
-    const usuario = String((body && body.usuario) || "").trim().toLowerCase();
-    const password = String((body && body.password) || "");
+    if (!APP_PASSWORD) {
+      if (SEM_SENHA_ABERTO) return sendJson(res, 200, { ok: true, role: "admin", usuario: "admin", nome: "Administrador", note: "sem senha configurada" });
+      return sendJson(res, 503, { ok: false, error: "Servidor sem senha de administrador (APP_PASSWORD) configurada. Configure no Render e reinicie." });
+    }
+    const usuario = String((body && body.usuario) || "").trim().toLowerCase().slice(0, 60);
+    const password = String((body && body.password) || "").slice(0, 200);
     const chave = `${ipDe(req)}|${usuario || "admin"}`;
-    if (bloqueado(chave)) return sendJson(res, 429, { ok: false, error: "Muitas tentativas erradas. Aguarde alguns minutos e tente de novo." });
+    const chaveConta = `conta|${usuario || "admin"}`; // vale POR CONTA, de qualquer IP: girar o IP não escapa dele
+    const logUsuario = (usuario || "admin").replace(/[^a-z0-9._-]/g, "?");
+    if (bloqueado(chave) || bloqueadoN(chaveConta, 30)) { console.warn(`[login] BLOQUEADO usuario=${logUsuario} ip=${ipDe(req)}`); return sendJson(res, 429, { ok: false, error: "Muitas tentativas erradas. Aguarde alguns minutos e tente de novo." }); }
     let sess = null, sv = 0;
     if (password) {
       if (!usuario || usuario === "admin") {
@@ -1164,13 +1233,15 @@ async function handleApi(req, res, pathname) {
         else await hashSenha(password, "00".repeat(16)); // gasta o mesmo tempo, não revela se o usuário existe
       }
     }
-    if (!sess) { registraFalha(chave); return sendJson(res, 401, { ok: false, error: "Usuário ou senha incorretos." }); }
-    falhas.delete(chave);
+    if (!sess) { registraFalha(chave); registraFalha(chaveConta); console.warn(`[login] falha usuario=${logUsuario} ip=${ipDe(req)}`); return sendJson(res, 401, { ok: false, error: "Usuário ou senha incorretos." }); }
+    falhas.delete(chave); falhas.delete(chaveConta);
+    console.log(`[login] ok usuario=${logUsuario} ip=${ipDe(req)}`);
     colocarCookie(req, res, sess, sv);
     return sendJson(res, 200, { ok: true, role: sess.role, usuario: sess.usuario, nome: sess.nome, perfis: sess.perfis || [] });
   }
 
   if (pathname === "/api/logout" && method === "POST") {
+    try { const tk = verificarToken(parseCookies(req.headers.cookie)[SESSION_COOKIE]); if (tk) tokensRevogados.set(tk.jti, tk.exp); } catch { /* sem token válido: nada a revogar */ }
     res.setHeader("Set-Cookie", [`${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/`, `sc9_auth=; HttpOnly; SameSite=Lax; Max-Age=0; Path=/`]);
     return sendJson(res, 200, { ok: true });
   }
@@ -1192,7 +1263,8 @@ async function handleApi(req, res, pathname) {
       const lista = await alterarUsuarios(async (users) => {
         const idx = users.findIndex((u) => u.usuario === login);
         const novaSenha = async (u) => {
-          if (senha.length < 6 || senha.length > 100) throw new ErroHttp(400, "A senha precisa ter pelo menos 6 caracteres.");
+          if (senha.length < 8 || senha.length > 100) throw new ErroHttp(400, "A senha precisa ter pelo menos 8 caracteres.");
+          if (/^(.)\1+$/.test(senha) || senha.toLowerCase() === login || ["12345678", "123456789", "1234567890", "password", "senha123", "senha1234", "qwertyui", "abcd1234", "11111111"].includes(senha.toLowerCase())) throw new ErroHttp(400, "Escolha uma senha menos óbvia (não use sequências, repetições ou o próprio usuário).");
           u.salt = crypto.randomBytes(16).toString("hex");
           u.hash = await hashSenha(senha, u.salt);
           u.sv = (u.sv || 0) + 1; // derruba sessões abertas com a senha antiga
@@ -1440,7 +1512,7 @@ async function handleApi(req, res, pathname) {
         const atual = await loadControle();
         let lista = (atual && Array.isArray(atual.entries)) ? atual.entries : [];
         const agora = new Date().toISOString();
-        if (!lista.length && Array.isArray(body.seedIfEmpty)) lista = body.seedIfEmpty.filter((x) => x && typeof x.id === "string");
+        if (!lista.length && Array.isArray(body.seedIfEmpty)) lista = body.seedIfEmpty.slice(0, 20000).filter((x) => x && typeof x.id === "string" && JSON.stringify(x).length <= 20000);
         if (body.reset === true) lista = [];
         if (Array.isArray(body.removeIds) && body.removeIds.length) {
           const rm = new Set(body.removeIds);
@@ -1448,8 +1520,10 @@ async function handleApi(req, res, pathname) {
         }
         if (Array.isArray(body.upserts)) {
           const novos = [];
-          for (const u0 of body.upserts) {
-            if (!u0 || typeof u0.id !== "string") continue;
+          for (const u0 of body.upserts.slice(0, ehAdmin ? 20000 : 2000)) {
+            if (!u0 || typeof u0.id !== "string" || u0.id.length > 120) continue;
+            if (JSON.stringify(u0).length > 20000) { ignorados++; continue; } // um registro de verdade tem poucos KB
+            
             const i = lista.findIndex((x) => x.id === u0.id);
             const existente = i >= 0 ? lista[i] : null;
             const existenteConfirmado = Boolean(existente) && existente.qtdRecebida !== null && existente.qtdRecebida !== undefined;
@@ -1708,7 +1782,7 @@ async function handleApi(req, res, pathname) {
   // resto (itens, lotes, quantidades e o motivo). Não tem nada a ver com os
   // bipes da Saída p/ Expedição — o pedido nem chegou lá ainda.
   if (pathname === "/api/alteracao-separacao" && method === "POST") {
-    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return; // qualquer um logado pode avisar
+    const sess = await exigirPerfis(req, res, PERFIS_ALTERACAO); if (!sess) return; // quem usa a tela de alteração pode avisar
     let body;
     try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
     const acao = body && body.acao;
@@ -1957,6 +2031,8 @@ async function handleApi(req, res, pathname) {
           if (!chave || !tipo) continue;
           const k = `${chave}|${tipo}`;
           const existente = porChaveTipo.get(k);
+          const tam = (o) => { if (o === undefined || o === null) return 0; try { return JSON.stringify(o).length; } catch { return Infinity; } };
+          if (chave.length > 300 || tipo.length > 60 || tam(nova.dados) > 20000 || tam(nova.saldoPorProduto) > 20000) continue; // achado de verdade é pequeno
           const saldoPorProduto = nova.saldoPorProduto && typeof nova.saldoPorProduto === "object" ? nova.saldoPorProduto : {};
           let historicoSaldo = (existente && existente.historicoSaldo) || [];
           const ultimoSnapshot = historicoSaldo[historicoSaldo.length - 1];
@@ -2047,7 +2123,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/alteracao-separacao" && method === "GET") {
-    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
+    const sess = await exigirPerfis(req, res, PERFIS_ALTERACAO); if (!sess) return;
     const podeVerTudo = sess.role === "admin" || (sess.perfis || []).includes("alteracoes");
     try {
       const dados = await alteracaoSeparacaoCarregar();
@@ -2459,7 +2535,29 @@ process.on("unhandledRejection", (err) => {
   console.error("PROMISE REJEITADA SEM CATCH (o servidor continua no ar):", err);
 });
 
+// Cabeçalhos de segurança em TODA resposta (página e API).
+//  - X-Content-Type-Options / Referrer-Policy / Permissions-Policy / HSTS: sem efeito colateral.
+//  - Anti-clickjacking: X-Frame-Options + CSP frame-ancestors 'none' (ALLOW_FRAMING=1 libera, se o painel for
+//    embutido em outro site, p.ex. um totem de TV que usa iframe).
+//  - CSP completa: por padrão em modo RELATÓRIO (Content-Security-Policy-Report-Only) — não bloqueia nada, só
+//    avisa no Console do navegador (F12) o que bloquearia. Com CSP_ENFORCE=1 passa a bloquear de verdade.
+const FRAMING_OK = process.env.ALLOW_FRAMING === "1";
+const CSP_BASE = "base-uri 'self'; object-src 'none'; form-action 'self'" + (FRAMING_OK ? "" : "; frame-ancestors 'none'");
+const CSP_COMPLETA = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://cdn.sheetjs.com; " +
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; " +
+  "connect-src 'self'; worker-src 'self' blob:; " + CSP_BASE;
+function cabecalhosDeSeguranca(req, res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+  if (!FRAMING_OK) res.setHeader("X-Frame-Options", "DENY");
+  if (req.headers["x-forwarded-proto"] === "https" || req.socket.encrypted || EM_PRODUCAO) res.setHeader("Strict-Transport-Security", "max-age=15552000");
+  if (process.env.CSP_ENFORCE === "1") res.setHeader("Content-Security-Policy", CSP_COMPLETA);
+  else { res.setHeader("Content-Security-Policy", CSP_BASE); res.setHeader("Content-Security-Policy-Report-Only", CSP_COMPLETA); }
+}
+
 const server = http.createServer((req, res) => {
+  cabecalhosDeSeguranca(req, res);
   let url;
   try {
     url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -2476,6 +2574,13 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res, url.pathname);
 });
 
+server.requestTimeout = 180000; // um envio lento (ou um cliente que "pinga" bytes) não segura a conexão pra sempre
+server.headersTimeout = 30000;
+if (!APP_PASSWORD) {
+  console.error(SEM_SENHA_ABERTO
+    ? "AVISO DE SEGURANÇA: APP_PASSWORD não configurada — o painel está ABERTO (todo mundo é administrador). Só use assim em teste local."
+    : "ERRO DE CONFIGURAÇÃO: APP_PASSWORD não configurada em produção — o servidor está FECHADO (ninguém consegue entrar) até você definir a variável no Render.");
+}
 server.listen(PORT, () => {
   console.log(`SC9 Control rodando na porta ${PORT} | storage: ${usingSupabase ? "Supabase" : "arquivo local"} | senha: ${APP_PASSWORD ? "ativada" : "DESATIVADA"}`);
 });
