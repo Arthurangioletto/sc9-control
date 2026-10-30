@@ -98,7 +98,7 @@ test('estornado é ignorado', () => {
   assert.strictEqual(r.findings.filter((f) => f.produto === 'P8').length, 0);
 });
 test('item aguardando subir passa do limite', () => {
-  const r = T.analisar([sd1('200', 'PX', 'LX', 3, '2026-10-01')], [], { hoje: '2026-10-10' });
+  const r = T.analisar([sd1('200', 'PX', 'LX', 3, '2026-10-01')], transf('Z', 'PY', 1, '2026-09-25', '59', 'LY', '01', 'LY'), { hoje: '2026-10-10' });
   assert.strictEqual(r.itens[0].aguardandoSubir, true); assert.strictEqual(r.resumo.aguardando, 1);
 });
 test('ids são estáveis e revisões se aplicam', () => {
@@ -171,4 +171,19 @@ test('escopo por nota: mesmo lote em outra nota não se mistura, e o item fora d
   assert.strictEqual(r2.candidatos.length, 1); assert.strictEqual(r2.candidatos[0].produto, 'P7');
   const todas = T.analisar(s1, s3, { hoje: '2026-10-10' });
   assert.strictEqual(todas.resumo.notas, 2);
+});
+test('nota anterior ao período da movimentação não vira "parada"', () => {
+  const s1 = [sd1('1', 'P1', 'L1', 8, '2026-01-10'), sd1('2', 'P2', 'L2', 3, '2026-10-01')];
+  const s3 = [...transf('T', 'P9', 1, '2026-09-20', '59', 'L9', '01', 'L9')];
+  const r = T.analisar(s1, s3, { hoje: '2026-10-30' });
+  assert.strictEqual(r.itens.find((i) => i.nota === '1').semCobertura, true);
+  assert.strictEqual(r.itens.find((i) => i.nota === '1').aguardandoSubir, false);
+  assert.strictEqual(r.itens.find((i) => i.nota === '2').aguardandoSubir, true);
+  assert.strictEqual(r.cobertura.sd3De, '2026-09-20');
+});
+test('lerSD1 soma itens repetidos da mesma nota/produto/lote', () => {
+  const aoa = [['Documento', 'Produto', 'Lote', 'Quantidade', 'DT Digitacao'], ['5', 'P', 'L', 2, '2026-10-01'], ['5', 'P', 'L', 3, '2026-10-01'], ['5', 'P', 'M', 1, '2026-10-01']];
+  const d = T.detectarColunasSD1(aoa);
+  const l = T.lerSD1(aoa, d.mapa, d.linhaCab);
+  assert.strictEqual(l.length, 2); assert.strictEqual(l.find((x) => x.lote === 'L').qt, 5);
 });

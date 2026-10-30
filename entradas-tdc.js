@@ -38,16 +38,16 @@
   const CAMPOS={
     nota:['documento','nota','nf','numnf','numerodanota','notafiscal','docentrada','d1doc','numerodocumento','ndocumento','numdoc','nfentrada'],
     serie:['serie','d1serie','serienf'],
-    fornecedor:['nomefornecedor','fornecedor','razaosocial','nomefornece','fornec','d1fornece','nomedofornecedor'],
+    fornecedor:['nomefornecedor','fornecedor','razaosocial','nomefornece','d1fornece','nomedofornecedor','forncliente','fornecliente','codfornecedor'],
     produto:['produto','codigo','codigoproduto','cod','d1cod','codproduto','codigodoproduto'],
     lote:['lote','lotectl','d1lotectl','lotedoproduto','lotefornecedor'],
     qt:['quantidade','qtd','qtde','quant','d1quant','qt','quantnf'],
     armazem:['armazem','local','d1local','almoxarifado','arm','armazemdestino'],
     dtDigit:['dtdigit','datadigitacao','dtdigitacao','d1dtdigit','dataentrada','dtentrada','digitacao','datadadigitacao','dtdigitacao','dtlancamento'],
     emissao:['emissao','dtemissao','dataemissao','d1emissao','dtemissaonf'],
-    usuario:['usuario','usr','usuarioinclusao','d1userlgi','usuariodigitacao','digitadopor','incluidopor','user','login','nomeusuario','usuarioinclusaoentrada'],
+    usuario:['usuario','usr','usuarioinclusao','d1userlgi','usuariodigitacao','digitadopor','incluidopor','user','login','nomeusuario','usuarioinclusaoentrada','operador'],
     hora:['hora','horadigitacao','d1hora','horaentrada','horainclusao'],
-    validade:['dtvalid','datavalidade','validade','d1dtvalid','dtvalidade','dtvalidlote'],
+    validade:['dtvalid','datavalidade','validade','d1dtvalid','dtvalidade','dtvalidlote','validlote'],
   };
   const OBRIGATORIOS=['nota','produto','lote','qt','dtDigit'];
   const ROTULO_CAMPO={nota:'Nota (documento)',serie:'Série',fornecedor:'Fornecedor',produto:'Produto',lote:'Lote',qt:'Quantidade',armazem:'Armazém',dtDigit:'Data da entrada (digitação)',emissao:'Emissão',usuario:'Usuário que lançou',hora:'Hora da entrada',validade:'Validade'};
@@ -75,7 +75,10 @@
         produto,lote,qt,armazem:mapa.armazem===undefined?'':normArm(g(row,mapa.armazem)),dtDigit:paraISO(g(row,mapa.dtDigit)),emissao:paraISO(g(row,mapa.emissao)),
         hora:paraHora(g(row,mapa.hora)),usuario:String(g(row,mapa.usuario)==null?'':g(row,mapa.usuario)).trim().toLowerCase(),validade:paraISO(g(row,mapa.validade))});
     }
-    return out;
+    /* a mesma nota costuma ter o mesmo produto/lote em mais de um item: soma, para cada nota+produto+lote ser uma linha só */
+    const agr=new Map();
+    for(const l of out){const k=[l.nota,l.serie,l.produto,l.lote,l.dtDigit,l.armazem].join('|');const x=agr.get(k);if(x)x.qt+=l.qt;else agr.set(k,{...l});}
+    return [...agr.values()];
   }
   /* cópia compacta pro servidor (só o necessário; usuários em tabela) */
   function compactarSD1(linhas){const us=[],um=new Map();const ix=v=>{if(!um.has(v)){um.set(v,us.length);us.push(v);}return um.get(v);};
@@ -123,6 +126,7 @@
     const grupos=new Map();for(const l of linhas){const k=keyPL(l.produto,l.lote);if(!grupos.has(k))grupos.set(k,[]);grupos.get(k).push(l);}
     for(const arr of grupos.values())arr.sort((a,b)=>(a.dtDigit||'').localeCompare(b.dtDigit||'')||a._i-b._i);
     const dataMin=linhas.reduce((m,l)=>l.dtDigit&&(!m||l.dtDigit<m)?l.dtDigit:m,'');
+    const sd3De=mov.reduce((m,x)=>!m||x.dia<m?x.dia:m,'');
     const dono=(prod,lote,dia)=>{const arr=grupos.get(keyPL(prod,lote));if(!arr)return null;let ach=null;for(const l of arr){if(!l.dtDigit||l.dtDigit<=dia)ach=l;}if(!ach)return null;const d=diasEntre(ach.dtDigit,dia);return d!==null&&d>=0&&d<=JANELA?ach:null;};
     const ev=new Map();const evDe=l=>{if(!ev.has(l._i))ev.set(l._i,{manIn:[],manOut:[],subidas:[],trocas:[],outrosLotes:[]});return ev.get(l._i);};
     const usado=new Set();
@@ -194,7 +198,8 @@
       const subs=(subPorLinha.get(l._i)||[]).slice().sort((a,b)=>a.dia.localeCompare(b.dia));
       const subiu=subs.reduce((s,m)=>s+m.qt,0),ult=subs.length?subs[subs.length-1].dia:'',pri=subs.length?subs[0].dia:'';
       const fa=porChave.get(chaveL(l))||[],fs=fa.filter(f=>f.confianca==='forte');
-      const aguardando=!subs.length&&!fa.length;
+      const semCobertura=!sd3De||l.dtDigit<sd3De;
+      const aguardando=!subs.length&&!fa.length&&!semCobertura;
       const diasSemSubir=aguardando?diasEntre(l.dtDigit,HOJE):null;
       const dtCorr=fa.flatMap(f=>f.movimentos.map(m=>m.dia)).sort().pop()||'';
       const ve=ev.get(l._i)||{manIn:[],manOut:[]},vistoE=new Set();
@@ -202,7 +207,7 @@
       const outrasNotas=(grupos.get(keyPL(l.produto,l.lote))||[]).filter(x=>x._i!==l._i&&(x.nota!==l.nota||x.serie!==l.serie)).map(x=>({nota:x.nota,serie:x.serie,dtDigit:x.dtDigit,qt:x.qt}));
       return {nota:l.nota,serie:l.serie,fornecedor:l.fornecedor,produto:l.produto,lote:l.lote,qtNota:l.qt,dtEntrada:l.dtDigit,hora:l.hora,usuarioTDC:l.usuario,subiu,eventos,outrasNotas,
         diasAteSubir:pri?diasEntre(l.dtDigit,pri):null,diasAteConcluir:ult&&subiu>=l.qt?diasEntre(l.dtDigit,ult):null,erroForte:fs.length>0,erro:fa.length>0,tipos:[...new Set(fa.map(f=>f.tipo))],
-        diasAteCorrigir:dtCorr?diasEntre(l.dtDigit,dtCorr):null,aguardandoSubir:aguardando&&diasSemSubir!==null&&diasSemSubir>SEM_SUBIR,diasSemSubir};
+        semCobertura,diasAteCorrigir:dtCorr?diasEntre(l.dtDigit,dtCorr):null,aguardandoSubir:aguardando&&diasSemSubir!==null&&diasSemSubir>SEM_SUBIR,diasSemSubir};
     });
     /* "item fora da nota" não tem nota (por definição): vira candidato para a pessoa vincular à nota certa */
     const candidatos=findings.filter(f=>!f.nota);
@@ -212,7 +217,7 @@
       fin=findings.filter(f=>f.nota&&combinaNota(f,regs));itn=itens.filter(i=>combinaNota(i,regs));atv=ativos.filter(f=>f.nota&&combinaNota(f,regs));
     }
     return {findings:fin.sort((a,b)=>(b.dtEntrada||'').localeCompare(a.dtEntrada||'')||String(a.nota).localeCompare(String(b.nota))),itens:itn,candidatos,resumo:resumir(itn,atv,linhas),
-      cobertura:{sd1De:dataMin,sd1Ate:linhas.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),linhasSD1:linhas.length,movimentosSD3:noTDC.length}};
+      cobertura:{sd1De:dataMin,sd1Ate:linhas.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),linhasSD1:linhas.length,movimentosSD3:noTDC.length,sd3De}};
   }
   const media=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
   function resumir(itens,findings,linhas){

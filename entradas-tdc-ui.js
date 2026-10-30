@@ -5,6 +5,7 @@
   'use strict';
   if(!root.document||!root.React||!root.ReactDOM||!root.SC9EntradasTDC)return;
   const M=root.SC9EntradasTDC,R=root.React,h=R.createElement,{useState,useEffect,useMemo,useCallback}=R;
+  const forn=v=>/^\d+$/.test(String(v||''))?'Forn. '+v:(v||'');
   const fmtN=n=>n==null||n===''?'—':Number(n).toLocaleString('pt-BR',{maximumFractionDigits:2});
   const fmtD=iso=>iso?iso.split('-').reverse().join('/'):'—';
   const fmtDH=iso=>{try{return new Date(iso).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'});}catch(e){return iso||'';}};
@@ -142,7 +143,7 @@
       h('div',{className:'sc9-tdc-fh'},
         h('div',null,h('span',{className:'sc9-tdc-tag'},T.rotulo),' ',a.confianca==='suspeita'&&h('span',{className:'sc9-tdc-tag s',title:'O Protheus sugere, mas não prova. Confirme no físico.'},'Suspeita'),a.manual&&h('span',{className:'sc9-tdc-tag s'},'Lançada à mão')),
         h('span',{className:'sc9-tdc-meta'},a.status==='confirmado'?'✓ Confirmada':a.status==='descartado'?'Descartada':'Nova')),
-      h('div',{className:'sc9-tdc-meta'},a.nota?h('span',null,'NF ',h('b',null,a.nota),a.serie?'/'+a.serie:''):h('b',null,'Sem nota no SD1'),' · ',a.fornecedor||'fornecedor não informado',h('br'),'Produto ',h('b',null,a.produto),' · lote nota ',h('b',null,a.lote||'—'),h('br'),'Entrada no 59: ',h('b',null,fmtD(a.dtEntrada)),a.usuarioTDC&&h('span',null,' · lançada por ',h('b',null,a.usuarioTDC))),
+      h('div',{className:'sc9-tdc-meta'},a.nota?h('span',null,'NF ',h('b',null,a.nota),a.serie?'/'+a.serie:''):h('b',null,'Sem nota no SD1'),' · ',forn(a.fornecedor)||'fornecedor não informado',h('br'),'Produto ',h('b',null,a.produto),' · lote nota ',h('b',null,a.lote||'—'),h('br'),'Entrada no 59: ',h('b',null,fmtD(a.dtEntrada)),a.usuarioTDC&&h('span',null,' · lançada por ',h('b',null,a.usuarioTDC))),
       h('div',{className:'sc9-tdc-nums'},
         h('div',null,h('label',null,'Na nota (SD1)'),h('strong',null,fmtN(a.qtdNota))),
         h('div',null,h('label',null,'Físico (contado)'),h('input',{className:'sc9-tdc-in',type:'number',value:qtd,placeholder:'—',onChange:e=>setQtd(e.target.value)})),
@@ -190,21 +191,41 @@
     const [arq,setArq]=useState(null);const [folhas,setFolhas]=useState([]);const [folha,setFolha]=useState('');
     const [aoa,setAoa]=useState(null);const [det,setDet]=useState(null);const [mapa,setMapa]=useState({});
     const [substituir,setSubstituir]=useState(false);const [msg,setMsg]=useState(null);const [busy,setBusy]=useState(false);
-    const [wb,setWb]=useState(null);
+    const [wb,setWb]=useState(null);const [lendo,setLendo]=useState(false);
+    const pausa=()=>new Promise(r=>setTimeout(r,30));
     const ler=async file=>{
       setMsg(null);setAoa(null);setDet(null);setArq(file||null);if(!file)return;
       if(!root.XLSX){setMsg({t:'err',m:'Biblioteca de planilhas (SheetJS) não carregou. Recarregue a página.'});return;}
+      setLendo(true);await pausa();
       try{
-        const w=root.XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true});
+        // dense = bem menos memória em planilhas grandes (o SD1 do Protheus pode ter 30 mil linhas x 250 colunas)
+        const w=root.XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true,dense:true});
         setWb(w);setFolhas(w.SheetNames);escolher(w,w.SheetNames[0]);
-      }catch(e){setMsg({t:'err',m:'Não consegui abrir o arquivo: '+e.message});}
+      }catch(e){setMsg({t:'err',m:'Não consegui abrir o arquivo: '+e.message});}finally{setLendo(false);}
     };
+    /* só as primeiras linhas servem pra achar o cabeçalho; as linhas todas são lidas depois, só nas colunas escolhidas */
     const escolher=(w,nome)=>{
-      setFolha(nome);
-      const a=root.XLSX.utils.sheet_to_json(w.Sheets[nome],{header:1,raw:true,defval:''});
+      setFolha(nome);const ws=w.Sheets[nome];
+      const U=root.XLSX.utils;let ate=24;
+      try{const ref=U.decode_range(ws['!ref']);ate=Math.min(24,ref.e.r);}catch(e){/* planilha vazia */}
+      const a=U.sheet_to_json(ws,{header:1,raw:true,defval:'',range:{s:{r:0,c:0},e:{r:ate,c:(()=>{try{return U.decode_range(ws['!ref']).e.c;}catch(e){return 0;}})()}}});
       const d=M.detectarColunasSD1(a);setAoa(a);setDet(d);setMapa(d.mapa);
     };
-    const linhas=useMemo(()=>aoa&&det?M.lerSD1(aoa,mapa,det.linhaCab):[],[aoa,det,mapa]);
+    const lerColunas=(ws,cols)=>{
+      const U=root.XLSX.utils,ref=U.decode_range(ws['!ref']),out=[];
+      for(let r0=ref.s.r;r0<=ref.e.r;r0+=2000){
+        const bloco=U.sheet_to_json(ws,{header:1,raw:true,defval:'',range:{s:{r:r0,c:ref.s.c},e:{r:Math.min(r0+1999,ref.e.r),c:ref.e.c}}});
+        for(const row of bloco)out.push(cols.map(c=>row[c]));
+      }
+      return out;
+    };
+    const linhas=useMemo(()=>{
+      if(!aoa||!det||!wb)return [];
+      const campos=Object.keys(mapa),cols=campos.map(c=>mapa[c]);
+      let cheio;try{cheio=lerColunas(wb.Sheets[folha],cols);}catch(e){return [];}
+      const mapaN={};campos.forEach((c,i)=>{mapaN[c]=i;});
+      return M.lerSD1(cheio,mapaN,det.linhaCab);
+    },[aoa,det,mapa,wb,folha]);
     const faltando=M.OBRIGATORIOS.filter(c=>mapa[c]===undefined);
     const semData=linhas.filter(l=>!l.dtDigit).length;
     const enviar=async()=>{
@@ -219,6 +240,8 @@
     const cab=det?det.cabecalhos:[];
     return h('div',null,
       h('input',{type:'file',accept:'.xlsx,.xls,.csv',onChange:e=>ler(e.target.files[0])}),
+      lendo&&h('div',{className:'sc9-tdc-msg info'},'Lendo a planilha… arquivos grandes (30 mil linhas) podem levar um minuto. Não feche esta tela.'),
+      h('p',{className:'sc9-tdc-sub',style:{marginTop:8}},'Dica: se o arquivo ficar pesado, exporte do Protheus só estas colunas: Documento, Item NF, Série, Produto, Lote, Quantidade, DT Digitação, Armazém (e Usuário/Hora, se houver).'),
       msg&&h('div',{className:'sc9-tdc-msg '+msg.t},msg.m),
       aoa&&det&&h('div',{style:{marginTop:12}},
         folhas.length>1&&h('div',{className:'sc9-tdc-field',style:{maxWidth:280,marginBottom:10}},h('label',null,'Aba da planilha'),h('select',{className:'sc9-tdc-in',value:folha,onChange:e=>escolher(wb,e.target.value)},folhas.map(f=>h('option',{key:f},f)))),
@@ -252,6 +275,7 @@
   const SITUACAO=(i)=>{
     if(i.erroForte)return {t:'Divergência: '+i.tipos.map(t=>M.TIPOS[t]?M.TIPOS[t].curto:t).join(', '),c:'bad'};
     if(i.erro)return {t:'Suspeita — conferir no físico',c:'warn'};
+    if(i.semCobertura&&!i.subiu)return {t:'Antes do período da movimentação (SD3) — sem como medir',c:''};
     if(i.aguardandoSubir)return {t:'Parado no 59 há '+i.diasSemSubir+' dias',c:'warn'};
     if(i.subiu>=i.qtNota)return {t:'Subiu tudo'+(i.diasAteConcluir!=null?' em '+i.diasAteConcluir+' d':''),c:'ok'};
     if(i.subiu>0)return {t:'Subiu parte ('+fmtN(i.subiu)+' de '+fmtN(i.qtNota)+')',c:'warn'};
@@ -268,7 +292,7 @@
     const cands=(res.candidatos||[]).filter(c=>{const d=M.diasEntre(base.dtEntrada,c.dtEntrada);return d!==null&&d>=0&&d<=7&&!Object.keys(fObj).some(k=>k.startsWith('MANUAL|VINC|'+c.id+'|'));});
     return h('div',{className:'sc9-tdc-nota'},
       h('div',{className:'sc9-tdc-nota-h'},
-        h('div',null,h('h3',null,nome,' · ',base.fornecedor||'fornecedor não informado'),h('div',{className:'sc9-tdc-meta'},'Entrada no 59: ',h('b',null,fmtD(base.dtEntrada)),base.hora&&' às '+base.hora,base.usuarioTDC&&h('span',null,' · lançada por ',h('b',null,base.usuarioTDC)),' · ',itens.length,' item(ns) na nota')),
+        h('div',null,h('h3',null,nome,' · ',forn(base.fornecedor)||'fornecedor não informado'),h('div',{className:'sc9-tdc-meta'},'Entrada no 59: ',h('b',null,fmtD(base.dtEntrada)),base.hora&&' às '+base.hora,base.usuarioTDC&&h('span',null,' · lançada por ',h('b',null,base.usuarioTDC)),' · ',itens.length,' item(ns) na nota')),
         h('div',{className:'sc9-tdc-act'},
           erros?h('span',{className:'sc9-tdc-pill bad'},erros+' item(ns) com divergência'):susp?h('span',{className:'sc9-tdc-pill warn'},susp+' suspeita(s)'):h('span',{className:'sc9-tdc-pill ok'},'Sem divergência no Protheus'),
           h('button',{className:'sc9-tdc-btn',onClick:()=>onFichas(reg)},'Fichas ('+fichas.length+')'),
@@ -310,7 +334,7 @@
         busca&&!itens.length&&h('div',{className:'sc9-tdc-msg err'},'A nota '+busca.nota+' não está no SD1 enviado. Confira o número'+(sd1Raw?' ou envie um SD1 mais recente (o atual vai até a entrada de '+fmtD(sd1All.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''))+')':'')+'.'),
         ambigua&&h('div',{className:'sc9-tdc-msg info'},'Existe a nota '+busca.nota+' em mais de uma série. Qual é a sua? ',busca.series.map(sr=>h('button',{key:sr,className:'sc9-tdc-chip',style:{marginLeft:6},onClick:()=>escolherSerie(sr)},'Série '+(sr||'(em branco)')))),
         busca&&itens.length>0&&!ambigua&&h('div',{style:{marginTop:12}},
-          h('p',{className:'sc9-tdc-sub',style:{margin:'0 0 6px'}},'Achei ',h('b',null,itens.length+' item(ns)'),' na NF ',h('b',null,busca.nota),' · ',itens[0].fornecedor||'fornecedor não informado',' · entrada em ',fmtD(itens[0].dtDigit),':'),
+          h('p',{className:'sc9-tdc-sub',style:{margin:'0 0 6px'}},'Achei ',h('b',null,itens.length+' item(ns)'),' na NF ',h('b',null,busca.nota),' · ',forn(itens[0].fornecedor)||'fornecedor não informado',' · entrada em ',fmtD(itens[0].dtDigit),':'),
           h('table',{className:'sc9-tdc-table'},h('thead',null,h('tr',null,[['Produto','l'],['Lote','l'],['Qtd. na nota','']].map(([c,k])=>h('th',{key:c,className:k},c)))),h('tbody',null,itens.map((l,i)=>h('tr',{key:i},h('td',{className:'l'},h('b',null,l.produto)),h('td',{className:'l'},l.lote||'—'),h('td',null,fmtN(l.qt)))))),
           h('div',{className:'sc9-tdc-act',style:{marginTop:12}},h('button',{className:'sc9-tdc-btn ok',disabled:busy,onClick:adicionar},busy?'Adicionando…':'✓ Conferir esta nota')))),
       regs.length?h('div',null,h('h2',{style:{fontSize:14,margin:'4px 0 10px'}},'Notas em conferência ('+regs.length+')'),regs.map(r=>h(NotaCard,{key:r.nota+'|'+r.serie,reg:r,res,fObj,achados,onRemover,onFichas,onManual,onVincular}))):
