@@ -350,3 +350,11 @@ Pedidos no recorte, Atrasados, Em aberto, Enviados, Aguardando faturamento, Conf
 A tabela original mostra até 50 pedidos por página, conservando ordenação, exportação da lista completa, quantidades fracionadas e acesso à timeline. Atrasados mantém sua coluna de dias de atraso e os critérios anteriores. Os demais indicadores exibem o status. A paginação reinicia ao trocar de indicador, armazém, corte, dia, status, produto ou quantidade de resultados, evitando páginas vazias após reduzir o recorte. Não há mudança de classificação nem gravação de dados.
 
 Validação: 58 testes das telas já evoluídas. Conferência local com dados fictícios: limite de 50 linhas, segunda página, troca de indicador reiniciando a lista, recorte vazio, filas e comparativo sem painel lateral, atalho direto de peças e celular de 390 px com controles ajustados e rolagem da tabela sem alargar a página.
+
+## Consultas operacionais sem painel lateral
+
+Fluxo e Expedição passam a apresentar seus detalhes na própria página, usando o componente compartilhado `SC9UI.InlineDetails`. Isso conclui a retirada dos painéis laterais operacionais: o Resumo já utiliza listas na página, e a ficha do produto no Cadastro de lotes permanece como exceção, com o painel lateral original preservado.
+
+A consulta rola até a lista e recebe foco, sem bloquear a rolagem ou prender a navegação por Tab. Recolher lista ou Escape fecha a consulta e restaura o foco quando apropriado. Selecionar novamente o indicador ativo também recolhe a lista. Filtros, critérios, registros originais, quantidades fracionadas, exportação completa e timeline continuam disponíveis. A tabela mantém até 50 pedidos por página e reinicia a paginação ao mudar a seleção, o contexto ou a quantidade de resultados. O cadastro e suas ações não foram alterados.
+
+Validação: 61 testes das telas já evoluídas, incluindo o comportamento original da ficha lateral do produto e a verificação de que nenhum outro módulo usa esse painel. Conferência local com dados fictícios em Fluxo e Expedição: consultas sem dialog aberto, 50 linhas, segunda página, troca de indicador retornando à primeira página, fechamento por Escape e celular de 390 px sem extravasamento horizontal da página.

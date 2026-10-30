@@ -30,16 +30,16 @@
       h('div',{className:'sc9-shipping-sources'},h('span',null,'SC9 · término da conferência'),h('span',null,comparison.present?'SF2 disponível · vínculo pela nota':'SF2 ausente · faturamento indisponível'),h('span',null,comparison.totalDespachados===null?'Entrega ausente · despacho indisponível':'Entrega disponível · vínculo pelo pedido')),
       h('div',{className:'sc9-overview-metrics'},cards.map(([id,description])=>{
         const list=model.lists[id],available=list!==null;
-        return h('button',{key:id,type:'button',className:'sc9-overview-metric'+(id==='delivered'?' success':''),disabled:!available,onClick:()=>setSelection(id),'aria-label':titles[id]+': '+(available?n(list.length)+(list.length===1?' pedido':' pedidos'):'dado indisponível')},
+        return h('button',{key:id,type:'button',className:'sc9-overview-metric'+(id==='delivered'?' success':''),disabled:!available,onClick:()=>setSelection(selection===id?null:id),'aria-expanded':selection===id,'aria-label':titles[id]+': '+(available?n(list.length)+(list.length===1?' pedido':' pedidos'):'dado indisponível')},
           h('span',{className:'sc9-overview-eyebrow'},titles[id]),h('strong',null,available?n(list.length):'—'),
           h('span',{className:'sc9-overview-metric-sub'},description, h('br'),available?n(model.quantity(id))+' peças':'Carregue a base complementar para calcular.'),
           h('span',{className:'sc9-overview-link'},available?'Consultar pedidos →':'Fonte indisponível'));
       })),
       h('div',{className:'sc9-shipping-time'},h('div',null,h('h3',null,'Conferência → faturamento'),h('strong',null,!comparison.present||model.meanMinutes===null?'Sem dados para calcular':root.SC9FlowModel.duration(model.meanMinutes)),h('p',null,comparison.present?'Tempo médio no recorte · '+n(model.lists.invoiced.length)+' pedidos com vínculo na SF2. Notas anteriores ao fim da conferência contam como zero minuto.':'O tempo entre conferência e faturamento depende da SF2.')),
-        comparison.present&&h('button',{type:'button',className:'sc9-ui-button',onClick:()=>setSelection('earlier')},n(model.lists.earlier.length)+(model.lists.earlier.length===1?' faturado antes da conferência · consultar':' faturados antes da conferência · consultar'))),
+        comparison.present&&h('button',{type:'button',className:'sc9-ui-button',onClick:()=>setSelection(selection==='earlier'?null:'earlier'),'aria-expanded':selection==='earlier'},n(model.lists.earlier.length)+(model.lists.earlier.length===1?' faturado antes da conferência · consultar':' faturados antes da conferência · consultar'))),
       h('p',{className:'sc9-flow-note'},'Os grupos podem se sobrepor e não devem ser somados. A presença na Entrega usa o número do pedido, sem validar a unidade por esse vínculo; confira o armazém na lista. Nota fiscal isolada não comprova saída física. O dia de liberação filtra os pedidos; os gráficos diários usam as datas dos eventos.'),
       !orders.length&&h('div',{className:'sc9-overview-empty',role:'status'},h('strong',null,'Nenhum pedido neste recorte'),h('p',null,'Revise os filtros ou carregue uma base SC9.')),
       !!orders.length&&!model.lists.conferred.length&&h('div',{className:'sc9-overview-empty',role:'status'},h('strong',null,'Sem conferência finalizada neste recorte'),h('p',null,'Os pedidos sem data de término continuam disponíveis no Fluxo.')),
-      selection&&h(root.SC9UI.Sheet,{title:titles[selection],subtitle:n(rows.length)+(rows.length===1?' pedido · ':' pedidos · ')+context,onClose:()=>setSelection(null)},renderOrders(rows,order=>{setSelection(null);onOpenOrder(order);})))
+      selection&&h(root.SC9UI.InlineDetails,{title:titles[selection],subtitle:n(rows.length)+(rows.length===1?' pedido · ':' pedidos · ')+context,onClose:()=>setSelection(null)},renderOrders(rows,order=>{setSelection(null);onOpenOrder(order);},{key:JSON.stringify([selection,context,rows.length])})))
   };
 })(typeof window==='object'?window:globalThis);
