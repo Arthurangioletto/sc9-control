@@ -392,3 +392,13 @@ Administradores podem consultar os backups em Cadastro de Lotes → Importaçõe
 A timeline original do pedido usa a consulta na própria página, com rolagem e foco automáticos. Antes, no Resumo, as informações apareciam abaixo da lista e podiam ficar fora da tela. O número do pedido passa a ser um botão acessível por teclado; o restante da linha continua aceitando clique. Voltar à lista de pedidos ou Escape fecha os detalhes e restaura o foco quando o controle de origem permanece disponível. A lista do Resumo conserva sua seleção, ordenação e página. A ficha lateral do produto permanece como exceção do Cadastro de Lotes.
 
 Validação: testes da tabela original e da integração da timeline, foco, Escape e preservação da paginação. Conferência local com 87 pedidos fictícios atrasados: abertura na segunda página, conteúdo original visível, retorno à segunda página e operação por Enter/Escape. Nenhuma base ou regra de classificação foi alterada.
+
+## Alteração por nota (pós-faturamento)
+
+O pedido marcado fica pendente até informar os produtos, quantidades e lotes do pedido original, o motivo obrigatório e o número do pedido de complemento. Confirmar vincula os dados no histórico e devolve o registro à lista normal da Saída para Expedição; não cria nem altera o pedido de complemento no Protheus.
+
+A tela passa a exibir e enviar o campo Motivo da alteração. Antes o servidor exigia esse dado sem haver um campo para preenchê-lo. Quantidades fracionadas positivas são aceitas. O complemento não pode ser o próprio pedido original.
+
+Quando a base SC9 informa lotes para o produto original, um lote divergente continua bloqueado. Quando o produto existe no pedido, mas seu lote não veio no arquivo, o lote preenchido é guardado como informação manual, com aviso na tela e identificação no histórico. Se o pedido não está disponível na base, a possibilidade existente de informação manual permanece identificada. Produtos ausentes de um pedido encontrado continuam bloqueados. A exportação inclui o motivo e a condição da conferência do lote; registros antigos sem essa informação não são apresentados como conferidos.
+
+Validação: integração do servidor e testes da tela/relatório cobrem motivo obrigatório e enviado, preservação do rascunho, lote original conhecido ou ausente, divergências, complemento diferente, quantidade fracionada, permissões e proteção das bases globais. Conferência em navegador local com dois pedidos fictícios: erro sem motivo, bloqueio de lote errado, confirmação manual e conferida, saída da fila e histórico salvo.

@@ -1662,29 +1662,30 @@ async function handleApi(req, res, pathname) {
             // precisar alterar mais de um item/lote de uma vez.
             const itensEntrada = Array.isArray(body.itens) ? body.itens : (body.item ? [{ item: body.item, quantidade: body.quantidade, lote: body.lote }] : []);
             if (!pedidoComplemento) return { erro: 400, msg: "informe o número do pedido de complemento" };
+            if (pedidoComplemento === normalizarPedido(e.pedido)) return { erro: 400, msg: "o pedido de complemento deve ser diferente do pedido original" };
             if (!motivo) return { erro: 400, msg: "informe o motivo da alteração" };
             if (!itensEntrada.length) return { erro: 400, msg: "informe ao menos um item alterado" };
             for (const it of itensEntrada) {
               if (!it || !String(it.item || "").trim()) return { erro: 400, msg: "cada item precisa de um produto/código" };
-              if (isNaN(Number(it.quantidade)) || Number(it.quantidade) <= 0) return { erro: 400, msg: "cada item precisa de uma quantidade válida (maior que zero)" };
+              if (!Number.isFinite(Number(it.quantidade)) || Number(it.quantidade) <= 0) return { erro: 400, msg: "cada item precisa de uma quantidade válida (maior que zero)" };
               if (!String(it.lote || "").trim()) return { erro: 400, msg: "cada item precisa de um lote" };
             }
             const itens = itensEntrada.map((it) => ({ item: String(it.item).trim(), quantidade: Number(it.quantidade), lote: String(it.lote).trim() }));
-            // TRAVA DE VERDADE: alteração "com nota" já foi faturada, então o
-            // lote informado TEM que ser um lote real daquele pedido no SC9 —
-            // não dá pra aceitar um lote que não existe ali. Só valida quando
-            // o índice está disponível E o pedido foi encontrado nele (se não
-            // achar o pedido no índice carregado agora, não trava — pode ser
-            // só uma base desatualizada no momento, não um erro de verdade).
+            // O lote se refere ao pedido ORIGINAL. Ausência de lote no export
+            // não é divergência: nesse caso guardamos a informação manual e
+            // identificamos no histórico que não houve conferência automática.
             const indiceAgora = await indiceCarregar().catch(() => null);
             const infoReal = infoDoPedido(indiceAgora, e.pedido);
-            if (infoReal && infoReal.itens && infoReal.itens.length) {
-              const reaisValidos = new Set(infoReal.itens.map((i) => `${i.produto}|${i.lote || ""}`));
-              for (const it of itens) {
-                if (!reaisValidos.has(`${it.item}|${it.lote}`)) {
+            for (const it of itens) {
+              const produtos = (infoReal?.itens || []).filter(i => String(i.produto).trim() === it.item);
+              if (infoReal?.itens?.length && !produtos.length) return { erro: 400, msg: `o produto "${it.item}" não está no pedido original, segundo o SC9 carregado` };
+              const lotes = new Set(produtos.map(i => String(i.lote || '').trim()).filter(Boolean));
+              if (lotes.size) {
+                if (!lotes.has(it.lote)) {
                   return { erro: 400, msg: `o produto "${it.item}" com o lote "${it.lote}" não está nesse pedido, segundo o SC9 carregado — confira o lote certo antes de confirmar` };
                 }
-              }
+                it.validacaoLote = 'conferido_sc9';
+              } else it.validacaoLote = produtos.length ? 'manual_sem_lote_sc9' : 'manual_sem_pedido_sc9';
             }
             e.alteracao = {
               status: "confirmada",
