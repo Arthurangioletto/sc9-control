@@ -44,6 +44,14 @@ test('frações e lotes numéricos com zeros seguem a comparação existente sem
 test('cobertura importada antes do recebimento no mesmo dia não comprova ausência posterior',()=>{
  const sd3=M.replacePeriod(null,[],{filial:'01',desde:'2026-11-05',ate:'2026-11-05',now:'2026-11-05T12:00:00Z'}).sd3;assert.equal(M.reconcile([receipt()],sd3).rows[0].status,'aguardando_sd3');
 });
+test('204 recebidas para 203 no documento só é divergência após cobertura suficiente do SD3',()=>{
+ const entry=receipt({quantidade:204}),movements=pair(203);
+ const old=M.replacePeriod(null,movements,{filial:'01',desde:'2026-11-05',ate:'2026-11-05',now:'2026-11-05T12:00:00Z'}).sd3;
+ let row=M.reconcile([entry],old).rows[0];assert.equal(row.status,'aguardando_sd3');assert.equal(row.allocated,203);assert.equal(row.missing,1);assert.match(row.message,/203 de 204/);
+ const current=base(movements);row=M.reconcile([entry],current).rows[0];assert.equal(row.status,'divergente');assert.equal(row.allocated,203);assert.equal(row.missing,1);assert.match(row.message,/203 de 204/);assert(!row.message.includes('não encontrada'));
+ assert.equal(M.reconcile([receipt({quantidade:203})],current).rows[0].status,'conferido');
+ assert.equal(M.reconcile([entry],base(pair(204))).rows[0].status,'conferido');
+});
 test('datas e campos inválidos impedem importar parcialmente um arquivo',()=>{
  assert.throws(()=>base([movement({qt:'inválida'})]),/quantidade/);assert.throws(()=>base([movement({dt:'2026-02-30'})]),/Data/);assert.throws(()=>base([movement({doc:''})]),/documento/);assert.throws(()=>M.replacePeriod(null,pair(),{filial:'01',desde:'2026-11-01',ate:'2026-11-02'}),/fora/);
 });

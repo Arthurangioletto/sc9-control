@@ -1,7 +1,7 @@
 /* Physical receipts and documentary SD3 evidence. No stock balance is inferred. */
 (function(root){
   class ValidationError extends Error {}
-  const DAY=86400000,eps=1e-8;
+  const DAY=86400000,eps=1e-8,quantityLabel=v=>Number(v).toLocaleString('pt-BR',{maximumFractionDigits:6});
   const code=v=>{const s=String(v??'').trim().toUpperCase();return /^\d+$/.test(s)?String(Number(s)).padStart(2,'0'):s;};
   const lot=v=>{const s=String(v??'').trim().toUpperCase().replace(/^(\d+)\.0$/,'$1');return /^\d+$/.test(s)?s.replace(/^0+(?=\d)/,''):s;};
   const spFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}),spDay=v=>spFormatter.format(new Date(v));
@@ -49,11 +49,12 @@
       const compatible=(docIndex.get(JSON.stringify([e.filial,lot(e.lote),produto]))||[]).filter(t=>t.day>=d-2);
       for(const t of compatible){if(!t.valid||t.remaining<=eps||result.missing<=eps)continue;const used=Math.min(t.remaining,result.missing);t.remaining-=used;result.allocated+=used;result.missing=Math.max(0,e.quantidade-result.allocated);result.docs.push({doc:t.doc,dt:t.dt,produto:t.produto,quantidade:used,transferida:t.into,usuarios:t.users});}
       if(result.missing<=eps){const lateTransfer=result.docs.some(doc=>day(doc.dt)>d);return {...result,lateTransfer,status:'conferido',message:lateTransfer?'Quantidade conciliada com transferência lançada após a data do recebimento. Consulte a data dos documentos.':'Quantidade recebida conciliada com saída do 02 e entrada no 01 no mesmo documento.'};}
-      if(!covered)return {...result,status:'aguardando_sd3',message:'Aguardando SD3 atualizado para a data deste recebimento. A ausência na base atual ainda não comprova divergência.'};
+      const partial=result.allocated>eps?'O SD3 conciliou '+quantityLabel(result.allocated)+' de '+quantityLabel(e.quantidade)+' recebidas; '+quantityLabel(result.missing)+' ainda sem correspondência. ':'';
+      if(!covered)return {...result,status:'aguardando_sd3',message:partial+'Aguardando SD3 atualizado para a data deste recebimento. A ausência na base atual ainda não comprova divergência.'};
       result.issues=compatible.filter(t=>!t.valid).map(t=>({doc:t.doc,dt:t.dt,saida02:t.out,entrada01:t.into,outrosArmazens:t.elsewhere}));
       const other=[...new Set(result.issues.flatMap(i=>Object.entries(i.outrosArmazens).filter(([,q])=>q>eps).map(([arm])=>arm)))];
-      const issue=other.length?'O SD3 registra entrada no armazém '+other.join(', ')+', diferente do 01.':result.issues.length?'O documento não possui saída do 02 e entrada no 01 com quantidades iguais.':'Transferência 02 → 01 não encontrada no período do SD3 importado.';
-      return {...result,status:'divergente',message:(result.allocated>eps?'Conferência parcial. ':'')+issue};
+      const issue=other.length?'O SD3 registra entrada no armazém '+other.join(', ')+', diferente do 01.':result.issues.length?'O documento não possui saída do 02 e entrada no 01 com quantidades iguais.':partial?'A quantidade recebida excede a quantidade disponível para este recebimento no SD3.':compatible.some(t=>t.valid)?'As quantidades disponíveis nas transferências deste lote já estão vinculadas a outros recebimentos.':'Transferência 02 → 01 não encontrada no período do SD3 importado.';
+      return {...result,status:'divergente',message:partial+issue};
     });
     const excess=docs.filter(t=>t.valid&&t.remaining>eps).map(t=>({filial:t.filial,produto:t.produto,lote:t.lote,doc:t.doc,dt:t.dt,quantidade:t.remaining}));
     return {rows:rows.reverse(),excess,stats:{active:rows.filter(r=>!r.cancelledAt).length,received:rows.filter(r=>!r.cancelledAt).reduce((sum,r)=>sum+r.quantidade,0),conferido:rows.filter(r=>r.status==='conferido').length,aguardando_sd3:rows.filter(r=>r.status==='aguardando_sd3').length,divergente:rows.filter(r=>r.status==='divergente').length,produto_ambiguo:rows.filter(r=>r.status==='produto_ambiguo').length}};
