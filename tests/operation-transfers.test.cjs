@@ -18,10 +18,8 @@ test('sem recebimentos o resumo não inventa percentual ou tempo médio',()=>{
  const root=setup(),tree=root.SC9TransferOverview({records:[],stats:{aguardando:0,atrasadas:0,emAtencao:0,pecasEmTransito:0,comProblema:0,emObservacao:0,taxaOk:null,conferidosOk:0,conferidos:0,tempoMedioConfirmacaoH:null},attentionHours:4,lateHours:24,formatHours:()=>{throw Error('Tempo ausente não deve ser formatado');}});
  assert.doesNotMatch(JSON.stringify(tree),/NaN|0%/);assert.match(JSON.stringify(tree),/Nenhuma entrega aguardando/);
 });
-test('atalhos reutilizam o histórico e a conferência existentes sem ultrapassar o bloqueio',()=>{
- const source=fs.readFileSync(require.resolve('../bundle.js'),'utf8'),a=source.indexOf('React.createElement(window.SC9TransferOverview,'),b=source.indexOf(',!le&&React.createElement("details"',a);assert(a>0&&b>a);
- const scrolled=[],focused=[];let props,person='user',issues=false;
- vm.runInNewContext(source.slice(a,b),{React:{createElement:(component,value)=>{props=value;}},window:{SC9TransferOverview:'overview'},$e:records,El:rows=>({aguardando:rows.length}),fl:4,gl:24,xl:()=>'',A:value=>{person=value;},Vd:value=>{issues=value;},document:{getElementById:id=>({scrollIntoView:()=>scrolled.push(id),focus:()=>focused.push(id)})}});
- assert.strictEqual(props.records,records);props.onIssues();assert.equal(person,'');assert.equal(issues,true);assert.equal(scrolled.at(-1),'sc9-transfer-history');props.onHistory();assert.equal(issues,false);props.onPending();assert.equal(scrolled.at(-1),'sc9-transfer-pending');props.onLocate('old');assert.equal(focused.at(-1),'sc9-rcv-qtd-old');
- assert(source.includes('id:"sc9-transfer-history"'));assert(source.includes('cr.length?React.createElement(po,{unlocked:jt||le'));
+test('controle usa recebimento direto e conserva registros antigos somente como histórico',()=>{
+ const source=fs.readFileSync(require.resolve('../bundle.js'),'utf8'),a=source.indexOf('ks=()=>React.createElement(window.SC9ReceiptControl,'),b=source.indexOf(';return React.createElement',a);assert(a>0&&b>a);let props;
+ vm.runInNewContext(source.slice(a+7,b),{React:{createElement:(component,value)=>{props=value;}},window:{SC9ReceiptControl:'new-control'},Me:{role:'operador',usuario:'pessoa'},$e:records,ka:{},wl:'scanner'});
+ assert.strictEqual(props.legacyRecords,records);assert.equal(props.isAdmin,false);assert.equal(props.parseLot,'scanner');assert.equal(typeof props.readSD3,'function');assert(!source.includes('title:"Nova Transferência (02 → 01)"'));
 });
