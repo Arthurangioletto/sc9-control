@@ -108,7 +108,12 @@
         if (/^SC9_Relatorio_Geral_/.test(String(nome)) && cache.base) {
           for (const a of M.abasRelatorio(cache.base, cache.config)) {
             if (!a.rows.length) continue;
-            X.utils.book_append_sheet(wb, X.utils.json_to_sheet(a.rows), a.name.slice(0, 31));
+            const ws = X.utils.json_to_sheet(a.rows);
+            // formata cada célula (porcentagem, valor com milhar, texto) e ajusta a largura das colunas
+            const cab = Object.keys(a.rows[0] || {});
+            a.rows.forEach((r, i) => cab.forEach((h, j) => { const c = ws[X.utils.encode_cell({ r: i + 1, c: j })]; const z = a.z && c && typeof c.v === 'number' ? a.z(r, h) : null; if (z) c.z = z; }));
+            if (a.cols) ws['!cols'] = a.cols.map((w) => ({ wch: w }));
+            X.utils.book_append_sheet(wb, ws, a.name.slice(0, 31));
           }
         }
       } catch (e) { if (root.console) root.console.warn('Indicador I 09: abas não acrescentadas ao relatório', e); }

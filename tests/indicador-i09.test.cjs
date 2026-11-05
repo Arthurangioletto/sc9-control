@@ -124,7 +124,11 @@ test('abasRelatorio: dashboard compacto, mês a mês, por tipo e por dia', () =>
   const dash = abas[0].rows;
   const real = dash.find((r) => r['Indicador'] === 'Real (peças)');
   assert.strictEqual(real['OM (separa)'], 150); assert.strictEqual(real['OS (estoca)'], 670); assert.strictEqual(real['OM + OS'], 820);
-  assert.strictEqual(dash.find((r) => r['Indicador'] === '% da meta')['OM (separa)'], 15); // pontos percentuais
+  assert.strictEqual(dash.find((r) => r['Indicador'] === '% da meta')['OM (separa)'], 0.15); // fração: o Excel mostra 15,0%
+  const z = abas[0].z, linhaPct = dash.find((r) => r['Indicador'] === '% da meta'), linhaReal = dash.find((r) => r['Indicador'] === 'Real (peças)');
+  assert.strictEqual(z(linhaPct, 'OM (separa)'), '0.0%'); assert.strictEqual(z(linhaReal, 'OM (separa)'), '#,##0');
+  assert.strictEqual(z(dash.find((r) => r['Indicador'] === '% de perda (perda ÷ enviado)'), 'OS (estoca)'), '0.00%');
+  assert.strictEqual(abas[1].z(abas[1].rows[0], '% de perda'), '0.00%'); assert.strictEqual(abas[1].z(abas[1].rows[0], 'Real (peças)'), '#,##0');
   assert.strictEqual(abas[1].rows.length, 2);
   assert.strictEqual(abas[3].rows.length, 8); // até 08/10
   assert.deepStrictEqual(M.abasRelatorio({ meses: {} }, CFG), []);

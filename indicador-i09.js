@@ -248,7 +248,7 @@
   }
 
   /* ---------- abas extras do Relatório Geral (compactas: um dashboard + o dia a dia do mês mais recente) ---------- */
-  const r2 = (x) => Math.round(x * 10000) / 100; // fração -> pontos percentuais (96,94 = 96,94%)
+  const r2 = (x) => Math.round(x * 100000) / 100000; // fração (0,9694); o Excel mostra como porcentagem pelo formato da célula
   const dm = (d) => d.split('-').reverse().join('/');
   const barra = (v, max, n) => '█'.repeat(max > 0 ? Math.round((v / max) * (n || 20)) : 0);
   function abasRelatorio(base, config) {
@@ -283,7 +283,28 @@
       dia.push({ 'Data': dm(d.data), 'Dia útil': d.util ? 'Sim' : 'Não', 'OM peças': d.q, 'OM acumulado': d.acc, 'OM % da meta acum.': d.pctAcc == null ? '' : r2(d.pctAcc), 'OM perda': d.perda, 'OM': barra(d.q, maxD),
         'OS peças': e.q, 'OS acumulado': e.acc, 'OS % da meta acum.': e.pctAcc == null ? '' : r2(e.pctAcc), 'OS perda': e.perda, 'OS': barra(e.q, maxD) });
     });
-    return [{ name: 'I09 Dashboard', rows: dash }, { name: 'I09 Mês a mês', rows: mm }, { name: 'I09 Por tipo', rows: tipos }, { name: 'I09 Por dia', rows: dia }];
+    // Formato de cada célula: porcentagem onde é porcentagem, número com separador de milhar onde é valor, texto onde é texto.
+    const PCT1 = '0.0%', PCT2 = '0.00%', PCT0 = '0%', NUM = '#,##0', SALDO = '+#,##0;-#,##0;0';
+    const zDash = (r, h) => {
+      if (h === 'Indicador') return null;
+      const rot = String(r['Indicador']);
+      if (rot === '% da meta') return PCT1;
+      if (rot.indexOf('% de perda') === 0) return PCT2;
+      if (rot === 'Saldo contra a meta') return SALDO;
+      if (rot === 'Situação' || rot.indexOf('I 09 ·') === 0) return null;
+      return NUM;
+    };
+    const zCol = (r, h) => {
+      if (h === '% de perda' || /% de perda$/.test(h)) return PCT2;
+      if (/^(OM|OS) % da meta acum\./.test(h)) return PCT0;
+      if (/% da meta/.test(h)) return PCT1;
+      if (h === 'Saldo') return SALDO;
+      if (/^(Mês|Indicador|Tipo|Data|Dia útil|OM|OS)$/.test(h)) return null;
+      return typeof r[h] === 'number' ? NUM : null;
+    };
+    const larg = (rows) => { const ks = Object.keys(rows[0] || {}); return ks.map((k, i) => Math.max(k.length, ...rows.map((r) => String(r[k] == null ? '' : r[k]).length), 8) + 2); };
+    return [{ name: 'I09 Dashboard', rows: dash, z: zDash, cols: [46, 18, 18, 18] }, { name: 'I09 Mês a mês', rows: mm, z: zCol, cols: larg(mm) },
+      { name: 'I09 Por tipo', rows: tipos, z: zCol, cols: [16, 12, 14, 24, 12, 14, 24] }, { name: 'I09 Por dia', rows: dia, z: zCol, cols: larg(dia).map((w, i) => (i === 6 || i === 11 ? 24 : Math.min(w, 18))) }];
   }
 
   return { MODS, NOMES, DESCR, REGRA, MESES, BSC, SEM_TIPO, TIPOS_FIXOS, toISO, norm, lerSC2, lerTipos, lerNaoConsidera, porMes, validarLinhas, classificar, calcularMes, calcularBase, substituirMeses, abasRelatorio, nomeMes, ehUtil };
