@@ -104,10 +104,12 @@
     const X = root.XLSX; if (!X || !X.writeFile || X.__i09) return;
     const original = X.writeFile;
     X.writeFile = function (wb, nome) {
+      const args = arguments, nomesI09 = [];
       try {
         if (/^SC9_Relatorio_Geral_/.test(String(nome)) && cache.base) {
           for (const a of M.abasRelatorio(cache.base, cache.config)) {
             if (!a.rows.length) continue;
+            nomesI09.push(a.name.slice(0, 31));
             const ws = X.utils.json_to_sheet(a.rows);
             // formata cada célula (porcentagem, valor com milhar, texto) e ajusta a largura das colunas
             const cab = Object.keys(a.rows[0] || {});
@@ -117,6 +119,19 @@
           }
         }
       } catch (e) { if (root.console) root.console.warn('Indicador I 09: abas não acrescentadas ao relatório', e); }
+      // abas do I 09 em paisagem (horizontal) e ajustadas à largura da página; se algo falhar, baixa o arquivo normal
+      if (nomesI09.length && /\.xlsx$/i.test(String(nome)) && typeof M.paisagemXlsx === 'function' && typeof root.CompressionStream === 'function' && typeof root.DecompressionStream === 'function' && root.document) {
+        try {
+          const bytes = X.write(wb, Object.assign({}, args[2] || {}, { type: 'array', bookType: 'xlsx' }));
+          const self = this;
+          M.paisagemXlsx(new Uint8Array(bytes), nomesI09).then((out) => {
+            const url = URL.createObjectURL(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+            const a = root.document.createElement('a'); a.href = url; a.download = String(nome); root.document.body.appendChild(a); a.click();
+            setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
+          }, () => original.apply(self, args));
+          return;
+        } catch (e) { /* segue para o download normal abaixo */ }
+      }
       return original.apply(this, arguments);
     };
     X.__i09 = true;
@@ -251,13 +266,16 @@
         const meses = M.porMes(r.rows), sug = {};
         for (const m of Object.keys(meses)) { const salvo = base.meses[m]; sug[m] = !salvo || meses[m].length >= salvo.rows.length; }
         setSel(sug); setSt({ fase: 'pronto', arquivo: f.name, resumo: r.resumo, meses });
+        // se nenhum mês ficaria com menos linhas do que já está guardado, grava na hora (sem precisar clicar em "Gravar")
+        if (Object.keys(meses).length && Object.keys(meses).every((m) => sug[m])) await gravar(meses, sug, f.name);
       } catch (e) { setSt({ fase: 'erro', erro: e.message }); }
     };
-    const gravar = async () => {
-      const escolhidos = Object.keys(st.meses).filter((m) => sel[m]); if (!escolhidos.length) return;
+    const gravar = async (mesesArg, selArg, arquivoArg) => {
+      const dados = mesesArg && typeof mesesArg === 'object' && !mesesArg.nativeEvent && !mesesArg.target ? mesesArg : st.meses, marcados = selArg || sel, nomeArq = arquivoArg || st.arquivo;
+      const escolhidos = Object.keys(dados).filter((m) => marcados[m]); if (!escolhidos.length) return;
       setOcupado(true); setMsg(null);
       try {
-        for (const m of escolhidos.sort()) await api('/api/indicador-i09', { acao: 'mes', mes: m, rows: st.meses[m], arquivo: st.arquivo, ate });
+        for (const m of escolhidos.sort()) await api('/api/indicador-i09', { acao: 'mes', mes: m, rows: dados[m], arquivo: nomeArq, ate });
         const d = await onSalvo();
         const res = M.calcularBase(d.base, d.config);
         setMsg({ ok: true, t: 'Gravado. ' + escolhidos.map((m) => { const c = res[m]; return M.nomeMes(m) + ': OM ' + fmtN(c.om.real) + ' (' + fmtP(c.om.pct) + ') · OS ' + fmtN(c.os.real) + ' (' + fmtP(c.os.pct) + ')'; }).join(' | ') + '. Os outros meses ficaram como estavam.' });
@@ -277,7 +295,7 @@
               h('td', null, fmtN(novo.length) + ' linhas · ' + fmtN(q(novo)) + ' peças'), h('td', null, salvo ? fmtN(salvo.rows.length) + ' linhas · ' + fmtN(q(salvo.rows)) + ' peças (' + fmtDH(salvo.savedAt) + ')' : 'ainda não existe', menor && h('div', { style: { color: WARN, fontSize: 11.5 } }, 'O arquivo tem menos linhas que a base. Só marque se for isso mesmo.'))); }))),
         h('div', { className: 'sc9-i09-row', style: { marginTop: 10 } },
           h('label', null, 'Data da extração: ', h('input', { type: 'date', className: 'sc9-i09-inp', value: ate, onChange: (e) => setAte(e.target.value) })),
-          h('button', { className: 'sc9-i09-btn pri', disabled: ocupado || !Object.keys(st.meses).some((m) => sel[m]), onClick: gravar }, ocupado ? 'Gravando…' : 'Gravar meses marcados'),
+          h('button', { className: 'sc9-i09-btn pri', disabled: ocupado || !Object.keys(st.meses).some((m) => sel[m]), onClick: () => gravar() }, ocupado ? 'Gravando…' : 'Gravar meses marcados'),
           h('button', { className: 'sc9-i09-btn', disabled: ocupado, onClick: () => setSt({ fase: 'vazio' }) }, 'Cancelar'))),
       msg && h('div', { className: msg.ok ? 'sc9-i09-ok' : 'sc9-i09-err', onClick: (e) => e.stopPropagation() }, msg.t, msg.ok && onAbrir && h('div', { style: { marginTop: 6 } }, h('button', { className: 'sc9-i09-btn sm', onClick: onAbrir }, 'Abrir o dashboard'))));
     return h('div', null,
