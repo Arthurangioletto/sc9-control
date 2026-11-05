@@ -37,7 +37,7 @@
     return [...map.values()].filter(t=>t.out>eps||t.into>eps).map(t=>({...t,users:[...t.users],valid:t.out>eps&&Math.abs(t.out-t.into)<=eps&&!Object.values(t.elsewhere).some(q=>q>eps),remaining:t.out>eps&&Math.abs(t.out-t.into)<=eps&&!Object.values(t.elsewhere).some(q=>q>eps)?t.into:0})).sort((a,b)=>a.dt.localeCompare(b.dt)||a.key.localeCompare(b.key));
   }
   function reconcile(entries,sd3={}){
-    const docs=transfers(sd3.rows),coverage=(sd3.coverage||[]).map(c=>({...c,importedDay:spDay(c.importedAt)})),products=new Map(),docIndex=new Map();
+    const docs=transfers(sd3.rows),coverage=(sd3.coverage||[]).map(c=>({...c,importedDay:spDay(c.importedAt)})),products=new Map(),docIndex=new Map(),pendingTransfers=new Set();
     for(const doc of docs){const k=JSON.stringify([doc.filial,lot(doc.lote),doc.produto]);doc.day=day(doc.dt);if(!docIndex.has(k))docIndex.set(k,[]);docIndex.get(k).push(doc);}
     for(const r of sd3.rows||[]){const k=JSON.stringify([r.filial,lot(r.lote)]);if(!products.has(k))products.set(k,new Set());products.get(k).add(r.produto);}
     const rows=[...(entries||[])].sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||(a.sequence||0)-(b.sequence||0)||a.id.localeCompare(b.id)).map(e=>{
@@ -46,8 +46,8 @@
       const result={...e,receivedDay,produtoResolvido:produto,candidates,covered,allocated:0,missing:e.quantidade,docs:[],issues:[]};
       if(e.cancelledAt)return {...result,status:'cancelado',message:'Registro cancelado; quantidade fora da conferência.'};
       if(!produto&&candidates.length>1)return {...result,status:'produto_ambiguo',message:'Este lote aparece em mais de um produto. Identifique o produto para conferir sem misturar quantidades.'};
-      const compatible=(docIndex.get(JSON.stringify([e.filial,lot(e.lote),produto]))||[]).filter(t=>t.day>=d-2);
-      for(const t of compatible){if(!t.valid||t.remaining<=eps||result.missing<=eps)continue;const used=Math.min(t.remaining,result.missing);t.remaining-=used;result.allocated+=used;result.missing=Math.max(0,e.quantidade-result.allocated);result.docs.push({doc:t.doc,dt:t.dt,produto:t.produto,quantidade:used,transferida:t.into,usuarios:t.users});}
+      const compatible=(docIndex.get(JSON.stringify([e.filial,lot(e.lote),produto]))||[]).filter(t=>t.day>=d-2||pendingTransfers.has(t.key));
+      for(const t of compatible){if(!t.valid||t.remaining<=eps||result.missing<=eps)continue;const used=Math.min(t.remaining,result.missing);t.remaining-=used;result.allocated+=used;result.missing=Math.max(0,e.quantidade-result.allocated);if(t.remaining>eps)pendingTransfers.add(t.key);else pendingTransfers.delete(t.key);result.docs.push({documentKey:t.key,doc:t.doc,dt:t.dt,produto:t.produto,quantidade:used,transferida:t.into,usuarios:t.users});}
       if(result.missing<=eps){const lateTransfer=result.docs.some(doc=>day(doc.dt)>d);return {...result,lateTransfer,status:'conferido',message:lateTransfer?'Quantidade conciliada com transferência lançada após a data do recebimento. Consulte a data dos documentos.':'Quantidade recebida conciliada com saída do 02 e entrada no 01 no mesmo documento.'};}
       const partial=result.allocated>eps?'O SD3 conciliou '+quantityLabel(result.allocated)+' de '+quantityLabel(e.quantidade)+' recebidas; '+quantityLabel(result.missing)+' ainda sem correspondência. ':'';
       if(!covered)return {...result,status:'aguardando_sd3',message:partial+'Aguardando SD3 atualizado para a data deste recebimento. A ausência na base atual ainda não comprova divergência.'};
@@ -56,8 +56,26 @@
       const issue=other.length?'O SD3 registra entrada no armazém '+other.join(', ')+', diferente do 01.':result.issues.length?'O documento não possui saída do 02 e entrada no 01 com quantidades iguais.':partial?'A quantidade recebida excede a quantidade disponível para este recebimento no SD3.':compatible.some(t=>t.valid)?'As quantidades disponíveis nas transferências deste lote já estão vinculadas a outros recebimentos.':'Transferência 02 → 01 não encontrada no período do SD3 importado.';
       return {...result,status:'divergente',message:partial+issue};
     });
+    // Build groups only through document quantities actually allocated above. Same lot alone is not a link.
+    const docByKey=new Map(docs.map(t=>[t.key,t])),owners=new Map(),parents=rows.map((_,i)=>i);
+    function find(i){while(parents[i]!==i){parents[i]=parents[parents[i]];i=parents[i];}return i;}
+    rows.forEach((r,i)=>{if(r.cancelledAt)return;for(const d of r.docs){const previous=owners.get(d.documentKey);if(previous!==undefined)parents[find(i)]=find(previous);else owners.set(d.documentKey,i);}});
+    const groups=new Map(),partialGroups=[];rows.forEach((r,i)=>{if(!r.docs.length||r.cancelledAt)return;const key=find(i);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);});
+    for(const members of groups.values()){
+      const keys=[...new Set(members.flatMap(r=>r.docs.map(d=>d.documentKey)))],documents=keys.map(key=>docByKey.get(key)),expected=documents.reduce((sum,t)=>sum+t.into,0),received=members.reduce((sum,r)=>sum+r.quantidade,0),allocated=members.reduce((sum,r)=>sum+r.allocated,0),remaining=documents.reduce((sum,t)=>sum+Math.max(0,t.remaining),0),unmatched=members.reduce((sum,r)=>sum+r.missing,0),complete=remaining<=eps&&unmatched<=eps;
+      if(members.length===1&&complete)continue;
+      const group={id:members[0].id,expected,received,allocated,remaining,unmatched,complete,documents:documents.map(t=>({doc:t.doc,dt:t.dt,produto:t.produto,quantidade:t.into})),receipts:members.map(r=>({id:r.id,lote:r.lote,quantidade:r.quantidade,allocated:r.allocated,createdAt:r.createdAt,createdBy:r.createdBy,createdByName:r.createdByName}))};
+      partialGroups.push(group);
+      for(const r of members){
+        r.partialGroupId=group.id;
+        if(r.issues.length)continue; // An invalid destination/document keeps its operational warning.
+        const description=members.length+(members.length===1?' bipagem vinculada: ':' bipagens vinculadas: ')+quantityLabel(received)+' recebidas para '+quantityLabel(expected)+' nos documentos.';
+        if(complete){r.status='conferido';r.message='Conferido por bipagens parciais. '+description+(r.lateTransfer?' Há transferência lançada após a data do recebimento.':'');}
+        else{r.status='saldo_parcial';r.message='Saldo parcial. '+description+(remaining>eps?' Faltam receber '+quantityLabel(remaining)+' para completar os documentos.':'')+(unmatched>eps?' Há '+quantityLabel(unmatched)+' recebidas sem correspondência no SD3. Confira o lançamento ou o documento antes de registrar novas quantidades.':'');}
+      }
+    }
     const excess=docs.filter(t=>t.valid&&t.remaining>eps).map(t=>({filial:t.filial,produto:t.produto,lote:t.lote,doc:t.doc,dt:t.dt,quantidade:t.remaining}));
-    return {rows:rows.reverse(),excess,stats:{active:rows.filter(r=>!r.cancelledAt).length,received:rows.filter(r=>!r.cancelledAt).reduce((sum,r)=>sum+r.quantidade,0),conferido:rows.filter(r=>r.status==='conferido').length,aguardando_sd3:rows.filter(r=>r.status==='aguardando_sd3').length,divergente:rows.filter(r=>r.status==='divergente').length,produto_ambiguo:rows.filter(r=>r.status==='produto_ambiguo').length}};
+    return {rows:rows.reverse(),partialGroups,excess,stats:{active:rows.filter(r=>!r.cancelledAt).length,received:rows.filter(r=>!r.cancelledAt).reduce((sum,r)=>sum+r.quantidade,0),conferido:rows.filter(r=>r.status==='conferido').length,saldo_parcial:rows.filter(r=>r.status==='saldo_parcial').length,aguardando_sd3:rows.filter(r=>r.status==='aguardando_sd3').length,divergente:rows.filter(r=>r.status==='divergente').length,produto_ambiguo:rows.filter(r=>r.status==='produto_ambiguo').length}};
   }
   function parseWorkbook(wb,XLSX,{filial='01'}={}){
     const norm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase().replace(/[_\.]/g,' ').replace(/\s+/g,' ');

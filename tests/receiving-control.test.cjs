@@ -44,13 +44,42 @@ test('frações e lotes numéricos com zeros seguem a comparação existente sem
 test('cobertura importada antes do recebimento no mesmo dia não comprova ausência posterior',()=>{
  const sd3=M.replacePeriod(null,[],{filial:'01',desde:'2026-11-05',ate:'2026-11-05',now:'2026-11-05T12:00:00Z'}).sd3;assert.equal(M.reconcile([receipt()],sd3).rows[0].status,'aguardando_sd3');
 });
-test('204 recebidas para 203 no documento só é divergência após cobertura suficiente do SD3',()=>{
+test('203 conciliadas para 204 recebidas têm saldo parcial com excesso explícito, independente da cobertura',()=>{
  const entry=receipt({quantidade:204}),movements=pair(203);
  const old=M.replacePeriod(null,movements,{filial:'01',desde:'2026-11-05',ate:'2026-11-05',now:'2026-11-05T12:00:00Z'}).sd3;
- let row=M.reconcile([entry],old).rows[0];assert.equal(row.status,'aguardando_sd3');assert.equal(row.allocated,203);assert.equal(row.missing,1);assert.match(row.message,/203 de 204/);
- const current=base(movements);row=M.reconcile([entry],current).rows[0];assert.equal(row.status,'divergente');assert.equal(row.allocated,203);assert.equal(row.missing,1);assert.match(row.message,/203 de 204/);assert(!row.message.includes('não encontrada'));
+ let result=M.reconcile([entry],old),row=result.rows[0];assert.equal(row.status,'saldo_parcial');assert.equal(row.allocated,203);assert.equal(row.missing,1);assert.equal(result.partialGroups[0].unmatched,1);
+ const current=base(movements);result=M.reconcile([entry],current);row=result.rows[0];assert.equal(row.status,'saldo_parcial');assert.equal(row.allocated,203);assert.equal(row.missing,1);assert.match(row.message,/1 recebidas sem correspondência/);assert(!row.message.includes('não encontrada'));assert(!result.partialGroups[0].complete);
  assert.equal(M.reconcile([receipt({quantidade:203})],current).rows[0].status,'conferido');
  assert.equal(M.reconcile([entry],base(pair(204))).rows[0].status,'conferido');
+});
+
+test('135 de 245 ficam parciais; ao bipar 110 ambas passam a conferidas com o vínculo preservado',()=>{
+ const sd3=base(pair(245)),a=receipt({id:'A',quantidade:135}),b=receipt({id:'B',quantidade:110,createdAt:'2026-11-05T14:00:00Z'}),before=structuredClone([a,sd3]);
+ const partial=M.reconcile([a],sd3);assert.equal(partial.rows[0].status,'saldo_parcial');assert.equal(partial.rows[0].allocated,135);assert.equal(partial.rows[0].missing,0);assert.equal(partial.partialGroups[0].remaining,110);assert.match(partial.rows[0].message,/Faltam receber 110/);
+ const done=M.reconcile([a,b],sd3);assert(done.rows.every(r=>r.status==='conferido'));assert(done.rows.every(r=>r.partialGroupId==='A'));assert.equal(done.partialGroups.length,1);assert.equal(done.partialGroups[0].received,245);assert.equal(done.partialGroups[0].receipts.length,2);assert(done.partialGroups[0].complete);assert(done.rows.every(r=>r.message.includes('Conferido por bipagens parciais')));assert.deepEqual([a,sd3],before);
+ const cancelled=M.reconcile([{...b,cancelledAt:'2026-11-05T15:00:00Z'},a],sd3);assert.equal(cancelled.rows.find(r=>r.id==='A').status,'saldo_parcial');assert.equal(cancelled.partialGroups[0].remaining,110);assert.equal(cancelled.partialGroups[0].receipts.length,1);
+});
+
+test('bipagens anteriores consomem o mesmo documento; 111 mais 135 não fecham um documento de 245',()=>{
+ const sd3=base(pair(245)),a=receipt({id:'A',quantidade:111}),b=receipt({id:'B',quantidade:135,createdAt:'2026-11-05T14:00:00Z'});
+ let result=M.reconcile([a,b],sd3);assert.equal(result.rows.find(r=>r.id==='B').allocated,134);assert(result.rows.every(r=>r.status==='saldo_parcial'));assert.equal(result.partialGroups[0].received,246);assert.equal(result.partialGroups[0].expected,245);assert.equal(result.partialGroups[0].unmatched,1);assert(!result.partialGroups[0].complete);
+ result=M.reconcile([a,b,receipt({id:'C',quantidade:110,createdAt:'2026-11-05T15:00:00Z'})],sd3);assert(result.rows.every(r=>r.status!=='conferido'));assert.equal(result.rows.reduce((sum,r)=>sum+r.allocated,0),245);
+});
+
+test('restante de uma bipagem já iniciada pode completar o documento após a janela inicial de dois dias',()=>{
+ const sd3=base(pair(10)),a=receipt({id:'A',quantidade:4}),b=receipt({id:'B',quantidade:6,createdAt:'2026-11-12T14:00:00Z'});
+ assert.equal(M.reconcile([b],sd3).rows[0].status,'aguardando_sd3');const result=M.reconcile([a,b],sd3);assert(result.rows.every(r=>r.status==='conferido'));assert.equal(result.partialGroups[0].receipts.length,2);
+});
+
+test('grupos não misturam produtos, filiais nem documentos independentes do mesmo lote',()=>{
+ const sd3=M.replacePeriod(base([...pair(10,{doc:'D1'}),...pair(20,{doc:'D2'}),...pair(30,{doc:'D3',produto:'Q'})]),pair(40,{doc:'D4',filial:'02'}),{filial:'02',desde:'2026-11-05',ate:'2026-11-05',now:'2026-11-06T12:00:00Z'}).sd3;
+ const entries=[receipt({id:'A',quantidade:10,produto:'P'}),receipt({id:'B',quantidade:5,produto:'P'}),receipt({id:'C',quantidade:15,produto:'P'}),receipt({id:'D',quantidade:5,produto:'Q'}),receipt({id:'E',quantidade:5,produto:'P',filial:'02'})],result=M.reconcile(entries,sd3);
+ assert(!result.rows.find(r=>r.id==='A').partialGroupId);assert.equal(result.rows.find(r=>r.id==='B').partialGroupId,'B');assert.equal(result.rows.find(r=>r.id==='C').partialGroupId,'B');assert.equal(result.rows.find(r=>r.id==='D').status,'saldo_parcial');assert.equal(result.rows.find(r=>r.id==='E').status,'saldo_parcial');assert.equal(result.rows.find(r=>r.id==='E').partialGroupId,'E');assert.equal(result.partialGroups.find(g=>g.id==='E').expected,40);assert(result.partialGroups.every(g=>g.documents.every(d=>d.produto===g.documents[0].produto)));
+});
+
+test('uma bipagem pode iniciar dois documentos e ambos fecham ao receber o restante, sem duplicar a soma',()=>{
+ const sd3=base([...pair(100,{doc:'D1'}),...pair(145,{doc:'D2'})]),a=receipt({id:'A',quantidade:135}),b=receipt({id:'B',quantidade:110,createdAt:'2026-11-05T14:00:00Z'});
+ const result=M.reconcile([a,b],sd3);assert.equal(result.partialGroups.length,1);assert.equal(result.partialGroups[0].documents.length,2);assert.equal(result.partialGroups[0].expected,245);assert.equal(result.partialGroups[0].allocated,245);assert(result.rows.every(r=>r.status==='conferido'));assert.equal(result.rows.reduce((sum,r)=>sum+r.allocated,0),245);
 });
 test('datas e campos inválidos impedem importar parcialmente um arquivo',()=>{
  assert.throws(()=>base([movement({qt:'inválida'})]),/quantidade/);assert.throws(()=>base([movement({dt:'2026-02-30'})]),/Data/);assert.throws(()=>base([movement({doc:''})]),/documento/);assert.throws(()=>M.replacePeriod(null,pair(),{filial:'01',desde:'2026-11-01',ate:'2026-11-02'}),/fora/);

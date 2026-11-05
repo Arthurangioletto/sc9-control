@@ -68,3 +68,12 @@ test('motivo obrigatório é enviado, fica visível após salvar e sai na export
  // A status filter can hide the cancelled record, but the audit remains available in the workbook.
  nodes(tree,n=>n.type==='select'&&n.children.some(v=>v?.props?.value==='divergente'))[0].props.onChange({target:{value:'conferido'}});tree=env.render(props);const button=nodes(tree,n=>n.type==='button'&&n.children.includes('Exportar recebimentos do recorte'))[0];assert(!button.props.disabled);button.props.onClick();assert.equal(exported[0].rows.length,0);assert.equal(exported.find(s=>s.name==='Correções').rows[0]['Motivo da correção'],corrected.cancelReason);
 });
+
+test('saldo parcial aparece nos pendentes; ao completar, ambas as bipagens ficam vinculadas e exportáveis',()=>{
+ const movement=more=>({filial:'01',armazem:'02',produto:'P',lote:'L1',doc:'D1',tp:999,qt:245,dt:'2026-11-05',cf:'RE4',...more}),sd3=M.replacePeriod(null,[movement({}),movement({armazem:'01',tp:499,cf:'DE4'})],{filial:'01',desde:'2026-11-05',ate:'2026-11-05',now:'2026-11-06T12:00:00Z'}).sd3;
+ const a={id:'A',filial:'01',lote:'L1',quantidade:135,createdAt:'2026-11-05T12:00:00Z',createdBy:'pessoa'},b={...a,id:'B',quantidade:110,createdAt:'2026-11-12T12:00:00Z'};
+ const partialEnv=setup({data:{...M.reconcile([a],sd3),sd3:{coverage:[]}}});let tree=partialEnv.render();assert(JSON.stringify(tree).includes('Saldo parcial'));assert(JSON.stringify(tree).includes('Faltam receber 110'));assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-metric pendentes')[0].children[1].children[0],'1');
+ nodes(tree,n=>n.props.className==='sc9-receiving-metric pendentes')[0].props.onClick();tree=partialEnv.render();assert.equal(nodes(tree,n=>n.type==='article').length,1);
+ let exported;const env=setup({now:'2026-11-12T15:00:00Z',data:{...M.reconcile([a,b],sd3),sd3:{coverage:[]}}}),props={exportWorkbook:sheets=>exported=sheets};tree=env.render(props);assert.equal(nodes(tree,n=>n.type==='article').length,1);assert(JSON.stringify(tree).includes('Conferido por bipagens parciais'));assert(JSON.stringify(tree).includes('esta bipagem'));
+ nodes(tree,n=>n.type==='button'&&n.children.includes('Exportar recebimentos do recorte'))[0].props.onClick();assert.equal(exported[0].rows.length,1);assert.equal(exported[0].rows[0]['Grupo de bipagens'],'A');const links=exported.find(s=>s.name==='Bipagens parciais').rows;assert.equal(links.length,2);assert.deepEqual(Array.from(links,r=>r['Quantidade desta bipagem']),[135,110]);assert(links.every(r=>r['Grupo completo']==='Sim'));
+});
