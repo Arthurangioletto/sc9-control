@@ -21,11 +21,11 @@
   }
   const movementKey=r=>JSON.stringify([r.filial,r.dt,r.doc,r.produto,lot(r.lote),r.armazem,r.tp,r.cf,r.estornado]);
   function aggregate(rows){const map=new Map();for(const raw of rows){const r=normalizeMovement(raw);if(!r)continue;const k=movementKey(r),old=map.get(k);map.set(k,old?{...r,qt:old.qt+r.qt}:r);if(!Number.isFinite(map.get(k).qt))throw new ValidationError('Quantidade acumulada inválida.');}return [...map.values()];}
-  function replacePeriod(previous,rows,{filial,desde,ate,now=new Date().toISOString(),name='SD3'}={}){
+  function replacePeriod(previous,rows,{filial,desde,ate,now=new Date().toISOString(),name='SD3',importedBy=''}={}){
     filial=code(filial);desde=date(desde);ate=date(ate);if(!filial||desde>ate)throw new ValidationError('Informe a filial e um período válido.');
     const all=aggregate(rows),selected=all.filter(r=>r.filial===filial);
     if(selected.some(r=>r.dt<desde||r.dt>ate))throw new ValidationError('Há movimentos da filial fora do período informado. Amplie o período para cobrir o arquivo completo.');
-    const old=previous?.rows||[],kept=old.filter(r=>r.filial!==filial||r.dt<desde||r.dt>ate),coverage=(previous?.coverage||[]).filter(c=>c.filial!==filial||c.desde!==desde||c.ate!==ate).concat({filial,desde,ate,importedAt:now,name:String(name).slice(0,200)});
+    const old=previous?.rows||[],kept=old.filter(r=>r.filial!==filial||r.dt<desde||r.dt>ate),coverage=(previous?.coverage||[]).filter(c=>c.filial!==filial||c.desde!==desde||c.ate!==ate).concat({filial,desde,ate,importedAt:now,name:String(name).slice(0,200),importedBy:String(importedBy).slice(0,100)});
     return {sd3:{rows:[...kept,...selected],coverage,updatedAt:now,source:String(name).slice(0,200)},stats:{received:rows.length,selected:selected.length,ignoredOtherBranches:all.length-selected.length,replaced:old.length-kept.length,retained:kept.length,cancelled:selected.filter(r=>r.estornado).length}};
   }
   function transfers(rows){
