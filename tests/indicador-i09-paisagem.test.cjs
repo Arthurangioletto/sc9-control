@@ -57,3 +57,19 @@ test('paisagemXlsx: repetir não duplica e o zip continua íntegro', async () =>
   assert.strictEqual((duas['xl/worksheets/sheet2.xml'].match(/<pageSetUpPr\b/g) || []).length, 1);
   assert.strictEqual(duas['[Content_Types].xml'], '<Types/>');
 });
+
+test('paisagemXlsx: sem pageMargins, entra antes de ignoredErrors/drawing (ordem do esquema que o Excel exige)', async () => {
+  const sheet = '<?xml version="1.0"?><worksheet xmlns="x"><dimension ref="A1"/><sheetViews/><sheetData/><ignoredErrors><ignoredError sqref="A1"/></ignoredErrors><drawing r:id="rId1"/></worksheet>';
+  const zip = zipSimples({
+    'xl/workbook.xml': '<workbook xmlns:r="x"><sheets><sheet name="I09 Dashboard" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Type="t" Target="worksheets/sheet1.xml"/></Relationships>',
+    'xl/worksheets/sheet1.xml': sheet,
+  });
+  const x = lerArq(await M.paisagemXlsx(zip, ['I09 Dashboard']))['xl/worksheets/sheet1.xml'];
+  const pos = (t) => x.indexOf(t);
+  assert.ok(pos('<pageMargins') > pos('<sheetData/>'));
+  assert.ok(pos('<pageMargins') < pos('<pageSetup'));
+  assert.ok(pos('<pageSetup') < pos('<ignoredErrors'), 'pageSetup antes de ignoredErrors');
+  assert.ok(pos('<ignoredErrors') < pos('<drawing'));
+  assert.ok(pos('<sheetPr>') < pos('<dimension'));
+});

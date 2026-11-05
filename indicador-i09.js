@@ -353,7 +353,13 @@
     if (!/<pageSetup\b/.test(s)) {
       const ps = '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>';
       if (/<pageMargins\b[^>]*\/>/.test(s)) s = s.replace(/(<pageMargins\b[^>]*\/>)/, '$1' + ps);
-      else s = s.replace('</worksheet>', '<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>' + ps + '</worksheet>');
+      else {
+        // o Excel exige a ordem do esquema: pageMargins e pageSetup vêm ANTES de headerFooter, ignoredErrors, drawing, tableParts etc.
+        const novo = '<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>' + ps;
+        const depois = /<(headerFooter|rowBreaks|colBreaks|customProperties|cellWatches|ignoredErrors|smartTags|drawing|legacyDrawing|legacyDrawingHF|drawingHF|picture|oleObjects|controls|webPublishItems|tableParts|extLst)[\s/>]/.exec(s);
+        if (depois) s = s.slice(0, depois.index) + novo + s.slice(depois.index);
+        else s = s.replace('</worksheet>', novo + '</worksheet>');
+      }
     }
     if (!/<pageSetUpPr\b/.test(s)) {
       if (/<sheetPr\s*\/>/.test(s)) s = s.replace(/<sheetPr\s*\/>/, '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
