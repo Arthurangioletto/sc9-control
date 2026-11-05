@@ -647,3 +647,28 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 @media(max-width:1000px){.sc9-receiving-overview{grid-template-columns:1fr;}}
 @media(max-width:650px){.sc9-receiving-management .sc9-receiving-panel{padding:16px;}.sc9-receiving-management .sc9-receiving-metric{padding:14px;}.sc9-receiving-management .sc9-receiving-rate{font-size:24px;}.sc9-receiving-management .sc9-receiving-metric small{font-size:11px;}}
 @media(prefers-reduced-motion:reduce){.sc9-receiving-management{scroll-behavior:auto;}}
+
+/* Compact management: shared receipt period, three KPIs and actionable lots. */
+.sc9-receiving-management .sc9-receiving-metrics{grid-template-columns:repeat(3,minmax(0,1fr));}
+.sc9-receiving-scope{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;}
+.sc9-receiving-scope-fields{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px;min-width:0;}
+.sc9-receiving-scope-fields>label:first-child{max-width:110px;}
+.sc9-receiving-custom-dates{display:flex;flex-wrap:wrap;gap:12px;min-width:0;}
+.sc9-receiving-management .sc9-receiving-overview-single{grid-template-columns:1fr;}
+.sc9-receiving-management .sc9-receiving-overview h2{font-size:15px;}
+.sc9-receiving-management .sc9-receiving-track{margin:12px 0;}
+.sc9-receiving-management .sc9-receiving-help{margin-top:12px;font-size:12px;color:var(--sc9-muted);}
+.sc9-receiving-management .sc9-receiving-help summary{font-weight:500;}
+.sc9-receiving-priority small{font-size:11px;color:var(--sc9-accent);}
+.sc9-receiving-priority strong,.sc9-receiving-priority span{overflow-wrap:anywhere;}
+.sc9-receiving-identify{padding:10px 14px;border:1px solid var(--sc9-border);border-radius:8px;background:var(--sc9-highlight);color:var(--sc9-ink);text-align:left;font:inherit;cursor:pointer;}
+.sc9-receiving-source-summary{display:flex;align-items:center;flex-wrap:wrap;gap:8px 18px;font-size:12px;}
+.sc9-receiving-source-summary>strong{font-size:13px;}
+.sc9-receiving-management .sc9-receiving-product{margin:4px 0 0;font-size:12px;color:var(--sc9-muted);}
+.sc9-receiving-quantities{display:flex;gap:12px 28px;flex-wrap:wrap;margin-top:12px;}
+.sc9-receiving-quantities>span{display:flex;flex-direction:column;gap:4px;}
+.sc9-receiving-quantities small{color:var(--sc9-muted);font-size:11px;}
+.sc9-receiving-quantities strong{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;}
+.sc9-receiving-management .sc9-receiving-reason{padding:8px 10px;background:#fce8ed;color:#9d203b;border-radius:6px;font-size:12px;}
+.sc9-receiving-management .produto_ambiguo .sc9-receiving-reason{background:var(--sc9-highlight);color:var(--sc9-ink);}
+@media(max-width:650px){.sc9-receiving-management .sc9-receiving-metrics{grid-template-columns:1fr;gap:8px;}.sc9-receiving-management .sc9-receiving-metric{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:12px 14px;}.sc9-receiving-management .sc9-receiving-metric strong{grid-column:2;grid-row:1/3;align-self:center;font-size:24px;}.sc9-receiving-management .sc9-receiving-metric small{grid-column:1;}.sc9-receiving-scope-fields{width:100%;}.sc9-receiving-scope-fields>label{flex:1;}.sc9-receiving-custom-dates{width:100%;}.sc9-receiving-custom-dates>label{flex:1;min-width:0;}.sc9-receiving-quantities{gap:10px 20px;}}

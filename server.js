@@ -1440,7 +1440,7 @@ async function handleApi(req, res, pathname) {
         const options=body.acao==='preverSD3'?{filial:Receiving.code(body.filial),desde:Receiving.date(body.desde),ate:Receiving.date(body.ate)}:upload.preview;
         if(!options)throw new ErroHttp(400,'Confira a prévia antes de aplicar.');
         if(options.ate>Receiving.spDay(now))throw new ErroHttp(400,'A cobertura do SD3 não pode terminar em uma data futura.');
-        const result=Receiving.replacePeriod(current.sd3,upload.rows,{...options,now,name:upload.name}),next={...current,revision:crypto.randomUUID(),sd3:result.sd3},analysis=Receiving.reconcile(next.entries,next.sd3);
+        const result=Receiving.replacePeriod(current.sd3,upload.rows,{...options,now,name:upload.name,importedBy:owner}),next={...current,revision:crypto.randomUUID(),sd3:result.sd3},analysis=Receiving.reconcile(next.entries,next.sd3);
         if(body.acao==='preverSD3'){upload.preview=options;return sendJson(res,200,{ok:true,...result.stats,stats:analysis.stats,filial:options.filial,desde:options.desde,ate:options.ate});}
         const backup='controle-recebimentos-backup-'+crypto.randomUUID()+'.json';await objSave(backup,{data:current,savedAt:now});await receivingSave(next);receivingUploads.delete(body.id);return sendJson(res,200,{ok:true,backup,...view(next)});
       });

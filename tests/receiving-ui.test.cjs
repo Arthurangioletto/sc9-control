@@ -1,8 +1,8 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),M=require('../receiving-control.js'),crypto=require('node:crypto');
 function nodes(tree,predicate){const found=[];function visit(node){if(!node||typeof node!=='object')return;if(predicate(node))found.push(node);for(const child of(node.children||[]).flat(Infinity))visit(child);}visit(tree);return found;}
-function setup({failFirst=false,data={rows:[],excess:[],sd3:{coverage:[]}}}={}){
+function setup({failFirst=false,data={rows:[],excess:[],sd3:{coverage:[]}},now='2026-11-05T15:00:00Z'}={}){
  const states=[],refs=[],requests=[];let cursor=0,refCursor=0;const R={createElement:(type,props,...children)=>({type,props:props||{},children}),useState:initial=>{const i=cursor++;if(!(i in states))states[i]=initial;return[states[i],v=>states[i]=typeof v==='function'?v(states[i]):v];},useRef:initial=>{const i=refCursor++;return refs[i]||(refs[i]={current:initial});},useEffect:()=>{}};
- const root={React:R,SC9Receiving:M,crypto:{randomUUID:crypto.randomUUID}},fetch=async(url,options)=>{const body=JSON.parse(options.body);requests.push(body);if(failFirst&&requests.length===1)return{ok:false,status:500,json:async()=>({error:'Falha temporária'})};return{ok:true,json:async()=>data};};vm.runInNewContext(fs.readFileSync(require.resolve('../receiving-ui.js'),'utf8'),{window:root,fetch});
+ const root={React:R,SC9Receiving:M,crypto:{randomUUID:crypto.randomUUID}},fetch=async(url,options)=>{const body=JSON.parse(options.body);requests.push(body);if(failFirst&&requests.length===1)return{ok:false,status:500,json:async()=>({error:'Falha temporária'})};return{ok:true,json:async()=>data};};vm.runInNewContext(fs.readFileSync(require.resolve('../receiving-ui.js'),'utf8'),{window:root,fetch,Date:class extends Date{constructor(...args){super(...(args.length?args:[now]));}}});
  states[0]=data;return {states,requests,render:(props={})=>{cursor=refCursor=0;return root.SC9ReceiptControl({isAdmin:false,authInfo:{usuario:'pessoa'},parseLot:raw=>({lote:raw.replace('LOTE:','').trim()}),...props});}};
 }
 test('formulário registra diretamente lote e quantidade, mantém o identificador ao tentar novamente e preserva histórico antigo',async()=>{
@@ -22,13 +22,34 @@ test('exportação inclui todo o recorte, independente da página, e conserva o 
 test('visão de gestão calcula conciliação por registro ativo da filial, sem misturar cancelamentos e filtros do histórico',()=>{
  const make=(id,status,filial='01',extra={})=>({id,filial,lote:'L'+id,quantidade:10,status,createdAt:'2026-11-05T12:00:00Z',docs:[],issues:[],...extra});
  const rows=[make('1','conferido'),make('2','conferido'),make('3','divergente'),make('4','aguardando_sd3'),make('5','produto_ambiguo','01',{candidates:['A','B']}),make('6','cancelado','01',{cancelledAt:'2026-11-05T13:00:00Z'}),make('7','conferido','02')],env=setup({data:{rows,excess:[],sd3:{coverage:[]}}});
- let tree=env.render();assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-rate')[0].children[0],'40%');
- assert(JSON.stringify(tree).includes('2 de 5 recebimentos ativos conferidos'));
+ let tree=env.render();assert(JSON.stringify(nodes(tree,n=>n.props.className==='sc9-receiving-metric conferido')[0]).includes('40% dos recebimentos ativos'));
+ assert(JSON.stringify(tree).includes('5 ativos no período'));
  const track=nodes(tree,n=>n.props.className==='sc9-receiving-track')[0];assert.equal(track.children.flat().reduce((sum,n)=>sum+parseFloat(n.props.style.width),0),100);
- const priorities=nodes(tree,n=>n.type==='button'&&n.props.className==='sc9-receiving-priority divergente');priorities[0].props.onClick();tree=env.render();assert.equal(nodes(tree,n=>n.type==='article').length,1);assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-rate')[0].children[0],'40%');
+ const priorities=nodes(tree,n=>n.type==='button'&&n.props.className==='sc9-receiving-priority divergente');priorities[0].props.onClick();tree=env.render();assert.equal(nodes(tree,n=>n.type==='article').length,1);assert(JSON.stringify(nodes(tree,n=>n.props.className==='sc9-receiving-metric conferido')[0]).includes('40% dos recebimentos ativos'));
  const sections=tree.children.flat().filter(n=>n&&n.type==='section');assert(sections.findIndex(n=>n.props['aria-label']==='Visão de gestão dos recebimentos')<sections.findIndex(n=>n.props['aria-label']==='Registrar recebimento no armazém 01'));
 });
 
-test('visão de gestão sem registros ativos não divide por zero',()=>{
- const env=setup();const tree=env.render();assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-rate')[0].children[0],'0%');assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-track').length,0);assert(JSON.stringify(tree).includes('Sem recebimentos ativos nesta filial.'));
+test('visão de gestão sem registros ativos distingue ausência de dados de percentual zero',()=>{
+ const env=setup();const tree=env.render();assert(JSON.stringify(tree).includes('Sem recebimentos ativos'));assert(!JSON.stringify(tree).includes('0% dos recebimentos ativos'));assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-track').length,0);assert(JSON.stringify(tree).includes('Sem recebimentos ativos neste período.'));
+});
+
+test('período compartilha o recorte dos indicadores, lista e exportação com limites de São Paulo',()=>{
+ const make=(id,createdAt,filial='01')=>({id,lote:id,filial,createdAt,status:'conferido',quantidade:2,allocated:2,missing:0,docs:[],issues:[]});
+ const rows=[make('limite','2026-10-30T03:00:00Z'),make('anterior','2026-10-30T02:59:59Z'),make('ontem','2026-11-05T02:59:59Z'),make('hoje','2026-11-05T03:00:00Z'),make('outra','2026-11-05T03:00:00Z','02')];let exported;
+ const env=setup({data:{rows,excess:[],sd3:{coverage:[]}}}),props={exportWorkbook:sheets=>exported=sheets};let tree=env.render(props);
+ const period=()=>nodes(tree,n=>n.type==='label'&&n.children.includes('Período dos recebimentos'))[0].children.find(n=>n?.type==='select');
+ assert.equal(nodes(tree,n=>n.type==='article').length,3);nodes(tree,n=>n.type==='button'&&n.children.includes('Exportar recebimentos do recorte'))[0].props.onClick();assert.deepEqual(exported[0].rows.map(r=>r.Lote),['limite','ontem','hoje']);
+ period().props.onChange({target:{value:'today'}});tree=env.render(props);assert.equal(nodes(tree,n=>n.type==='article').length,1);assert(JSON.stringify(tree).includes('1 ativo no período'));assert.equal(nodes(tree,n=>n.type==='article')[0].props.key,'hoje');
+ period().props.onChange({target:{value:'custom'}});tree=env.render(props);assert.equal(nodes(tree,n=>n.type==='article').length,0);assert(nodes(tree,n=>n.props.role==='alert').length);
+ for(const [label,value]of [['Recebidos de','2026-10-29'],['Recebidos até','2026-10-30']]){nodes(tree,n=>n.type==='label'&&n.children.includes(label))[0].children.find(n=>n?.type==='input').props.onChange({target:{value}});tree=env.render(props);}
+ assert.equal(nodes(tree,n=>n.type==='article').length,2);nodes(tree,n=>n.type==='button'&&n.children.includes('Exportar recebimentos do recorte'))[0].props.onClick();assert.deepEqual(exported[0].rows.map(r=>r.Lote),['limite','anterior']);
+ nodes(tree,n=>n.type==='label'&&n.children.includes('Recebidos até'))[0].children.find(n=>n?.type==='input').props.onChange({target:{value:'2026-10-28'}});tree=env.render(props);assert(nodes(tree,n=>n.props.role==='alert').length);assert.equal(nodes(tree,n=>n.type==='article').length,0);
+ period().props.onChange({target:{value:'all'}});tree=env.render(props);assert.equal(nodes(tree,n=>n.type==='article').length,4);
+});
+
+test('tela enxuta limita prioridades a três lotes, esconde aviso vazio e mantém correção dentro dos detalhes',()=>{
+ const rows=Array.from({length:6},(_,i)=>({id:String(i),filial:'01',lote:'L'+i,quantidade:3,status:'divergente',createdAt:'2026-11-05T12:00:00Z',createdBy:'pessoa',createdByName:'Pessoa',missing:2,allocated:1,message:'Entrada registrada no armazém 18, diferente do 01.',docs:[],issues:[]}));
+ const env=setup({data:{rows,excess:[],sd3:{coverage:[]}}});let tree=env.render();assert.equal(nodes(tree,n=>n.props.className?.startsWith('sc9-receiving-metric ')).length,3);assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-priority divergente').length,3);assert.equal(nodes(tree,n=>n.props.className==='sc9-receiving-identify').length,0);
+ const article=nodes(tree,n=>n.type==='article')[0];assert(nodes(article,n=>n.props.className==='sc9-receiving-reason').length);assert.equal(nodes(article.children.find(n=>n?.type==='details'),n=>n.type==='button'&&n.children.includes('Corrigir lançamento')).length,1);
+ nodes(tree,n=>n.props.className==='sc9-receiving-priority divergente')[0].props.onClick();tree=env.render();assert.equal(nodes(tree,n=>n.type==='article').length,1);assert.equal(nodes(tree,n=>n.type==='input'&&n.props.type==='search')[0].props.value,'L0');
 });
