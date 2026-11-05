@@ -104,12 +104,12 @@
     const X = root.XLSX; if (!X || !X.writeFile || X.__i09) return;
     const original = X.writeFile;
     X.writeFile = function (wb, nome) {
-      const args = arguments, nomesI09 = [];
+      const args = arguments, nomesI09 = [], estilosI09 = {};
       try {
         if (/^SC9_Relatorio_Geral_/.test(String(nome)) && cache.base) {
           for (const a of M.abasRelatorio(cache.base, cache.config)) {
             if (!a.rows.length) continue;
-            nomesI09.push(a.name.slice(0, 31));
+            nomesI09.push(a.name.slice(0, 31)); if (a.estilo) estilosI09[a.name.slice(0, 31)] = a.estilo;
             const ws = X.utils.json_to_sheet(a.rows);
             // formata cada célula (porcentagem, valor com milhar, texto) e ajusta a largura das colunas
             const cab = Object.keys(a.rows[0] || {});
@@ -124,7 +124,7 @@
         try {
           const bytes = X.write(wb, Object.assign({}, args[2] || {}, { type: 'array', bookType: 'xlsx' }));
           const self = this;
-          M.paisagemXlsx(new Uint8Array(bytes), nomesI09).then((out) => {
+          M.paisagemXlsx(new Uint8Array(bytes), nomesI09, { estilos: estilosI09 }).then((out) => {
             const url = URL.createObjectURL(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
             const a = root.document.createElement('a'); a.href = url; a.download = String(nome); root.document.body.appendChild(a); a.click();
             setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
