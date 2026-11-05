@@ -2125,7 +2125,8 @@ async function handleApi(req, res, pathname) {
   // sem descrição). O admin envia ao subir a planilha; o revisor (perfil "alteracoes") baixa
   // ao abrir a tela — com ETag, então só baixa de novo quando o admin subir outra.
   if (pathname === "/api/movimentacao-analise" && method === "POST") {
-    if (!(await exigir(req, res, ["admin"]))) return;
+    // admin OU quem tem o perfil "alteracoes" (o mesmo que usa a tela de Entradas TDC e a análise de alteração)
+    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
     let body;
     try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
     if (!body || !Array.isArray(body.rows) || !Array.isArray(body.usuarios) || !Array.isArray(body.cfs)) return sendJson(res, 400, { error: "payload inválido — esperado { rows, usuarios, cfs }" });

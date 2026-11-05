@@ -93,6 +93,63 @@
     return ((obj&&obj.rows)||[]).map(r=>({tp:Number(r[0]),produto:normProd(r[1]),qt:Number(r[2])||0,armazem:normArm(r[3]),doc:String(r[4]||'').trim(),lote:normLote(r[5]),usuario:us[r[6]]||'',dia:r[7]||'',cf:String(cs[r[8]]||'').trim().toUpperCase(),estornado:!!r[9]}));
   }
 
+  /* ============================ leitura do SD3 (envio pelo perfil do TDC) ============================
+   * Mesma leitura e mesmo formato compacto que a tela inicial usa ao subir a "Movimentação interna":
+   * quem tem o perfil do TDC pode subir o SD3 daqui e o painel inteiro (TDC + análise de alteração) usa a mesma base. */
+  const CAMPOS_SD3=['tp','produto','qt','armazem','doc','lote','usuario','dt','cf','estornado','validade'];
+  const ROTULO_SD3={tp:'TP Movimento',produto:'Produto',qt:'Quantidade',armazem:'Armazém',doc:'Documento',lote:'Lote',usuario:'Usuário',dt:'DT Emissão',cf:'Tipo RE/DE',estornado:'Estornado',validade:'Valid. Lote'};
+  const OBRIGATORIOS_SD3=['tp','armazem','qt'];
+  const hdr=v=>String(v==null?'':v).normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().trim().replace(/\s+/g,' ');
+  const prod3=v=>{if(v==null)return '';let s=String(v).trim();if(s.endsWith('.0'))s=s.slice(0,-2);return s;};
+  /* procura o cabeçalho nas primeiras 6 linhas; devolve {linhaCab, mapa:{campo:coluna}} ou null */
+  function detectarColunasSD3(aoa){
+    const NOMES={tp:['TP MOVIMENTO'],produto:['PRODUTO'],qt:['QUANTIDADE'],armazem:['ARMAZEM'],doc:['DOCUMENTO'],dt:['DT EMISSAO'],usuario:['USUARIO'],lote:['LOTE'],cf:['TIPO RE/DE'],estornado:['ESTORNADO'],validade:['VALID. LOTE','VALID LOTE']};
+    for(let r=0;r<Math.min((aoa||[]).length,6);r++){
+      const mapa={};
+      (aoa[r]||[]).forEach((c,i)=>{const t=hdr(c);if(!t)return;for(const k of Object.keys(NOMES))if(mapa[k]===undefined&&NOMES[k].includes(t))mapa[k]=i;});
+      if(OBRIGATORIOS_SD3.every(k=>mapa[k]!==undefined))return {linhaCab:r,mapa};
+    }
+    return null;
+  }
+  /* linhas: matrizes com só as colunas pedidas, na ordem de "campos". Devolve os registros (mesma regra da tela inicial). */
+  function lerSD3(linhas,campos){
+    const ix={};campos.forEach((c,i)=>{ix[c]=i;});
+    const out=[];let vazias=0;
+    for(const row of linhas||[]){
+      const tpRaw=row[ix.tp];
+      if(tpRaw===null||tpRaw===undefined||tpRaw===''){if(++vazias>300)break;continue;}
+      vazias=0;
+      const armazem=String(row[ix.armazem]==null?'':row[ix.armazem]).trim();
+      if(!armazem)continue;
+      const usu=ix.usuario===undefined?'':String(row[ix.usuario]==null?'':row[ix.usuario]).trim();
+      out.push({
+        tp:Number(tpRaw),
+        produto:ix.produto===undefined?null:prod3(row[ix.produto]),
+        qt:(ix.qt!==undefined&&Number(row[ix.qt]))||0,
+        armazem,
+        doc:ix.doc===undefined?null:String(row[ix.doc]==null?'':row[ix.doc]).trim(),
+        lote:ix.lote===undefined?null:prod3(row[ix.lote]),
+        usuario:usu&&hdr(usu)!=='USUARIO'?usu:null,
+        dt:ix.dt===undefined?'':paraISO(row[ix.dt]),
+        cf:ix.cf===undefined?'':String(row[ix.cf]==null?'':row[ix.cf]).trim().toUpperCase(),
+        estornado:ix.estornado===undefined?false:/^(SIM|S)$/.test(String(row[ix.estornado]==null?'':row[ix.estornado]).trim().toUpperCase()),
+        validade:ix.validade===undefined?'':paraISO(row[ix.validade]),
+      });
+    }
+    return out;
+  }
+  /* cópia compacta pro servidor — mesmo formato da tela inicial: só as linhas COM lote */
+  function compactarSD3(registros){
+    const us=[],um=new Map(),cs=[],cm=new Map();
+    const ix=(m,arr,v)=>{if(!m.has(v)){m.set(v,arr.length);arr.push(v);}return m.get(v);};
+    const rows=[];
+    for(const r of registros||[]){
+      const lote=r.lote?String(r.lote).trim():'';if(!lote)continue;
+      rows.push([Number(r.tp),r.produto||'',Number(r.qt)||0,String(r.armazem==null?'':r.armazem),r.doc||'',lote,ix(um,us,r.usuario||''),r.dt||'',ix(cm,cs,r.cf||''),r.estornado?1:0,r.validade||'']);
+    }
+    return {rows,usuarios:us,cfs:cs,totalOriginal:(registros||[]).length};
+  }
+
   /* CFOP (Código Fiscal de Operações) é padrão nacional: os 3 últimos dígitos dizem a operação; o 1º diz de onde veio (1 = mesmo estado, 2 = outro estado, 3 = exterior). O TES (Tipo de Entrada) é cadastro da empresa, mas carrega um CFOP. */
   const CFOP={'201':['Devolução de venda (produção própria)','devolucao'],'202':['Devolução de venda (mercadoria adquirida)','devolucao'],'203':['Devolução de venda (ZFM)','devolucao'],'204':['Devolução de venda (ZFM)','devolucao'],
     '918':['Devolução de consignação','consig'],'919':['Devolução simbólica de consignação','consig'],'913':['Retorno de demonstração / mostruário','consig'],'914':['Retorno de mercadoria p/ exposição ou feira','consig'],'916':['Retorno de conserto ou reparo','consig'],'917':['Entrada em consignação','consig'],
@@ -280,7 +337,7 @@
     return {resumo,porUsuario,detalhe:det,tempo};
   }
 
-  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,analisar,resumir,aplicarRevisoes,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
+  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.SC9EntradasTDC=api;
   if(root.document&&root.React&&typeof root.SC9EntradasTDCMount==='undefined'&&typeof require==='undefined'){/* a tela é carregada por entradas-tdc-ui.js */}
