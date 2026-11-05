@@ -1422,7 +1422,7 @@ async function handleApi(req, res, pathname) {
         }else{const reason=String(body.motivo||'').trim();if(!reason||reason.length>1000)throw new ErroHttp(400,'Informe o motivo do cancelamento (até 1.000 caracteres).');patch={cancelledAt:now,cancelledBy:owner,cancelReason:reason};}
         const next={...current,revision:crypto.randomUUID(),entries:entries.map(e=>e.id===entry.id?{...e,...patch}:e)};await receivingSave(next);return sendJson(res,200,{ok:true,...view(next)});
       });
-      if(sess.role!=='admin')return sendJson(res,403,{error:'A importação do SD3 exige administrador.'});
+      // O perfil controle0201 já foi exigido na entrada; cada importação pertence ao usuário que a iniciou.
       for(const [id,u]of receivingUploads)if(Date.now()-u.created>30*60*1000)receivingUploads.delete(id);
       if(body.acao==='iniciarSD3')return await comFila('controle-recebimentos',async()=>{
         if(receivingUploads.size>=3)throw new ErroHttp(400,'Há importações em andamento. Aguarde ou cancele a anterior.');
