@@ -303,7 +303,23 @@
       return typeof r[h] === 'number' ? NUM : null;
     };
     const larg = (rows) => { const ks = Object.keys(rows[0] || {}); return ks.map((k, i) => Math.max(k.length, ...rows.map((r) => String(r[k] == null ? '' : r[k]).length), 8) + 2); };
-    return [{ name: 'I09 Dashboard', rows: dash, z: zDash, cols: [46, 18, 18, 18] }, { name: 'I09 Mês a mês', rows: mm, z: zCol, cols: larg(mm) },
+    // visual do dashboard: mesmas linhas e colunas, só cor, destaque e semáforo
+    const stPct = (p) => (p == null ? 'n' : p >= 1 ? 'ok' : p >= BSC ? 'am' : 'rd');
+    const stSit = (t) => (/atingida/.test(t) ? 'ok' : /Dentro/.test(t) ? 'am' : /Abaixo/.test(t) ? 'rd' : 'n');
+    const cel = { A1: 'cab_a', B1: 'cab_om', C1: 'cab_os', D1: 'cab_tot', A2: 'titulo', B2: 'titulo', C2: 'titulo', D2: 'titulo' };
+    const alt = { 1: 24, 2: 28, 4: 32, 5: 32, 14: 34 };
+    for (let n = 3; n <= 14; n++) { alt[n] = alt[n] || 22; cel['A' + n] = n === 4 || n === 5 ? 'rot_dest' : 'rot'; }
+    const destCol = { B: 'dest_om', C: 'dest_os', D: 'dest_tot' }, sinal = (v) => (typeof v === 'number' ? (v < 0 ? 'val_neg' : v > 0 ? 'val_pos' : 'val') : 'val');
+    for (const col of ['B', 'C', 'D']) {
+      const x = col === 'B' ? ult.om : col === 'C' ? ult.os : ult.total;
+      for (let n = 3; n <= 14; n++) cel[col + n] = 'val';
+      cel[col + '4'] = destCol[col];
+      cel[col + '5'] = col === 'D' ? 'pct_n' : 'pct_' + stPct(x.pct);
+      cel[col + '6'] = sinal(x.saldo);
+      cel[col + '14'] = col === 'D' ? 'sit_n' : 'sit_' + stSit(x.situacao || '');
+    }
+    const estiloDash = { celulas: cel, alturas: alt, merges: ['A2:D2'], semGrade: true, corAba: '1F2D5A' };
+    return [{ name: 'I09 Dashboard', rows: dash, z: zDash, cols: [46, 18, 18, 18], estilo: estiloDash }, { name: 'I09 Mês a mês', rows: mm, z: zCol, cols: larg(mm) },
       { name: 'I09 Por tipo', rows: tipos, z: zCol, cols: [16, 12, 14, 24, 12, 14, 24] }, { name: 'I09 Por dia', rows: dia, z: zCol, cols: larg(dia).map((w, i) => (i === 6 || i === 11 ? 24 : Math.min(w, 18))) }];
   }
 
@@ -369,23 +385,93 @@
     }
     return s;
   }
-  async function paisagemXlsx(bytes, nomesAbas) {
+  /* ---------- estilos (cores, fontes, bordas) das abas, escritos direto no styles.xml ---------- */
+  const ESTILOS = (() => {
+    const BORDA = 'E3E7F1', T = { b: 1, sz: 11, c: '1B2138' };
+    const base = (o) => Object.assign({ f: { sz: 11, c: '1B2138' }, h: 'center', v: 'center' }, o);
+    const dest = (cor, fundo) => base({ f: { b: 1, sz: 15, c: cor }, fill: fundo || 'F5F7FD', borda: BORDA });
+    const sit = (cor, fundo) => base({ f: { b: 1, sz: 10, c: cor }, fill: fundo, wrap: 1, borda: BORDA });
+    return {
+      cab_a: base({ f: { b: 1, sz: 11, c: 'FFFFFF' }, fill: '1F2D5A', h: 'left', indent: 1 }),
+      cab_om: base({ f: { b: 1, sz: 11, c: 'FFFFFF' }, fill: '1F2D5A' }),
+      cab_os: base({ f: { b: 1, sz: 11, c: '3B2A00' }, fill: 'E8A33D' }),
+      cab_tot: base({ f: { b: 1, sz: 11, c: 'FFFFFF' }, fill: '5B6478' }),
+      titulo: base({ f: { b: 1, sz: 13, c: '1F2D5A' }, fill: 'EEF1FA', h: 'left', indent: 1 }),
+      rot: base({ f: { sz: 11, c: '4A5170' }, fill: 'F7F8FC', h: 'left', indent: 1, borda: BORDA }),
+      rot_dest: base({ f: { b: 1, sz: 12, c: '1F2D5A' }, fill: 'F5F7FD', h: 'left', indent: 1, borda: BORDA }),
+      val: base({ borda: BORDA }), val_pos: base({ f: { b: 1, sz: 11, c: '1B7A43' }, borda: BORDA }), val_neg: base({ f: { b: 1, sz: 11, c: 'C0302B' }, borda: BORDA }),
+      dest_om: dest('1F2D5A'), dest_os: dest('B67410'), dest_tot: dest('3A4157'),
+      pct_ok: dest('1B7A43'), pct_am: dest('B67410'), pct_rd: dest('C0302B'), pct_n: dest('8A91A8'),
+      sit_ok: sit('1B6B3A', 'DDF3E4'), sit_am: sit('8A5A00', 'FFF1CC'), sit_rd: sit('A12622', 'FBE0DE'), sit_n: sit('6B7390', 'EEF0F5'),
+    };
+  })();
+  function criarEstilos(xml) {
+    const sec = (tag) => { const m = new RegExp('<' + tag + '\\b[^>]*>').exec(xml); return m ? { tag, abre: m[0], n: +((/count="(\d+)"/.exec(m[0]) || [])[1] || 0) } : null; };
+    const fonts = sec('fonts'), fills = sec('fills'), borders = sec('borders'), xfsS = sec('cellXfs');
+    if (!fonts || !fills || !borders || !xfsS) return null;
+    const bloco = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(xml), xfsAtuais = bloco ? (bloco[1].match(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || []) : [];
+    const novos = { fonts: [], fills: [], borders: [], xfs: [] }, memo = new Map();
+    const idx = (lista, base, x) => { let i = lista.indexOf(x); if (i < 0) { lista.push(x); i = lista.length - 1; } return base + i; };
+    const fontXml = (f) => '<font>' + (f.b ? '<b/>' : '') + '<sz val="' + f.sz + '"/><color rgb="FF' + f.c + '"/><name val="Calibri"/><family val="2"/></font>';
+    const fillXml = (c) => '<fill><patternFill patternType="solid"><fgColor rgb="FF' + c + '"/><bgColor indexed="64"/></patternFill></fill>';
+    const bordaXml = (c) => '<border><left/><right/><top/><bottom style="thin"><color rgb="FF' + c + '"/></bottom><diagonal/></border>';
+    return {
+      xf(chave, sAtual) {
+        const k = chave + '|' + sAtual; if (memo.has(k)) return memo.get(k);
+        const e = ESTILOS[chave]; if (!e) return sAtual;
+        const atual = xfsAtuais[sAtual || 0] || '', numFmt = (/numFmtId="(\d+)"/.exec(atual) || [])[1] || '0';
+        const fo = idx(novos.fonts, fonts.n, fontXml(e.f)), fi = e.fill ? idx(novos.fills, fills.n, fillXml(e.fill)) : 0, bo = e.borda ? idx(novos.borders, borders.n, bordaXml(e.borda)) : 0;
+        const al = '<alignment horizontal="' + e.h + '" vertical="' + e.v + '"' + (e.wrap ? ' wrapText="1"' : '') + (e.indent ? ' indent="' + e.indent + '"' : '') + '/>';
+        const x = '<xf numFmtId="' + numFmt + '" fontId="' + fo + '" fillId="' + fi + '" borderId="' + bo + '" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">' + al + '</xf>';
+        const r = idx(novos.xfs, xfsS.n, x); memo.set(k, r); return r;
+      },
+      fechar() {
+        const junta = (s, sec2, lista) => lista.length ? s.replace(sec2.abre, sec2.abre.replace(/count="\d+"/, 'count="' + (sec2.n + lista.length) + '"')).replace('</' + sec2.tag + '>', lista.join('') + '</' + sec2.tag + '>') : s;
+        let o = xml; o = junta(o, fonts, novos.fonts); o = junta(o, fills, novos.fills); o = junta(o, borders, novos.borders); o = junta(o, xfsS, novos.xfs); return o;
+      },
+    };
+  }
+  function estilizarXml(xml, est, st) {
+    let s = xml;
+    s = s.replace(/<c r="([A-Z]+\d+)"([^>]*?)(\/>|>[\s\S]*?<\/c>)/g, (m, ref, attrs, resto) => {
+      const chave = est.celulas && est.celulas[ref]; if (!chave) return m;
+      const sAtual = +((/\bs="(\d+)"/.exec(attrs) || [])[1] || 0), novoS = st.xf(chave, sAtual);
+      return '<c r="' + ref + '"' + attrs.replace(/\s+s="\d+"/, '') + ' s="' + novoS + '"' + resto;
+    });
+    if (est.alturas) s = s.replace(/<row r="(\d+)"([^>]*)>/g, (m, n, a) => est.alturas[n] ? '<row r="' + n + '"' + a.replace(/\s+(ht|customHeight)="[^"]*"/g, '') + ' ht="' + est.alturas[n] + '" customHeight="1">' : m);
+    if (est.merges && est.merges.length && !/<mergeCells\b/.test(s)) s = s.replace('</sheetData>', '</sheetData><mergeCells count="' + est.merges.length + '">' + est.merges.map((r) => '<mergeCell ref="' + r + '"/>').join('') + '</mergeCells>');
+    if (est.semGrade && !/showGridLines=/.test(s)) s = s.replace(/<sheetView\b/, '<sheetView showGridLines="0"');
+    if (est.corAba && !/<tabColor\b/.test(s)) {
+      const tc = '<tabColor rgb="FF' + est.corAba + '"/>';
+      if (/<sheetPr\s*\/>/.test(s)) s = s.replace(/<sheetPr\s*\/>/, '<sheetPr>' + tc + '</sheetPr>');
+      else if (/<sheetPr\b[^>]*>/.test(s) && !/<sheetPr\b[^>]*\/>/.test(s)) s = s.replace(/(<sheetPr\b[^>]*>)/, '$1' + tc);
+      else s = s.replace(/(<worksheet\b[^>]*>)/, '$1<sheetPr>' + tc + '</sheetPr>');
+    }
+    return s;
+  }
+  /* nomesAbas: abas que ficam em paisagem. extras.estilos: { nomeDaAba: { celulas:{A1:'chave'}, alturas:{linha:pt}, merges:['A2:D2'], semGrade, corAba } } */
+  async function paisagemXlsx(bytes, nomesAbas, extras) {
     const itens = lerZip(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)), por = {}; itens.forEach((i) => { por[i.nome] = i; });
     const texto = async (n) => { const it = por[n]; if (!it) return ''; return new TextDecoder().decode(it.metodo === 8 ? await inflar(it.bruto) : it.bruto); };
-    const wb = await texto('xl/workbook.xml'), rels = await texto('xl/_rels/workbook.xml.rels'), alvo = new Set(nomesAbas);
+    const gravar = async (n, txt) => { const it = por[n], novo = new TextEncoder().encode(txt); it.bruto = await deflar(novo); it.metodo = 8; it.crc = crc32(novo); it.usize = novo.length; };
+    const wb = await texto('xl/workbook.xml'), rels = await texto('xl/_rels/workbook.xml.rels'), alvo = new Set(nomesAbas), estilos = (extras && extras.estilos) || {};
     const destinos = [];
     for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
       const nome = (/\bname="([^"]*)"/.exec(m[0]) || [])[1], rid = (/\br:id="([^"]*)"/.exec(m[0]) || [])[1];
-      if (nome == null || !alvo.has(decXml(nome))) continue;
+      if (nome == null) continue; const nomeReal = decXml(nome);
+      if (!alvo.has(nomeReal) && !estilos[nomeReal]) continue;
       const rel = new RegExp('<Relationship\\b[^>]*\\bId="' + rid + '"[^>]*>').exec(rels), alvoArq = rel && /\bTarget="([^"]*)"/.exec(rel[0]);
-      if (alvoArq) destinos.push(alvoArq[1].replace(/^\//, '').replace(/^(?!xl\/)/, 'xl/'));
+      if (alvoArq) destinos.push({ caminho: alvoArq[1].replace(/^\//, '').replace(/^(?!xl\/)/, 'xl/'), nome: nomeReal });
     }
+    const st = Object.keys(estilos).length && por['xl/styles.xml'] ? criarEstilos(await texto('xl/styles.xml')) : null;
     for (const d of destinos) {
-      const it = por[d]; if (!it) continue;
-      const novo = new TextEncoder().encode(paisagemNoXml(await texto(d)));
-      const bruto = await deflar(novo);
-      it.bruto = bruto; it.metodo = 8; it.crc = crc32(novo); it.usize = novo.length;
+      if (!por[d.caminho]) continue;
+      let xml = await texto(d.caminho);
+      if (st && estilos[d.nome]) xml = estilizarXml(xml, estilos[d.nome], st);
+      if (alvo.has(d.nome)) xml = paisagemNoXml(xml);
+      await gravar(d.caminho, xml);
     }
+    if (st) await gravar('xl/styles.xml', st.fechar());
     return montarZip(itens);
   }
 
