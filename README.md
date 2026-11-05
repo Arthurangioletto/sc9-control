@@ -402,3 +402,22 @@ A tela passa a exibir e enviar o campo Motivo da alteração. Antes o servidor e
 Quando a base SC9 informa lotes para o produto original, um lote divergente continua bloqueado. Quando o produto existe no pedido, mas seu lote não veio no arquivo, o lote preenchido é guardado como informação manual, com aviso na tela e identificação no histórico. Se o pedido não está disponível na base, a possibilidade existente de informação manual permanece identificada. Produtos ausentes de um pedido encontrado continuam bloqueados. A exportação inclui o motivo e a condição da conferência do lote; registros antigos sem essa informação não são apresentados como conferidos.
 
 Validação: integração do servidor e testes da tela/relatório cobrem motivo obrigatório e enviado, preservação do rascunho, lote original conhecido ou ausente, divergências, complemento diferente, quantidade fracionada, permissões e proteção das bases globais. Conferência em navegador local com dois pedidos fictícios: erro sem motivo, bloqueio de lote errado, confirmação manual e conferida, saída da fila e histórico salvo.
+
+## Indicador I 09 · OM e OS do almoxarifado
+
+Módulo aditivo (`indicador-i09.js`, `indicador-i09-ui.js` e as rotas `/api/indicador-i09`). Nenhum arquivo existente foi alterado além de duas linhas de `<script>` no `index.html`, a liberação dos dois arquivos no servidor e o novo bloco de rotas no `server.js`.
+
+Calcula, da SC2 do Protheus, os dois indicadores do BSC I 09 com as mesmas regras da aba Indicators da planilha de controle:
+
+- **OM (o almoxarifado separa):** Mod. OP Montagem Produto Acabado ou Serviço Retrabalho, sequência 01, sem filtro de armazém.
+- **OS (o almoxarifado estoca):** Mod. OP Serviço de Componente, Intermediário, Semi-Acabado ou código 4, qualquer sequência e armazém, só produtos usinados (fora da lista Não considera).
+- Nos dois: quantidade = Qtd.Produzid, mês = mês da DT Real Fim. O tipo vem da lista Type Korea (código → classificação); sem tipo aparece como "(sem tipo)".
+- Perda = coluna Perda; enviado = coluna Quantidade da OP; % de perda = perda ÷ enviado.
+
+**Uso.** O administrador sobe a SC2 do mês no campo "SC2 do mês" da tela inicial (ou em Indicador I 09 → Atualizar base), informa a data da extração e grava. Só o mês enviado é substituído; os demais ficam como estão. O cálculo roda no navegador; o servidor guarda as linhas da SC2 de cada mês (`indicador-i09.json`) e a configuração (`indicador-i09-config.json`: metas de OM e OS, feriados, tipo de cada produto e lista Não considera). Leitura: administrador ou perfil geral; gravação: só administrador.
+
+**Dashboard.** OM e OS lado a lado (% da meta, real, saldo, perda), peças por dia, % da meta acumulada, comparativo, por tipo com % de perda e dia a dia. O Relatório Geral ganha as abas `I09 Dashboard`, `I09 Mês a mês`, `I09 Por tipo` e `I09 Por dia` (mês mais recente da base).
+
+**Primeira vez.** Importe a carga inicial em Atualizar base → Importar base (.json). Os dados da empresa (SC2, tipos de produto) não ficam no repositório.
+
+Validação: `node --test` (modelo e rotas), mais conferência com os números da planilha de controle: OM de Setembro 160.523 e Outubro 163.157; OS de Setembro 278.257 e Outubro 259.969.

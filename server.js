@@ -370,6 +370,8 @@ function carregarEstatico(name, cb) {
 }
 
 SERVABLE.add("ui-workspaces.js");
+SERVABLE.add("indicador-i09.js");
+SERVABLE.add("indicador-i09-ui.js");
 
 function serveStatic(req, res, urlPath) {
   // qualquer coisa fora da lista (inclusive rotas de navegação tipo /alguma-coisa)
@@ -2589,6 +2591,96 @@ async function handleApi(req, res, pathname) {
       }
       return sendJson(res, 200, { ok: true, ...r });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao apagar")); }
+  }
+
+  // ---- Indicador BSC I 09 (ordens atendidas no almoxarifado: OM e OS): base guardada mês a mês ----
+  // Ler: admin ou perfil "geral". Gravar (substituir um mês, configuração, importar, apagar): só administrador.
+  // O cálculo é feito no navegador; aqui só guarda as linhas da SC2 de cada mês e a configuração
+  // (metas de OM e OS, feriados, tipo de cada produto e lista "Não considera").
+  const I09_OBJ = "indicador-i09.json", I09_CFG_OBJ = "indicador-i09-config.json";
+  const i09CfgPadrao = () => ({ v: 2, metas: { om: {}, os: {} }, feriados: [], tipos: {}, naoConsidera: [] });
+  if (pathname === "/api/indicador-i09" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "geral"))) return;
+    try {
+      const [base, config] = await Promise.all([objLoad(I09_OBJ), objLoad(I09_CFG_OBJ)]);
+      const b = base && base.v === 2 ? base : { v: 2, meses: {} };
+      const c = Object.assign(i09CfgPadrao(), config && config.v === 2 ? config : {});
+      return sendJson(res, 200, { base: b, config: c });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o indicador I 09")); }
+  }
+  if (pathname === "/api/indicador-i09" && method === "POST") {
+    const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    if (!body || typeof body !== "object") return sendJson(res, 400, { error: "payload inválido" });
+    const M = require("./indicador-i09.js");
+    const t = (v, n) => String(v == null ? "" : v).slice(0, n);
+    const limpaLinhas = (rows) => rows.map((r) => [t(r[0], 20), t(r[1], 10), t(r[2], 40), t(r[3], 80), t(r[4], 60), t(r[5], 10), t(r[6], 10), Number(r[7]), Number(r[8]), Number(r[9]), t(r[10], 6)]);
+    const metasOk = (m) => m && typeof m === "object" && Object.entries(m).every(([k, v]) => /^\d{4}-\d{2}$/.test(k) && Number.isFinite(Number(v)) && Number(v) >= 0);
+    const validaCfg = (c) => {
+      if (!c || typeof c !== "object") return "configuração inválida";
+      if (c.metas != null && (typeof c.metas !== "object" || (c.metas.om != null && !metasOk(c.metas.om)) || (c.metas.os != null && !metasOk(c.metas.os)))) return "metas inválidas";
+      if (c.feriados != null && (!Array.isArray(c.feriados) || c.feriados.length > 400 || c.feriados.some((d) => !/^\d{4}-\d{2}-\d{2}$/.test(String(d))))) return "feriados inválidos";
+      if (c.tipos != null && (typeof c.tipos !== "object" || Object.keys(c.tipos).length > 60000 || Object.values(c.tipos).some((v) => typeof v !== "string" || v.length > 40))) return "tipos de produto inválidos";
+      if (c.naoConsidera != null && (!Array.isArray(c.naoConsidera) || c.naoConsidera.length > 5000 || c.naoConsidera.some((v) => !String(v).trim() || String(v).length > 40))) return "lista Não considera inválida";
+      return "";
+    };
+    const aplicaCfg = (atual, c, substituir) => {
+      const out = { v: 2, metas: { om: Object.assign({}, atual.metas.om), os: Object.assign({}, atual.metas.os) }, feriados: atual.feriados.slice(), tipos: Object.assign({}, atual.tipos), naoConsidera: atual.naoConsidera.slice() };
+      for (const k of ["om", "os"]) if (c.metas && c.metas[k]) for (const [m, v] of Object.entries(c.metas[k])) { if (Number(v) > 0) out.metas[k][m] = Number(v); else delete out.metas[k][m]; }
+      if (Array.isArray(c.feriados)) out.feriados = [...new Set(c.feriados.map(String))].sort();
+      if (c.tipos) { if (substituir) out.tipos = {}; for (const [k, v] of Object.entries(c.tipos)) out.tipos[t(k, 40)] = v; }
+      if (Array.isArray(c.naoConsidera)) out.naoConsidera = [...new Set(c.naoConsidera.map((v) => String(v).trim()))];
+      out.savedAt = new Date().toISOString(); out.por = sess.usuario || "admin";
+      return out;
+    };
+    const mergeCfg = (a) => Object.assign(i09CfgPadrao(), a && a.v === 2 ? a : {});
+    try {
+      const resp = await comFila("indicador-i09", async () => {
+        const salvo = await objLoad(I09_OBJ);
+        const atual = salvo && salvo.v === 2 ? salvo : { v: 2, meses: {} };
+        const cfgAtual = mergeCfg(await objLoad(I09_CFG_OBJ));
+        const agora = new Date().toISOString();
+        if (body.acao === "mes") {
+          const erro = M.validarLinhas(body.mes, body.rows);
+          if (erro) return { status: 400, body: { error: erro } };
+          if (body.rows.length > 20000) return { status: 400, body: { error: "mês grande demais" } };
+          const ate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.ate || "")) ? String(body.ate) : "";
+          const novo = M.substituirMeses(atual, { [body.mes]: limpaLinhas(body.rows) }, { savedAt: agora, por: sess.usuario || "admin", arquivo: t(body.arquivo, 120), ate });
+          await objSave(I09_OBJ, novo);
+          return { status: 200, body: { ok: true, mes: body.mes, linhas: body.rows.length, savedAt: agora, meses: Object.keys(novo.meses).sort() } };
+        }
+        if (body.acao === "config") {
+          const erro = validaCfg(body.config); if (erro) return { status: 400, body: { error: erro } };
+          const nova = aplicaCfg(cfgAtual, body.config, body.substituirTipos === true);
+          await objSave(I09_CFG_OBJ, nova);
+          return { status: 200, body: { ok: true, savedAt: nova.savedAt, feriados: nova.feriados.length, tipos: Object.keys(nova.tipos).length, naoConsidera: nova.naoConsidera.length } };
+        }
+        if (body.acao === "apagar") {
+          if (!/^\d{4}-\d{2}$/.test(String(body.mes)) || !atual.meses[body.mes]) return { status: 404, body: { error: "mês não encontrado" } };
+          const meses = Object.assign({}, atual.meses); delete meses[body.mes];
+          await objSave(I09_OBJ, { v: 2, savedAt: agora, meses });
+          return { status: 200, body: { ok: true, meses: Object.keys(meses).sort() } };
+        }
+        if (body.acao === "importar") { // restaura uma base completa (cópia de segurança ou carga inicial): { base: { meses }, config }
+          const b = body.base, c = body.config;
+          if (!b || typeof b.meses !== "object") return { status: 400, body: { error: "base inválida" } };
+          const meses = {};
+          for (const [m, v] of Object.entries(b.meses)) {
+            const erro = v && Array.isArray(v.rows) ? M.validarLinhas(m, v.rows) : "mês inválido";
+            if (erro) return { status: 400, body: { error: m + ": " + erro } };
+            if (v.rows.length > 20000) return { status: 400, body: { error: m + ": mês grande demais" } };
+            meses[m] = { rows: limpaLinhas(v.rows), savedAt: agora, por: sess.usuario || "admin", arquivo: t(v.arquivo, 120), ate: /^\d{4}-\d{2}-\d{2}$/.test(String(v.ate || "")) ? String(v.ate) : "" };
+          }
+          if (c) { const erro = validaCfg(c); if (erro) return { status: 400, body: { error: erro } }; }
+          await objSave(I09_OBJ, { v: 2, savedAt: agora, meses });
+          if (c) await objSave(I09_CFG_OBJ, aplicaCfg(i09CfgPadrao(), c, true));
+          return { status: 200, body: { ok: true, meses: Object.keys(meses).sort() } };
+        }
+        return { status: 400, body: { error: "ação desconhecida" } };
+      });
+      return sendJson(res, resp.status, resp.body);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao salvar o indicador I 09")); }
   }
 
   // Dashboard ao vivo: exige o perfil "geral" (sem separador/conferente)
