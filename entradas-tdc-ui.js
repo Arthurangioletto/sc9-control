@@ -348,6 +348,63 @@
         h('button',{className:'sc9-tdc-btn pri',disabled:busy||faltando.length>0||!linhas.length,onClick:enviar},busy?'Enviando…':'Enviar SD1 para o painel')));
   }
 
+  /* ------------------------------ envio do SD3 (movimentação) ------------------------------
+   * Alimenta a MESMA base da tela inicial ("Movimentação interna"): o painel do TDC e a análise de alteração usam o que for enviado aqui. */
+  function EnviarSD3({onEnviado}){
+    const [lendo,setLendo]=useState(false);const [busy,setBusy]=useState(false);const [msg,setMsg]=useState(null);
+    const [res,setRes]=useState(null);
+    const pausa=()=>new Promise(r=>setTimeout(r,30));
+    const ler=async file=>{
+      setMsg(null);setRes(null);if(!file)return;
+      if(!root.XLSX){setMsg({t:'err',m:'Biblioteca de planilhas (SheetJS) não carregou. Recarregue a página.'});return;}
+      setLendo(true);await pausa();
+      try{
+        const X=root.XLSX,U=X.utils;
+        const w=X.read(await file.arrayBuffer(),{type:'array',cellDates:true,dense:true});
+        /* prefere a aba "Movimentação"; se não houver, usa a primeira em que o cabeçalho for reconhecido */
+        const nomes=w.SheetNames.slice().sort((a,b)=>(M.norm(b).includes('movimenta')?1:0)-(M.norm(a).includes('movimenta')?1:0));
+        let achou=null;
+        for(const nome of nomes){
+          const ws=w.Sheets[nome];if(!ws||!ws['!ref'])continue;
+          const ref=U.decode_range(ws['!ref']);
+          const topo=U.sheet_to_json(ws,{header:1,raw:true,defval:'',range:{s:{r:ref.s.r,c:ref.s.c},e:{r:Math.min(ref.s.r+5,ref.e.r),c:ref.e.c}}});
+          const det=M.detectarColunasSD3(topo);
+          if(det){achou={nome,ws,ref,det};break;}
+        }
+        if(!achou){setMsg({t:'err',m:'Não encontrei o cabeçalho da movimentação (TP Movimento, Armazém, Quantidade). Confira se é a planilha de movimentação interna (SD3) do Protheus.'});return;}
+        const {ws,ref,det}=achou;
+        const campos=Object.keys(det.mapa),cols=campos.map(c=>det.mapa[c]);
+        const linhas=[];
+        for(let r0=ref.s.r+det.linhaCab+1;r0<=ref.e.r;r0+=2000){
+          const bloco=U.sheet_to_json(ws,{header:1,raw:true,defval:'',range:{s:{r:r0,c:ref.s.c},e:{r:Math.min(r0+1999,ref.e.r),c:ref.e.c}}});
+          for(const row of bloco)linhas.push(cols.map(c=>row[c-ref.s.c]));
+        }
+        const regs=M.lerSD3(linhas,campos);
+        const comp=M.compactarSD3(regs);
+        const dias=regs.map(r=>r.dt).filter(Boolean).sort();
+        setRes({comp,aba:achou.nome,total:regs.length,comLote:comp.rows.length,de:dias[0]||'',ate:dias[dias.length-1]||'',semUsuario:det.mapa.usuario===undefined,semLote:det.mapa.lote===undefined});
+      }catch(e){setMsg({t:'err',m:'Não consegui abrir o arquivo: '+e.message});}finally{setLendo(false);}
+    };
+    const enviar=async()=>{
+      if(!res)return;setBusy(true);setMsg(null);
+      try{
+        if(!res.comp.rows.length)throw new Error('Nenhuma linha com lote nessa movimentação.');
+        const r=await api('/api/movimentacao-analise',res.comp);
+        setMsg({t:'ok',m:`SD3 atualizado: ${fmtN(r.total)} movimentações com lote guardadas. O painel do TDC e a análise de alteração já usam esta base.`});
+        setRes(null);onEnviado&&onEnviado();
+      }catch(e){setMsg({t:'err',m:e.message});}finally{setBusy(false);}
+    };
+    return h('div',{style:{marginTop:10}},
+      h('input',{type:'file',accept:'.xlsx,.xls',onChange:e=>ler(e.target.files[0])}),
+      lendo&&h('div',{className:'sc9-tdc-msg info'},'Lendo a planilha… movimentações grandes podem levar um minuto. Não feche esta tela.'),
+      msg&&h('div',{className:'sc9-tdc-msg '+msg.t},msg.m),
+      res&&h('div',{style:{marginTop:10}},
+        h('div',{className:'sc9-tdc-msg ok'},`${fmtN(res.total)} movimentações lidas (aba “${res.aba}”), ${fmtN(res.comLote)} com lote${res.de?`, de ${fmtD(res.de)} a ${fmtD(res.ate)}`:''}.`),
+        res.semLote&&h('div',{className:'sc9-tdc-msg err'},'A planilha não tem a coluna Lote — sem ela a análise não funciona.'),
+        res.semUsuario&&h('div',{className:'sc9-tdc-msg info'},'Sem a coluna Usuário não dá pra mostrar quem fez cada movimentação (o restante funciona).'),
+        h('button',{className:'sc9-tdc-btn pri',disabled:busy||!res.comLote,onClick:enviar},busy?'Enviando…':'Enviar SD3 para o painel')));
+  }
+
   /* ------------------------------ súmula (Excel) ------------------------------ */
   function baixarSumula(res,achados,somenteConfirmados,periodo){
     const baseUrl=root.location&&root.location.origin||'';
@@ -556,9 +613,9 @@
     const fresco=useMemo(()=>{
       const av=[];
       if(sd1Raw)av.push('SD1 com entradas até '+fmtD(sd1Ate)+' (enviado em '+fmtDH(sd1Raw.savedAt)+')');else av.push('SD1 ainda não enviado');
-      if(load.sd3==='ok')av.push('SD3 (movimentação) até '+fmtD(sd3Faixa[1])+' (enviado em '+fmtDH(sd3Raw.savedAt)+')');else if(load.sd3!=='carregando')av.push('SD3 ainda não enviado pelo administrador');
+      if(load.sd3==='ok')av.push('SD3 (movimentação) até '+fmtD(sd3Faixa[1])+' (enviado em '+fmtDH(sd3Raw.savedAt)+')');else if(load.sd3!=='carregando')av.push('SD3 ainda não enviado');
       let alerta='';
-      if(sd1Ate&&sd3Faixa[1]&&M.diasEntre(sd3Faixa[1],sd1Ate)>1)alerta=' ⚠ A movimentação está atrasada em relação ao SD1: o que subiu depois de '+fmtD(sd3Faixa[1])+' ainda não aparece. Peça ao administrador para atualizar o SD3 (campo "Movimentação interna" na tela inicial).';
+      if(sd1Ate&&sd3Faixa[1]&&M.diasEntre(sd3Faixa[1],sd1Ate)>1)alerta=' ⚠ A movimentação está atrasada em relação ao SD1: o que subiu depois de '+fmtD(sd3Faixa[1])+' ainda não aparece. Atualize o SD3 na aba Dados (quadro 2).';
       return {aviso:av.join(' · ')+'.'+alerta};
     },[sd1Raw,sd1Ate,load.sd3,sd3Raw,sd3Faixa]);
     const semNotas=escopo==='notas'&&!regsLista.length;
@@ -587,7 +644,7 @@
           semDados?h('div',{className:'sc9-tdc-card sc9-tdc-empty'},
             load.sd1==='carregando'?'Carregando…':semNotas&&sd1All.length?h('div',null,h('p',{style:{fontSize:15,fontWeight:650,color:'var(--sc9-ink,#1B2138)'}},'Nenhuma nota em conferência'),h('p',null,'Digite o número de uma nota na aba Notas, ou escolha “Todas as notas do SD1” acima.'),h('button',{className:'sc9-tdc-btn pri',onClick:()=>setAba('notas')},'Informar uma nota')):load.sd1==='vazio'||!sd1All.length?h('div',null,h('p',{style:{fontSize:15,fontWeight:650,color:'var(--sc9-ink,#1B2138)'}},'Ainda não há SD1 no painel'),h('p',null,'Envie a planilha de entradas (SD1) do armazém 59 na aba Dados e o dashboard se monta sozinho.'),h('button',{className:'sc9-tdc-btn pri',onClick:()=>setAba('dados')},'Enviar o SD1')):'Nenhuma entrada no período escolhido.'):
           h('div',null,
-            load.sd3!=='ok'&&h('div',{className:'sc9-tdc-msg info'},'A movimentação (SD3) ainda não está no painel — sem ela só dá pra medir o que foi lançado à mão no fichário. O admin envia na tela de Alteração.'),
+            load.sd3!=='ok'&&h('div',{className:'sc9-tdc-msg info'},'A movimentação (SD3) ainda não está no painel — sem ela só dá pra medir o que foi lançado à mão no fichário. Envie na aba Dados (quadro 2).'),
             h('div',{className:'sc9-tdc-kpis'},
               h(Kpi,{t:'Notas analisadas',v:fmtN(r.notas),sub:fmtN(r.itens)+' itens · '+fmtN(r.pecasNota)+' peças'}),
               h(Kpi,{t:'Notas com divergência',v:fmtN(r.notasErro),sub:r.notas?pct(r.notasErro/r.notas)+' das notas':'',tone:r.notasErro?'bad':'good'}),
@@ -630,15 +687,16 @@
         aba==='dados'&&h('div',{className:'sc9-tdc-card',style:{marginBottom:16}},h('h2',null,'Rotina do dia'),
           h('ol',{className:'sc9-tdc-sub',style:{paddingLeft:18,margin:0}},
             h('li',null,h('b',null,'SD1'),' (notas de entrada): suba aqui, no quadro 1 abaixo. Pode subir a planilha inteira todo dia — notas novas entram, as que já existem são atualizadas e as antigas continuam guardadas.'),
-            h('li',null,h('b',null,'SD3'),' (movimentação 59 → 01): é a mesma que o painel já usa. O administrador sobe na ',h('b',null,'tela inicial, campo “Movimentação interna”'),'. Suba também todo dia: é ela que mostra o que já subiu pro 01.'),
+            h('li',null,h('b',null,'SD3'),' (movimentação 59 → 01): é a mesma que o painel já usa. Suba aqui, no quadro 2 abaixo (ou o administrador na ',h('b',null,'tela inicial, campo “Movimentação interna”'),'): um envio alimenta o TDC e a análise de alteração. Suba também todo dia: é ela que mostra o que já subiu pro 01.'),
             h('li',null,h('b',null,'Notas'),': na aba Notas, digite o número da nota que vai conferir. A análise é refeita na hora com o SD1 e o SD3 que estiverem salvos.'))),
         aba==='dados'&&h('div',{className:'sc9-tdc-grid2'},
           h('div',{className:'sc9-tdc-card'},h('h2',null,'1 · SD1 — nota de entrada'),
             h('p',{className:'sc9-tdc-sub'},sd1Raw?`Guardado: ${fmtN(sd1Raw.total)} linhas · enviado por ${sd1Raw.por||'—'} em ${fmtDH(sd1Raw.savedAt)}${sd1Raw.arquivo?' · '+sd1Raw.arquivo:''}.`:'Nenhum SD1 enviado ainda. Exporte do Protheus a tabela SD1 (itens da nota de entrada) do armazém 59 com: documento, produto, lote, quantidade, data de digitação e, se possível, usuário e hora.'),
             h(EnviarSD1,{onEnviado:carregar})),
           h('div',{className:'sc9-tdc-card'},h('h2',null,'2 · SD3 — movimentação'),
-            h('p',{className:'sc9-tdc-sub'},load.sd3==='ok'?`Já está no painel: ${fmtN(sd3Raw.total)} movimentações com lote, de ${fmtD(sd3Faixa[0])} a ${fmtD(sd3Faixa[1])}, enviada por ${sd3Raw.por||'—'} em ${fmtDH(sd3Raw.savedAt)}.`:load.sd3==='carregando'?'Carregando…':load.sd3==='vazio'?'Nenhuma movimentação salva ainda. Peça ao admin para subir a planilha de movimentação na tela de Alteração; ela é a mesma que o painel já usa.':'Não consegui carregar: '+load.sd3.replace('erro:','')),
+            h('p',{className:'sc9-tdc-sub'},load.sd3==='ok'?`Já está no painel: ${fmtN(sd3Raw.total)} movimentações com lote, de ${fmtD(sd3Faixa[0])} a ${fmtD(sd3Faixa[1])}, enviada por ${sd3Raw.por||'—'} em ${fmtDH(sd3Raw.savedAt)}.`:load.sd3==='carregando'?'Carregando…':load.sd3==='vazio'?'Nenhuma movimentação salva ainda. Envie a planilha de movimentação logo abaixo; ela é a mesma que a tela de Alteração usa.':'Não consegui carregar: '+load.sd3.replace('erro:','')),
             h('p',{className:'sc9-tdc-sub'},'Para o cruzamento funcionar, a movimentação precisa cobrir o mesmo período do SD1 (e algumas semanas depois, pois a subida pro 01 e as correções acontecem depois da entrada).'),
+            h(EnviarSD3,{onEnviado:carregar}),
             h('h2',{style:{marginTop:14}},'Como o Protheus aponta o erro'),
             h('ul',{className:'sc9-tdc-sub',style:{paddingLeft:18}},
               h('li',null,'Entrada ou saída manual no 59 depois da nota → quantidade diferente.'),
