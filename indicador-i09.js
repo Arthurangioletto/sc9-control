@@ -307,5 +307,81 @@
       { name: 'I09 Por tipo', rows: tipos, z: zCol, cols: [16, 12, 14, 24, 12, 14, 24] }, { name: 'I09 Por dia', rows: dia, z: zCol, cols: larg(dia).map((w, i) => (i === 6 || i === 11 ? 24 : Math.min(w, 18))) }];
   }
 
-  return { MODS, NOMES, DESCR, REGRA, MESES, BSC, SEM_TIPO, TIPOS_FIXOS, toISO, norm, lerSC2, lerTipos, lerNaoConsidera, porMes, validarLinhas, classificar, calcularMes, calcularBase, substituirMeses, abasRelatorio, nomeMes, ehUtil };
+  /* ---------- XLSX em paisagem ----------
+   * O SheetJS gratuito não grava a orientação da página. Aqui o .xlsx pronto é reaberto (é um zip), cada aba pedida
+   * ganha "paisagem + ajustar à largura de 1 página" e o zip é refeito. Só mexe nas abas indicadas; o resto fica igual. */
+  const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = (u8) => { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  async function fluxo(Ctor, formato, u8) { const s = new Blob([u8]).stream().pipeThrough(new Ctor(formato)); return new Uint8Array(await new Response(s).arrayBuffer()); }
+  const inflar = (u8) => fluxo(DecompressionStream, 'deflate-raw', u8);
+  const deflar = (u8) => fluxo(CompressionStream, 'deflate-raw', u8);
+  function lerZip(u8) {
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    let e = u8.length - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+    if (e < 0) throw new Error('zip inválido');
+    const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true); const itens = [];
+    for (let i = 0; i < n; i++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('zip inválido (diretório)');
+      const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
+      const it = { metodo: dv.getUint16(p + 10, true), hora: dv.getUint16(p + 12, true), data: dv.getUint16(p + 14, true), crc: dv.getUint32(p + 16, true), csize: dv.getUint32(p + 20, true), usize: dv.getUint32(p + 24, true), nome: new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl)), flags: dv.getUint16(p + 8, true) & ~8 };
+      const lnl = dv.getUint16(off + 26, true), lxl = dv.getUint16(off + 28, true), ini = off + 30 + lnl + lxl;
+      it.bruto = u8.subarray(ini, ini + it.csize); itens.push(it); p += 46 + nl + xl + cl;
+    }
+    return itens;
+  }
+  function montarZip(itens) {
+    const enc = new TextEncoder(), partes = [], cds = []; let pos = 0;
+    for (const it of itens) {
+      const nome = enc.encode(it.nome), h = new Uint8Array(30 + nome.length), dv = new DataView(h.buffer);
+      dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, it.flags | 0x0800, true); dv.setUint16(8, it.metodo, true);
+      dv.setUint16(10, it.hora, true); dv.setUint16(12, it.data, true); dv.setUint32(14, it.crc, true); dv.setUint32(18, it.bruto.length, true); dv.setUint32(22, it.usize, true);
+      dv.setUint16(26, nome.length, true); h.set(nome, 30);
+      const c = new Uint8Array(46 + nome.length), cv = new DataView(c.buffer);
+      cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, it.flags | 0x0800, true); cv.setUint16(10, it.metodo, true);
+      cv.setUint16(12, it.hora, true); cv.setUint16(14, it.data, true); cv.setUint32(16, it.crc, true); cv.setUint32(20, it.bruto.length, true); cv.setUint32(24, it.usize, true);
+      cv.setUint16(28, nome.length, true); cv.setUint32(42, pos, true); c.set(nome, 46);
+      partes.push(h, it.bruto); cds.push(c); pos += h.length + it.bruto.length;
+    }
+    const tam = cds.reduce((s, x) => s + x.length, 0), fim = new Uint8Array(22), fv = new DataView(fim.buffer);
+    fv.setUint32(0, 0x06054b50, true); fv.setUint16(8, itens.length, true); fv.setUint16(10, itens.length, true); fv.setUint32(12, tam, true); fv.setUint32(16, pos, true);
+    const out = new Uint8Array(pos + tam + 22); let o = 0; for (const x of [...partes, ...cds, fim]) { out.set(x, o); o += x.length; } return out;
+  }
+  const escXml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const decXml = (s) => String(s).replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (m, d) => String.fromCodePoint(+d)).replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  function paisagemNoXml(xml) {
+    let s = xml;
+    if (!/<pageSetup\b/.test(s)) {
+      const ps = '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/>';
+      if (/<pageMargins\b[^>]*\/>/.test(s)) s = s.replace(/(<pageMargins\b[^>]*\/>)/, '$1' + ps);
+      else s = s.replace('</worksheet>', '<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>' + ps + '</worksheet>');
+    }
+    if (!/<pageSetUpPr\b/.test(s)) {
+      if (/<sheetPr\s*\/>/.test(s)) s = s.replace(/<sheetPr\s*\/>/, '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+      else if (/<sheetPr\b[^>]*\/>/.test(s)) s = s.replace(/<sheetPr\b([^>]*)\/>/, '<sheetPr$1><pageSetUpPr fitToPage="1"/></sheetPr>');
+      else if (/<sheetPr\b/.test(s)) s = s.replace('</sheetPr>', '<pageSetUpPr fitToPage="1"/></sheetPr>');
+      else s = s.replace(/(<worksheet\b[^>]*>)/, '$1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>');
+    }
+    return s;
+  }
+  async function paisagemXlsx(bytes, nomesAbas) {
+    const itens = lerZip(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)), por = {}; itens.forEach((i) => { por[i.nome] = i; });
+    const texto = async (n) => { const it = por[n]; if (!it) return ''; return new TextDecoder().decode(it.metodo === 8 ? await inflar(it.bruto) : it.bruto); };
+    const wb = await texto('xl/workbook.xml'), rels = await texto('xl/_rels/workbook.xml.rels'), alvo = new Set(nomesAbas);
+    const destinos = [];
+    for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+      const nome = (/\bname="([^"]*)"/.exec(m[0]) || [])[1], rid = (/\br:id="([^"]*)"/.exec(m[0]) || [])[1];
+      if (nome == null || !alvo.has(decXml(nome))) continue;
+      const rel = new RegExp('<Relationship\\b[^>]*\\bId="' + rid + '"[^>]*>').exec(rels), alvoArq = rel && /\bTarget="([^"]*)"/.exec(rel[0]);
+      if (alvoArq) destinos.push(alvoArq[1].replace(/^\//, '').replace(/^(?!xl\/)/, 'xl/'));
+    }
+    for (const d of destinos) {
+      const it = por[d]; if (!it) continue;
+      const novo = new TextEncoder().encode(paisagemNoXml(await texto(d)));
+      const bruto = await deflar(novo);
+      it.bruto = bruto; it.metodo = 8; it.crc = crc32(novo); it.usize = novo.length;
+    }
+    return montarZip(itens);
+  }
+
+  return { MODS, NOMES, DESCR, REGRA, MESES, BSC, SEM_TIPO, TIPOS_FIXOS, toISO, norm, lerSC2, lerTipos, lerNaoConsidera, porMes, validarLinhas, classificar, calcularMes, calcularBase, substituirMeses, abasRelatorio, paisagemXlsx, nomeMes, ehUtil };
 });
