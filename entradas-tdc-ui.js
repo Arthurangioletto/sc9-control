@@ -416,7 +416,7 @@
     add('Por usuário',s.porUsuario,[30,10,20,22,10,20,18]);
     add('Detalhe',s.detalhe,[13,26,10,12,7,26,14,14,14,12,12,11,13,18,22,60,40,16,12]);
     add('Tempo',s.tempo,[12,28,14,14,12,12,16,22,18,16,22]);
-    root.XLSX.writeFile(wb,'Sumula_Entradas_TDC_'+new Date().toISOString().slice(0,10)+'.xlsx');
+    root.SC9Exports.downloadWorkbook(wb,'Sumula_Entradas_TDC_'+new Date().toISOString().slice(0,10)+'.xlsx',root.XLSX);
   }
 
 
@@ -536,7 +536,7 @@
       h('div',{className:'sc9-tdc-act',style:{marginTop:12}},
         h('button',{className:'sc9-tdc-btn pri',disabled:Boolean(busy),onClick:abrir},'Abrir relatório (imprimir / PDF)'),
         h('button',{className:'sc9-tdc-btn',disabled:Boolean(busy),onClick:baixar},'Baixar .html'),
-        h('button',{className:'sc9-tdc-btn',disabled:Boolean(busy),onClick:()=>onExcel(de,ate)},'Baixar Excel (dados)'),
+        h('button',{className:'sc9-tdc-btn',disabled:Boolean(busy),onClick:async()=>{setErr('');try{setBusy('Gerando Excel…');await onExcel(de,ate);}catch(e){setErr(e.message||'Não foi possível gerar o Excel.');}finally{setBusy('');}}},'Baixar Excel (dados)'),
         h('button',{className:'sc9-tdc-btn',onClick:onFechar,disabled:Boolean(busy)},'Fechar'))));
   }
 

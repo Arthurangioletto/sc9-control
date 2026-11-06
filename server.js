@@ -372,6 +372,7 @@ function carregarEstatico(name, cb) {
 SERVABLE.add("ui-workspaces.js");
 SERVABLE.add("receiving-control.js");
 SERVABLE.add("receiving-ui.js");
+SERVABLE.add("export-workbook.js");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");
 
