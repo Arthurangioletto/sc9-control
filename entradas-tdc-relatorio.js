@@ -7,8 +7,9 @@
     qtd_menor:{rotulo:'Veio MENOS do que a nota',cor:'#C2630A'},
     item_fora_nota:{rotulo:'Item que NÃO estava na nota',cor:'#7A3FB0'},
     lote_trocado:{rotulo:'Lote trocado / misturado',cor:'#0B6FA4'},
+    nota_divergente:{rotulo:'Nota diferente da verdadeira',cor:'#5F477E'},
   };
-  const ORDEM=['qtd_maior','qtd_menor','item_fora_nota','lote_trocado'];
+  const ORDEM=Object.keys(TIPOS);
   const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const fmtN=(n,d)=>n==null||n===''||!Number.isFinite(Number(n))?'—':Number(n).toLocaleString('pt-BR',{maximumFractionDigits:d==null?1:d});
   const fmtD=iso=>iso&&/^\d{4}-\d{2}-\d{2}/.test(iso)?iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4):'—';

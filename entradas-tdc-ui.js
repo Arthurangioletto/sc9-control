@@ -203,12 +203,13 @@
         h('div',null,h('label',null,'Lote físico'),h('input',{className:'sc9-tdc-in',value:lote,placeholder:a.lote||'—',onChange:e=>setLote(e.target.value)}))),
       a.revisao?.notaErrada&&h('div',{className:'sc9-tdc-meta'},'Nota errada ',h('b',null,a.revisao.notaErrada)),
       a.revisao?.notaCorreta&&h('div',{className:'sc9-tdc-meta'},'Nota correta ',h('b',null,a.revisao.notaCorreta)),
+      a.tipo==='nota_divergente'&&a.qtdNota!=null&&qtd!==''&&Number(qtd)!==a.qtdNota&&h('div',{className:'sc9-tdc-meta'},'Diferença de quantidade ',h('b',null,fmtN(Math.abs(Number(qtd)-a.qtdNota))+' pç')),
       a.descricao&&h('div',{className:'sc9-tdc-desc'},a.descricao),
       a.corrigidoPor&&a.corrigidoPor.length>0&&h('div',{className:'sc9-tdc-meta'},'Corrigido no estoque por: ',h('b',null,a.corrigidoPor.join(', '))),
       a.movimentos&&a.movimentos.length>0&&h('details',{className:'sc9-tdc-ev'},h('summary',null,'Ver o que o Protheus registrou ('+a.movimentos.length+')'),
         h('ul',null,a.movimentos.map((m,i)=>h('li',{key:i},fmtD(m.dia),' · ',m.cf,' · doc ',m.doc,' · ',m.dir==='saida'?'saída ':'entrada ',h('b',null,fmtN(m.qt)),' pç · arm ',m.armazem,' · lote ',m.lote,m.usuario&&' · '+m.usuario)))),
       h('div',{className:'sc9-tdc-row2'},
-        h('div',{className:'sc9-tdc-field'},h('label',null,'Tipo de erro'),h('select',{className:'sc9-tdc-in',value:tipo,onChange:e=>setTipo(e.target.value)},M.TIPOS_MANUAL.map(t=>h('option',{key:t,value:t},M.TIPOS[t].rotulo)))),
+        h('div',{className:'sc9-tdc-field'},h('label',null,'Tipo de erro'),h('select',{className:'sc9-tdc-in',value:tipo,onChange:e=>setTipo(e.target.value)},M.TIPOS_MANUAL.filter(t=>t!=='nota_divergente'||a.tipo===t).map(t=>h('option',{key:t,value:t},M.TIPOS[t].rotulo)))),
         h('div',{className:'sc9-tdc-field'},h('label',null,rev.por?'Revisado por '+rev.por:'Revisão'),h('div',{className:'sc9-tdc-meta'},rev.em?fmtDH(rev.em):'ainda não revisada'))),
       h(FotoCampo,{ids:fotos,onChange:setFotos}),
       h('textarea',{className:'sc9-tdc-ta',placeholder:'Justificativa do estoque (ex.: conferi 10 caixas no físico, nota dizia 8)',value:obs,onChange:e=>setObs(e.target.value)}),
@@ -233,6 +234,7 @@
     const [err,setErr]=useState('');const [busy,setBusy]=useState(false);
     const set=k=>e=>setF(x=>({...x,[k]:e.target.value}));
     const foraDaNota=f.tipo==='item_fora_nota';
+    const notaDivergente=f.tipo==='nota_divergente';
     const buscarNota=useCallback((nota,serie)=>{
       const b=M.buscarNota(sd1All||[],nota,serie);
       if(!M.normNota(nota)){setAchou('');setItensNota([]);setSeries([]);return;}
@@ -256,15 +258,23 @@
     const campo=(k,rot,tipo,extra)=>h('div',{className:'sc9-tdc-field',key:k},h('label',null,rot),h('input',{className:'sc9-tdc-in',type:tipo||'text','aria-label':rot,value:f[k]==null?'':f[k],onChange:set(k),...(extra||{})}));
     const salvar=async()=>{
       if(!f.produto.trim()){setErr('Informe o produto (escolha na lista de itens da nota ou digite).');return;}
+      if(notaDivergente&&(!M.normNota(f.notaErrada)||!M.normNota(f.nota)||M.normNota(f.notaErrada)===M.normNota(f.nota))){
+        setErr('Informe a nota errada e a nota correta com números diferentes.');return;
+      }
       setBusy(true);setErr('');
-      try{await onSave('MANUAL|'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),{...f,fotos,protheus,status:'confirmado',fisicoQtd:f.qtdFisica,fisicoLote:f.loteFisico,qtdNota:foraDaNota?0:(Number(f.qtdNota)||0),qtdFisica:f.qtdFisica===''?'':Number(f.qtdFisica)});onClose();}
+      try{await onSave('MANUAL|'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),{...f,...(notaDivergente?{nota:f.nota.trim(),notaCorreta:f.nota.trim(),notaErrada:f.notaErrada.trim()}:{}),fotos,protheus,status:'confirmado',fisicoQtd:f.qtdFisica,fisicoLote:f.loteFisico,qtdNota:notaDivergente&&f.qtdNota===''?'':foraDaNota?0:(Number(f.qtdNota)||0),qtdFisica:f.qtdFisica===''?'':Number(f.qtdFisica)});onClose();}
       catch(e){setErr(e.message);setBusy(false);}
     };
     return h('div',{className:'sc9-tdc-modal',onClick:e=>{if(e.target===e.currentTarget)onClose();}},h('div',null,
       h('h2',{style:{margin:'0 0 4px',fontSize:16}},'Reportar um erro de entrada'),
       h('p',{className:'sc9-tdc-sub'},'Digite o número da nota: o painel preenche o que é da nota (fornecedor, data, itens). Escolha o item com problema, diga o que encontrou no físico e anexe a foto do pacote. Fica confirmado por '+(usuario||'você')+'.'),
       h('div',{className:'sc9-tdc-row2',style:{marginBottom:10}},
-        h('div',{className:'sc9-tdc-field'},h('label',null,'Número da nota'),h('input',{className:'sc9-tdc-in',value:f.nota,inputMode:'numeric',placeholder:'ex.: 000123',autoFocus:!(inicial&&inicial.nota),onChange:e=>{set('nota')(e);setAchou('');}})),
+        h('div',{className:'sc9-tdc-field'},h('label',null,notaDivergente?'Nota correta *':'Número da nota'),h('input',{className:'sc9-tdc-in',value:f.nota,maxLength:30,inputMode:'numeric',placeholder:'ex.: 000123',autoFocus:!(inicial&&inicial.nota),onChange:e=>{
+          const nota=e.target.value;
+          setF(x=>({...x,nota,...(notaDivergente?{serie:'',fornecedor:'',dtEntrada:'',...(itemSel>=0?{produto:'',lote:'',qtdNota:''}:{})}:{})}));
+          setAchou('');
+          if(notaDivergente)setItensNota([]);
+        }})),
         h('div',{className:'sc9-tdc-field'},h('label',null,'Tipo de erro'),h('select',{className:'sc9-tdc-in',value:f.tipo,onChange:e=>{const v=e.target.value;setF(x=>({...x,tipo:v,...(v==='item_fora_nota'?{qtdNota:0}:{})}));}},M.TIPOS_MANUAL.map(t=>h('option',{key:t,value:t},M.TIPOS[t].rotulo))))),
       achou==='nao'&&h('div',{className:'sc9-tdc-msg info'},'Essa nota não está no SD1 enviado. Você ainda pode preencher à mão abaixo.'),
       achou==='serie'&&h('div',{className:'sc9-tdc-msg info'},'Essa nota existe em mais de uma série. Qual é a sua? ',series.map(sr=>h('button',{key:sr,type:'button',className:'sc9-tdc-chip',style:{marginLeft:6},onClick:()=>escolherSerie(sr)},'Série '+(sr||'(em branco)')))),
@@ -272,16 +282,17 @@
       achou==='sim'&&!foraDaNota&&h('div',{className:'sc9-tdc-field',style:{marginBottom:10}},h('label',null,'Qual item da nota está errado?'),
         h('select',{className:'sc9-tdc-in',value:itemSel>=0?itemSel:'',onChange:e=>escolherItem(e.target.value)},h('option',{value:''},'— escolha o item —'),itensNota.map((l,ix)=>h('option',{key:ix,value:ix},l.produto+' · lote '+(l.lote||'—')+' · '+fmtN(l.qt)+' pç na nota')))),
       foraDaNota&&h('div',{className:'sc9-tdc-msg info'},'Item que chegou e não estava na nota: digite o produto e o lote que apareceram no pacote.'),
+      notaDivergente&&h('div',{className:'sc9-tdc-msg info'},'O SD1 é consultado pela nota correta. Se também houver divergência de quantidade, informe a quantidade da nota correta e a contagem física nesta mesma ficha.'),
       protheus&&h('div',{className:'sc9-tdc-ev-box'},h('b',null,'O que o Protheus mostra: '),protheus),
       jaApontado&&h('div',{className:'sc9-tdc-msg info'},'O Protheus já apontou este erro neste item: ',jaApontado.descricao,' Para não contar em dobro, confirme a ficha dele no Fichário e anexe a foto lá. Se for outro problema, siga com este relato.'),
       h('div',{className:'sc9-tdc-row2'},
         campo('produto','Produto *'),campo('lote',foraDaNota?'Lote do pacote':'Lote da nota'),
-        !foraDaNota&&campo('qtdNota','Qtd. na nota','number',{readOnly:itemSel>=0}),campo('qtdFisica','Qtd. física (contada)','number'),
+        !foraDaNota&&campo('qtdNota',notaDivergente?'Qtd. na nota correta':'Qtd. na nota','number',{readOnly:itemSel>=0}),campo('qtdFisica','Qtd. física (contada)','number'),
         f.tipo==='lote_trocado'&&campo('loteFisico','Lote que veio no físico'),
         campo('usuarioTDC','Quem lançou no TDC')),
       h('div',{className:'sc9-tdc-row2',style:{marginTop:10}},
-        campo('notaErrada','Nota errada (opcional)','text',{maxLength:30,placeholder:'ex.: 000123'}),
-        campo('notaCorreta','Nota correta (opcional)','text',{maxLength:30,placeholder:'ex.: 000124'})),
+        campo('notaErrada',notaDivergente?'Nota errada *':'Nota errada (opcional)','text',{maxLength:30,placeholder:'ex.: 000123'}),
+        !notaDivergente&&campo('notaCorreta','Nota correta (opcional)','text',{maxLength:30,placeholder:'ex.: 000124'})),
       h('div',{style:{marginTop:10}},h(FotoCampo,{ids:fotos,onChange:setFotos})),
       h('div',{className:'sc9-tdc-field',style:{marginTop:10}},h('label',null,'Justificativa (o que estava errado)'),h('textarea',{className:'sc9-tdc-ta',placeholder:'ex.: nota dizia 8 peças, contei 10 no pacote',value:f.obs,onChange:set('obs')})),
       err&&h('div',{className:'sc9-tdc-msg err'},err),
