@@ -17,6 +17,17 @@ function base() {
   return { res, achados };
 }
 
+test('consulta semanal inclui ficha manual sem data da nota e mantém os dados originais', () => {
+  const { res } = base();
+  const ficha = T.fichaManualParaFinding('MANUAL|sem-data', { tipo: 'qtd_maior', status: 'confirmado',
+    produto: 'P1', qtdNota: 8, qtdFisica: 10, em: '2026-10-05T15:00:00Z', obs: 'Contei 10' });
+  const copia = structuredClone(ficha);
+  const dados = Rp.montarRelatorio(res, [{ ...ficha, dataRelatorio: T.dataRelatorio(ficha) }], { de: '2026-10-05', ate: '2026-10-11' });
+  assert.strictEqual(dados.erros.length, 1);
+  assert.strictEqual(dados.erros[0].revisao.obs, 'Contei 10');
+  assert.deepStrictEqual(ficha, copia);
+});
+
 test('montarRelatorio: só confirmados, período, KPIs e tempo', () => {
   const { res, achados } = base();
   const d = Rp.montarRelatorio(res, achados, { de: '2026-10-01', ate: '2026-10-31' });

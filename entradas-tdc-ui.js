@@ -178,7 +178,7 @@
   }
 
   /* ------------------------------ fichas ------------------------------ */
-  function Ficha({a,onSave,onRemove}){
+  function Ficha({a,onSave}){
     const rev=a.revisao||{};
     const [tipo,setTipo]=useState(a.tipo);
     const [qtd,setQtd]=useState(rev.fisicoQtd!==undefined&&rev.fisicoQtd!==''?rev.fisicoQtd:(a.qtdFisica==null?'':a.qtdFisica));
@@ -218,8 +218,7 @@
         a.status!=='confirmado'&&h('button',{className:'sc9-tdc-btn ok',disabled:busy,onClick:()=>salvar('confirmado')},'✓ Confirmar erro'),
         a.status==='confirmado'&&h('button',{className:'sc9-tdc-btn pri',disabled:busy,onClick:()=>salvar('confirmado')},'Salvar alterações'),
         a.status!=='descartado'&&!a.manual&&h('button',{className:'sc9-tdc-btn bad',disabled:busy,onClick:()=>salvar('descartado')},'Descartar (não é erro)'),
-        a.status!=='pendente'&&!a.manual&&h('button',{className:'sc9-tdc-btn',disabled:busy,onClick:()=>salvar('pendente')},'Reabrir'),
-        a.manual&&h('button',{className:'sc9-tdc-btn bad',disabled:busy,onClick:async()=>{setBusy(true);try{await onRemove(a);}catch(e){setErr(e.message);setBusy(false);}}},'Remover')));
+        a.status!=='pendente'&&!a.manual&&h('button',{className:'sc9-tdc-btn',disabled:busy,onClick:()=>salvar('pendente')},'Reabrir')));
   }
 
   function resumoProtheus(it){
@@ -575,15 +574,14 @@
   }
   function Exportar({res,achados,sessao,escopoRotulo,soConf,onExcel,onFechar}){
     const Rp=root.SC9EntradasTDCRelatorio;
-    const conf=achados.filter(a=>a.status==='confirmado'||a.manual);
-    const datas=conf.map(a=>a.dtEntrada).filter(Boolean).sort();
-    const [de,setDe]=useState(datas[0]||''),[ate,setAte]=useState(datas[datas.length-1]||'');
+    const conf=achados.filter(a=>a.status!=='descartado'&&(a.status==='confirmado'||a.manual));
+    const [de,setDe]=useState(''),[ate,setAte]=useState('');
     const [busy,setBusy]=useState(''),[err,setErr]=useState('');
     const dentro=d=>(!de||(d&&d>=de))&&(!ate||(d&&d<=ate));
-    const doPeriodo=conf.filter(a=>dentro(a.dtEntrada||''));
+    const doPeriodo=conf.filter(a=>dentro(M.dataRelatorio(a)));
     const nFotos=doPeriodo.reduce((s,a)=>s+((a.fotos||[]).length),0);
     const montar=async()=>{
-      const dados=Rp.montarRelatorio(res||{itens:[]},achados,{de,ate,escopo:escopoRotulo});
+      const dados=Rp.montarRelatorio(res||{itens:[]},achados.map(a=>({...a,dataRelatorio:M.dataRelatorio(a)})),{de,ate,escopo:escopoRotulo});
       const ids=[...new Set(dados.erros.flatMap(e=>e.fotos||[]))],fotos={};let feitas=0;
       for(const id of ids){setBusy('Preparando fotos ('+(++feitas)+'/'+ids.length+')…');try{fotos[id]=await fotoParaDataUrl(id);}catch(e){/* foto indisponível: o cartão mostra "sem foto" */}}
       return Rp.gerarHTML(dados,{fotos,geradoEm:new Date(),geradoPor:sessao&&(sessao.nome||sessao.usuario)||'',cobertura:{sd1Ate:res&&res.cobertura.sd1Ate,sd3Ate:res&&res.cobertura.sd3Ate}});
@@ -598,6 +596,7 @@
     const baixar=async()=>{setErr('');try{setBusy('Montando relatório…');baixarArquivo(nomeArq(),await montar(),'text/html;charset=utf-8');}catch(e){setErr(e.message);}finally{setBusy('');}};
     return h('div',{className:'sc9-tdc-modal',onClick:e=>{if(e.target===e.currentTarget&&!busy)onFechar();}},h('div',null,
       h('h2',{style:{margin:'0 0 4px',fontSize:16}},'Exportar'),
+      h('p',{className:'sc9-tdc-sub'},'Abrir ou baixar o relatório mantém as fichas salvas. Para exportar uma semana, informe as datas. Fichas manuais sem data de entrada usam a data do registro.'),
       h('p',{className:'sc9-tdc-sub'},'O relatório traz só os erros confirmados pelo estoque no período (pela data da entrada da nota), com gráficos, a foto de cada pacote ao lado, o que o Protheus mostra e a justificativa. A data e a hora da geração ficam no cabeçalho.'),
       h('div',{className:'sc9-tdc-row2',style:{marginBottom:10}},
         h('div',{className:'sc9-tdc-field'},h('label',null,'De (data da entrada)'),h('input',{className:'sc9-tdc-in',type:'date',value:de,onChange:e=>setDe(e.target.value)})),
@@ -618,14 +617,15 @@
     const [load,setLoad]=useState({sd3:'carregando',sd1:'carregando'});
     const [erro,setErro]=useState('');
     const [de,setDe]=useState(''),[ate,setAte]=useState('');
-    const [fStatus,setFStatus]=useState('pendente'),[fTipo,setFTipo]=useState(''),[busca,setBusca]=useState('');
+    const [fStatus,setFStatus]=useState('todas'),[fTipo,setFTipo]=useState(''),[busca,setBusca]=useState('');
+    const [zerando,setZerando]=useState(false),[ficharioCarregado,setFicharioCarregado]=useState(false);
     const [exportando,setExportando]=useState(false);const [manual,setManual]=useState(null);const [soConf,setSoConf]=useState(true);const [notasReg,setNotasReg]=useState({});const [grupoEnt,setGrupoEnt]=useState('');const [escopo,setEscopo]=useState('notas');
 
     const carregar=useCallback(async()=>{
       setErro('');
       api('/api/movimentacao-analise').then(d=>{setSd3Raw(d);setLoad(l=>({...l,sd3:'ok'}));}).catch(e=>setLoad(l=>({...l,sd3:e.status===404?'vazio':'erro:'+e.message})));
       api('/api/entradas-tdc/sd1').then(d=>{setSd1Raw(d);setLoad(l=>({...l,sd1:'ok'}));}).catch(e=>setLoad(l=>({...l,sd1:e.status===404?'vazio':'erro:'+e.message})));
-      api('/api/entradas-tdc/fichas').then(d=>setFichas(d&&d.fichas?d:{fichas:{}})).catch(e=>setErro('Fichário: '+e.message));
+      api('/api/entradas-tdc/fichas').then(d=>{setFichas(d&&d.fichas?d:{fichas:{}});setFicharioCarregado(true);}).catch(e=>setErro('Fichário: '+e.message));
       api('/api/entradas-tdc/notas').then(d=>setNotasReg((d&&d.notas)||{})).catch(e=>setErro('Notas: '+e.message));
     },[]);
     useEffect(()=>{carregar();},[carregar]);
@@ -640,21 +640,39 @@
     const regsLista=useMemo(()=>Object.values(notasReg),[notasReg]);
     const res=useMemo(()=>sd1.length?M.analisar(sd1,sd3,{ignorar,notas:escopo==='notas'?regsLista:undefined}):null,[sd1,sd3,ignorar,escopo,regsLista]);
     const resAll=useMemo(()=>sd1All.length?M.analisar(sd1All,sd3,{ignorar,notas:regsLista}):null,[sd1All,sd3,ignorar,regsLista]);
+    const resFichario=useMemo(()=>{
+      if(escopo==='notas')return resAll;
+      if(!de&&!ate&&!grupoEnt)return res;
+      return sd1All.length?M.analisar(sd1All,sd3,{ignorar}):null;
+    },[escopo,resAll,res,sd1All,sd3,ignorar,de,ate,grupoEnt]);
+    const encerradas=useMemo(()=>new Set(fichas.encerradas||[]),[fichas.encerradas]);
     const achados=useMemo(()=>{
-      const auto=res?M.aplicarRevisoes(res.findings,fObj):[];
+      const atuais=(resFichario?.findings||[]).filter(a=>!encerradas.has(a.id));
+      const ids=new Set(atuais.map(a=>a.id));
+      const salvas=Object.values(fObj).map(f=>f.origem).filter(a=>a&&!ids.has(a.id)&&!encerradas.has(a.id));
+      const auto=M.aplicarRevisoes([...atuais,...salvas],fObj);
       const man=Object.keys(fObj).filter(k=>k.startsWith('MANUAL|')).map(k=>M.fichaManualParaFinding(k,fObj[k]));
       return [...man,...auto];
-    },[res,fObj]);
+    },[resFichario,fObj,encerradas]);
     const achadosAll=useMemo(()=>resAll?M.aplicarRevisoes(resAll.findings,fObj):[],[resAll,fObj]);
     const sd3Faixa=useMemo(()=>{let a='',b='';for(const m of sd3){if(!m.dia)continue;if(!a||m.dia<a)a=m.dia;if(!b||m.dia>b)b=m.dia;}return [a,b];},[sd3]);
 
-    const salvarFicha=async(id,ficha)=>{const r=await api('/api/entradas-tdc/fichas',{id,ficha});setFichas(f=>({...f,fichas:{...f.fichas,[id]:r.ficha}}));};
+    const salvarFicha=async(id,ficha)=>{const r=await api('/api/entradas-tdc/fichas',{id,ficha,ciclo:fichas.ciclo});setFichas(f=>(f.ciclo||null)!==(fichas.ciclo||null)?f:{...f,atualizadoEm:r.atualizadoEm,fichas:{...f.fichas,[id]:r.ficha}});};
     const analisarNota=(nota,serie)=>sd1All.length?M.analisar(sd1All,sd3,{ignorar,notas:[{nota,serie}]}):null;
     const addNota=async(nota,serie)=>{const r=await api('/api/entradas-tdc/notas',{nota,serie});setNotasReg(r.notas||{});};
     const removerNota=async reg=>{const r=await api('/api/entradas-tdc/notas',{nota:reg.nota,serie:reg.serie,remover:true});setNotasReg(r.notas||{});};
     const abrirFichasNota=reg=>{setBusca(reg.nota);setFStatus('todas');setFTipo('');setAba('ficharios');};
     const vincular=async(c,base,reg)=>{await salvarFicha('MANUAL|VINC|'+c.id+'|'+reg.nota+'|'+(reg.serie||''),{status:'confirmado',tipo:'item_fora_nota',obs:'Entrada manual de '+fmtN(c.qtdFisica)+' pç vinculada pelo estoque à NF '+reg.nota+(c.movimentos&&c.movimentos[0]?' (doc '+c.movimentos[0].doc+')':''),nota:base.nota,serie:base.serie,fornecedor:base.fornecedor,produto:c.produto,lote:c.lote,loteFisico:'',qtdNota:0,qtdFisica:c.qtdFisica,fisicoQtd:c.qtdFisica,fisicoLote:'',dtEntrada:c.dtEntrada,usuarioTDC:base.usuarioTDC});};
-    const removerFicha=async a=>{await api('/api/entradas-tdc/fichas',{id:a.id,remover:true,ficha:{status:'pendente'}});setFichas(f=>{const n={...f.fichas};delete n[a.id];return {...f,fichas:n};});};
+    const zerarFichario=async()=>{
+      if(!root.confirm('Zerar o Fichário 59 e começar um novo ciclo? As fichas e revisões do ciclo atual sairão do Fichário.'))return;
+      setZerando(true);setErro('');
+      try{
+        const base=sd1All.length?M.analisar(sd1All,sd3).findings:[];
+        const ids=[...new Set([...base,...(resAll?.findings||[])].map(a=>a.id))];
+        const novo=await api('/api/entradas-tdc/fichas',{acao:'zerar',versao:fichas.atualizadoEm||null,ids});
+        setFichas(novo);setBusca('');setFTipo('');setFStatus('todas');
+      }catch(e){setErro(e.message);}finally{setZerando(false);}
+    };
 
     const cont=useMemo(()=>({pendente:achados.filter(a=>a.status==='pendente').length,confirmado:achados.filter(a=>a.status==='confirmado').length,descartado:achados.filter(a=>a.status==='descartado').length,todas:achados.length}),[achados]);
     const lista=useMemo(()=>{
@@ -664,7 +682,6 @@
 
     /* ---- números do dashboard ---- */
     const r=res&&res.resumo;
-    const ativos=achados.filter(a=>a.status!=='descartado'&&!a.manual);
     const atraso=useMemo(()=>{
       if(!res||res.resumo.diasMediaLimpos==null)return null;
       const base=res.resumo.diasMediaLimpos;
@@ -677,8 +694,10 @@
     const VAZIO={resumo:{notas:0,notasErro:0,itens:0,itensErro:0,pecasNota:0,pecasDivergentes:0,porTipo:Object.fromEntries(M.TIPOS_MANUAL.map(t=>[t,{achados:0,pecas:0}])),porUsuario:[],diasMediaLimpos:null,diasMediaComErro:null},itens:[],cobertura:{sd1De:'',sd1Ate:''}};
     const fazerSumula=(d1,a1)=>{try{
       const dd=d1!==undefined?d1:de,aa=a1!==undefined?a1:ate;
-      const lista=achados.filter(x=>(!dd||(x.dtEntrada&&x.dtEntrada>=dd))&&(!aa||(x.dtEntrada&&x.dtEntrada<=aa)));
-      baixarSumula(res||VAZIO,lista,soConf,(dd||aa)?'Entradas de '+fmtD(dd||(res&&res.cobertura.sd1De))+' a '+fmtD(aa||(res&&res.cobertura.sd1Ate)):'');}catch(e){setErro(e.message);}};
+      const dentro=data=>(!dd||(data&&data>=dd))&&(!aa||(data&&data<=aa));
+      const lista=achados.filter(x=>dentro(M.dataRelatorio(x)));
+      const periodo=dd||aa?M.analisar(sd1All.filter(x=>dentro(x.dtDigit)),sd3,{ignorar,notas:escopo==='notas'?regsLista:undefined}):resFichario;
+      baixarSumula(periodo||VAZIO,lista,soConf,(dd||aa)?'Entradas de '+fmtD(dd||periodo?.cobertura.sd1De)+' a '+fmtD(aa||periodo?.cobertura.sd1Ate):'');}catch(e){setErro(e.message);}};
 
     const sd1Ate=useMemo(()=>sd1All.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),[sd1All]);
     const fresco=useMemo(()=>{
@@ -701,7 +720,7 @@
         h('button',{className:'sc9-tdc-btn',onClick:onFechar,'aria-label':'Fechar'},'✕ Fechar')),
       h('div',{className:'sc9-tdc-body'},
         erro&&h('div',{className:'sc9-tdc-msg err'},erro),
-        exportando&&h(Exportar,{res,achados,sessao,escopoRotulo:escopo==='notas'?'notas informadas':'todas as notas do SD1',soConf,onExcel:(d,a)=>fazerSumula(d,a),onFechar:()=>setExportando(false)}),
+        exportando&&h(Exportar,{res:resFichario,achados,sessao,escopoRotulo:escopo==='notas'?'notas informadas':'todas as notas do SD1',soConf,onExcel:(d,a)=>fazerSumula(d,a),onFechar:()=>setExportando(false)}),
         manual&&h(FichaManual,{sd1All,analisarNota,onClose:()=>setManual(null),onSave:async(id,f)=>{await salvarFicha(id,f);if(f.nota&&!regsLista.some(r=>M.normNota(r.nota)===M.normNota(f.nota)&&(!r.serie||r.serie===f.serie)))await addNota(f.nota,f.serie).catch(()=>{});},inicial:manual===true?null:manual,usuario:sessao&&(sessao.nome||sessao.usuario)}),
         aba==='notas'&&h(Notas,{fresco,sd1All,sd1Raw,res:resAll,notasReg,fObj,achados:achadosAll,onAdd:addNota,onRemover:removerNota,onFichas:abrirFichasNota,onManual:setManual,onVincular:vincular,onIrDados:()=>setAba('dados')}),
         aba==='painel'&&h('div',null,
@@ -751,9 +770,10 @@
             h('select',{value:fTipo,onChange:e=>setFTipo(e.target.value)},h('option',{value:''},'Todos os tipos'),M.TIPOS_MANUAL.map(t=>h('option',{key:t,value:t},M.TIPOS[t].rotulo))),
             h('input',{type:'search',placeholder:'Buscar nota, produto, lote…',value:busca,onChange:e=>setBusca(e.target.value)}),
             h('span',{style:{flex:1}}),
-            h('button',{className:'sc9-tdc-btn pri',onClick:()=>setManual(true)},'+ Nova ficha manual')),
+            h('button',{className:'sc9-tdc-btn pri',disabled:zerando,onClick:()=>setManual(true)},'+ Nova ficha manual'),
+            sessao?.role==='admin'&&h('button',{className:'sc9-tdc-btn bad',disabled:zerando||!ficharioCarregado||![load.sd1,load.sd3].every(s=>s==='ok'||s==='vazio'),onClick:zerarFichario},'Zerar fichário e começar do zero')),
           h('p',{className:'sc9-tdc-sub'},'Cada ficha é uma entrada que o Protheus indica ter subido diferente da nota. Confira no físico, preencha o que de fato veio e confirme ou descarte. Só o confirmado vai para a súmula.'),
-          lista.length?h('div',{className:'sc9-tdc-cards'},lista.map(a=>h(Ficha,{key:a.id+'|'+a.status+'|'+((a.revisao&&a.revisao.em)||''),a,onSave:(x,f)=>salvarFicha(x.id,x.manual?{...x.revisao,...f,nota:x.nota,serie:x.serie,fornecedor:x.fornecedor,produto:x.produto,lote:x.lote,loteFisico:f.fisicoLote,qtdNota:x.qtdNota,qtdFisica:f.fisicoQtd,dtEntrada:x.dtEntrada,usuarioTDC:x.usuarioTDC}:f),onRemove:removerFicha}))):
+          lista.length?h('div',{className:'sc9-tdc-cards'},lista.map(a=>h(Ficha,{key:a.id+'|'+a.status+'|'+((a.revisao&&a.revisao.em)||''),a,onSave:(x,f)=>salvarFicha(x.id,x.manual?{...x.revisao,...f,nota:x.nota,serie:x.serie,fornecedor:x.fornecedor,produto:x.produto,lote:x.lote,loteFisico:f.fisicoLote,qtdNota:x.qtdNota,qtdFisica:f.fisicoQtd,dtEntrada:x.dtEntrada,usuarioTDC:x.usuarioTDC}:{...f,origem:x})}))):
             h('div',{className:'sc9-tdc-card sc9-tdc-empty'},semDados&&!achados.length?'Envie o SD1 na aba Dados para o Protheus começar a apontar divergências.':'Nenhuma ficha neste filtro.')),
         aba==='dados'&&h('div',{className:'sc9-tdc-card',style:{marginBottom:16}},h('h2',null,'Rotina do dia'),
           h('ol',{className:'sc9-tdc-sub',style:{paddingLeft:18,margin:0}},

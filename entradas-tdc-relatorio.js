@@ -25,7 +25,7 @@
   /* ---------------------------- dados do período ---------------------------- */
   function montarRelatorio(res,achados,{de='',ate='',escopo='notas informadas'}={}){
     const dentro=d=>(!de||(d&&d>=de))&&(!ate||(d&&d<=ate));
-    const todos=(achados||[]).filter(a=>a.status!=='descartado'&&(a.status==='confirmado'||a.manual)&&dentro(a.dtEntrada||''))
+    const todos=(achados||[]).filter(a=>a.status!=='descartado'&&(a.status==='confirmado'||a.manual)&&dentro(a.dataRelatorio||a.dtEntrada||''))
       .map(a=>{
         const {notaErrada='',notaCorreta=''}=a.revisao||{};
         return {...a,fotos:(a.fotos||[]).slice(),revisao:a.revisao?{...a.revisao}:a.revisao,
