@@ -2237,7 +2237,7 @@ async function handleApi(req, res, pathname) {
             // fotos do pacote (ids devolvidos por /api/entradas-tdc/fotos) e o que o Protheus mostrava na hora do relato
             fotos: (Array.isArray(f.fotos) ? f.fotos : []).map(String).filter((x) => /^[a-f0-9]{24}$/.test(x)).slice(0, 4), protheus: txt(f.protheus, 800),
             // ficha manual: guarda os campos da própria ficha
-            ...(id.startsWith("MANUAL|") ? { nota: txt(f.nota, 30), serie: txt(f.serie, 10), fornecedor: txt(f.fornecedor, 80), produto: txt(f.produto, 40), lote: txt(f.lote, 40), loteFisico: txt(f.loteFisico, 40), qtdNota: Number(f.qtdNota) || 0, qtdFisica: f.qtdFisica === "" || f.qtdFisica == null ? "" : Number(f.qtdFisica) || 0, dtEntrada: txt(f.dtEntrada, 10), usuarioTDC: txt(f.usuarioTDC, 60) } : {}),
+            ...(id.startsWith("MANUAL|") ? { nota: txt(f.nota, 30), notaErrada: txt(f.notaErrada ?? d.fichas[id]?.notaErrada, 30), notaCorreta: txt(f.notaCorreta ?? d.fichas[id]?.notaCorreta, 30), serie: txt(f.serie, 10), fornecedor: txt(f.fornecedor, 80), produto: txt(f.produto, 40), lote: txt(f.lote, 40), loteFisico: txt(f.loteFisico, 40), qtdNota: Number(f.qtdNota) || 0, qtdFisica: f.qtdFisica === "" || f.qtdFisica == null ? "" : Number(f.qtdFisica) || 0, dtEntrada: txt(f.dtEntrada, 10), usuarioTDC: txt(f.usuarioTDC, 60) } : {}),
             por: sess.usuario || "admin", em: new Date().toISOString(),
           };
         }

@@ -53,14 +53,18 @@ test('gerarHTML: sem erros e sem foto não quebra', () => {
 test('súmula Excel traz coluna de fotos com links', () => {
   const { res, achados } = base();
   const s = T.linhasSumula(res, achados, { somenteConfirmados: true, baseUrl: 'https://x.com' });
-  assert.strictEqual(s.detalhe[0][s.detalhe[0].length - 1], 'Fotos');
-  assert.match(s.detalhe[1][s.detalhe[1].length - 1], /1 foto\(s\): https:\/\/x\.com\/api\/entradas-tdc\/fotos\?id=a+/);
+  const fotos = s.detalhe[0].indexOf('Fotos');
+  assert.ok(fotos >= 0);
+  assert.match(s.detalhe[1][fotos], /1 foto\(s\): https:\/\/x\.com\/api\/entradas-tdc\/fotos\?id=a+/);
+  assert.deepStrictEqual(s.detalhe[1].slice(-2), ['', '']);
 });
 test('erro reportado à mão que o Protheus já apontou conta uma vez, juntando as fotos', () => {
   const { res, achados } = base();
   const auto = achados.find((a) => a.status === 'confirmado');
-  const man = T.fichaManualParaFinding('MANUAL|y', { tipo: auto.tipo, nota: auto.nota, serie: auto.serie, produto: auto.produto, lote: auto.lote, qtdNota: auto.qtdNota, qtdFisica: 10, dtEntrada: auto.dtEntrada, status: 'confirmado', por: 'joao', fotos: ['b'.repeat(24)], obs: 'outro texto' });
+  const man = T.fichaManualParaFinding('MANUAL|y', { tipo: auto.tipo, nota: auto.nota, notaErrada: '000123', notaCorreta: '000124', serie: auto.serie, produto: auto.produto, lote: auto.lote, qtdNota: auto.qtdNota, qtdFisica: 10, dtEntrada: auto.dtEntrada, status: 'confirmado', por: 'joao', fotos: ['b'.repeat(24)], obs: 'outro texto' });
   const d = Rp.montarRelatorio(res, [...achados, man], {});
   assert.strictEqual(d.erros.length, 1); assert.strictEqual(d.erros[0].fotos.length, 2); assert.strictEqual(d.kpis.pecas, 2);
+  assert.match(Rp.gerarHTML(d), /Nota errada <b>000123<\/b> · Nota correta <b>000124<\/b>/);
+  assert.deepStrictEqual(T.linhasSumula(res, [man]).detalhe[1].slice(-2), ['000123', '000124']);
   assert.strictEqual(achados.find((a) => a.status === 'confirmado').fotos.length, 1); // não altera a entrada
 });
