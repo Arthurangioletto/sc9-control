@@ -265,3 +265,7 @@ A tela mantém três indicadores: Conferidos, Pendentes (parciais e aguardando S
 Exportações Excel passam pelo módulo compartilhado export-workbook.js, carregado antes das telas. O módulo normaliza nomes de abas (caracteres proibidos, limite de 31 caracteres, aspas nas extremidades e nomes repetidos) e nomes de arquivos, preservando linhas, tipos e filtros de origem. Erros de geração/download são apresentados e propagados para interromper ações posteriores. A súmula de Entradas TDC usa o mesmo limite de download, mantendo suas larguras e formatos; o gancho do I 09 no Relatório Geral permanece preservado.
 
 Validação da revisão de exportações: botão Excel de atrasados executado a partir da segunda página na cópia local; arquivo baixado e relido com os 88 pedidos do recorte. Geração e releitura adicional com 35 abas representativas das áreas, números fracionados, datas, códigos com zeros e motivos de correção. Dados de teste fictícios; nenhum dado de produção foi alterado.
+
+## Transportadora nas exportações de pedidos
+
+As planilhas geradas a partir de listas de pedidos (atrasados, em aberto, enviados, pedidos críticos, atraso de faturamento, faturados sem despacho e demais listas do recorte) ganharam a coluna **Transportadora**, logo depois do Cliente. O nome vem do SC5 (código → Brasil, São Paulo, Retira 01–04, Emergência; códigos ainda sem nome aparecem como "Código N"), com a coluna do próprio SC9 como alternativa; sem informação, aparece "Não informada". As exportações de Saída, Recebimento e Coleta por transportadora já traziam essa informação.
