@@ -1982,7 +1982,7 @@ async function handleApi(req, res, pathname) {
           if(!Object.hasOwn(body,'version')||body.version!==version)throw Error('Os saldos mudaram. Confira novamente a prévia de restauração.');
           const safety='cadastro-saldos-backup-'+crypto.randomUUID()+'.json';
           await objSave(safety,{position:current,savedAt:new Date().toISOString(),reason:'antes da restauração'});
-          const restored={...previous,updatedAt:new Date().toISOString(),source:{name:'Restauração do backup',backup:body.backup},restoredBy:owner};
+          const restored={...previous,importedAt:Stock.importTimestamp(previous),updatedAt:new Date().toISOString(),source:{name:'Restauração do backup',backup:body.backup},restoredBy:owner};
           await stockPositionSave(restored);stockGeneration++;stockPositionCache=restored;stockUploads.clear();
           return sendJson(res,200,{ok:true,...summary,backup:safety,updatedAt:restored.updatedAt});
         });
