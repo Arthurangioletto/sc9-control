@@ -112,3 +112,23 @@ test('recebimentos no mesmo instante preservam a ordem de registro ao distribuir
 test('lançamento tardio regulariza o recebimento e informa a data posterior sem repetir a transferência',()=>{
  const sd3=M.replacePeriod(null,pair(10,{dt:'2026-11-08'}),{filial:'01',desde:'2026-11-01',ate:'2026-11-08',now:'2026-11-09T12:00:00Z'}).sd3,result=M.reconcile([receipt()],sd3);assert.equal(result.rows[0].status,'conferido');assert.equal(result.rows[0].lateTransfer,true);assert.match(result.rows[0].message,/após a data/);assert.equal(M.lot('000123.0'),'123');
 });
+
+test('a nova extração sobreposta é a referência do período substituído',()=>{
+ const original=base([]);
+ const next=M.replacePeriod(original,[],{filial:'01',desde:'2026-11-05',ate:'2026-11-05',now:'2026-11-06T14:00:00Z',extractedAt:'2026-11-05T12:00:00Z'}).sd3;
+ const result=M.reconcile([receipt(),receipt({id:'Earlier',createdAt:'2026-11-04T13:00:00Z'})],next);
+ assert.equal(result.rows.find(r=>r.id==='R1').status,'aguardando_sd3');
+ assert.equal(result.rows.find(r=>r.id==='Earlier').status,'divergente');
+ assert.throws(()=>M.replacePeriod(next,[],{filial:'01',desde:'2026-11-01',ate:'2026-11-05',now:'2026-11-06T15:00:00Z',extractedAt:'2026-11-05T11:00:00Z'}),/mais recente/);
+ assert.throws(()=>M.replacePeriod(null,[],{filial:'01',desde:'2026-11-05',ate:'2026-11-06',now:'2026-11-06T14:00:00Z',extractedAt:'2026-11-05T12:00:00Z'}),/posterior/);
+});
+
+test('documentos fora da janela aparecem como candidatos sem consumir saldo',()=>{
+ const snapshot=base(pair(10,{dt:'2026-11-02'}));
+ const result=M.reconcile([receipt({produto:'P'})],snapshot).rows[0];
+ assert.equal(result.status,'divergente');
+ assert.equal(result.allocated,0);
+ assert.deepEqual(result.olderCandidates,[{doc:'D1',dt:'2026-11-02',remaining:10}]);
+ const matched=M.reconcile([receipt({id:'old',createdAt:'2026-11-03T13:00:00Z'}),receipt({produto:'P'})],snapshot).rows.find(r=>r.id==='R1');
+ assert.equal(matched.olderCandidates,undefined);
+});
