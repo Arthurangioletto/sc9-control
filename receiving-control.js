@@ -29,7 +29,7 @@
     return {sd3:{rows:[...kept,...selected],coverage,updatedAt:now,source:String(name).slice(0,200)},stats:{received:rows.length,selected:selected.length,ignoredOtherBranches:all.length-selected.length,replaced:old.length-kept.length,retained:kept.length,cancelled:selected.filter(r=>r.estornado).length}};
   }
   function transfers(rows){
-    const map=new Map();for(const r of rows||[]){if(r.estornado||r.cf&& !['RE4','DE4','RE7','DE7'].includes(r.cf))continue;
+    const map=new Map();for(const r of rows||[]){if(code(r.armazem)==='26'||r.estornado||r.cf&& !['RE4','DE4','RE7','DE7'].includes(r.cf))continue;
       const k=JSON.stringify([r.filial,r.dt,r.doc,r.produto,lot(r.lote)]);if(!map.has(k))map.set(k,{key:k,filial:r.filial,dt:r.dt,doc:r.doc,produto:r.produto,lote:r.lote,out:0,into:0,elsewhere:{},users:new Set()});const t=map.get(k);if(r.usuario)t.users.add(r.usuario);
       if(r.tp===999&&r.armazem==='02')t.out+=r.qt;
       if(r.tp===499){if(r.armazem==='01')t.into+=r.qt;else t.elsewhere[r.armazem]=(t.elsewhere[r.armazem]||0)+r.qt;}
@@ -39,7 +39,10 @@
   function reconcile(entries,sd3={}){
     const docs=transfers(sd3.rows),coverage=(sd3.coverage||[]).map(c=>({...c,importedDay:spDay(c.importedAt)})),products=new Map(),docIndex=new Map(),pendingTransfers=new Set();
     for(const doc of docs){const k=JSON.stringify([doc.filial,lot(doc.lote),doc.produto]);doc.day=day(doc.dt);if(!docIndex.has(k))docIndex.set(k,[]);docIndex.get(k).push(doc);}
-    for(const r of sd3.rows||[]){const k=JSON.stringify([r.filial,lot(r.lote)]);if(!products.has(k))products.set(k,new Set());products.get(k).add(r.produto);}
+    for(const r of sd3.rows||[]){
+      if(code(r.armazem)==='26')continue;
+      const k=JSON.stringify([r.filial,lot(r.lote)]);if(!products.has(k))products.set(k,new Set());products.get(k).add(r.produto);
+    }
     const rows=[...(entries||[])].sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||(a.sequence||0)-(b.sequence||0)||a.id.localeCompare(b.id)).map(e=>{
       const candidates=[...(products.get(JSON.stringify([e.filial,lot(e.lote)]))||[])].sort(),produto=e.produto||(candidates.length===1?candidates[0]:''),receivedDay=spDay(e.createdAt),d=day(receivedDay);
       const covered=coverage.some(c=>c.filial===e.filial&&c.desde<=receivedDay&&c.ate>=receivedDay&&(receivedDay<c.importedDay||c.importedAt>=e.createdAt));

@@ -77,3 +77,19 @@ test('saldo parcial aparece nos pendentes; ao completar, ambas as bipagens ficam
  let exported;const env=setup({now:'2026-11-12T15:00:00Z',data:{...M.reconcile([a,b],sd3),sd3:{coverage:[]}}}),props={exportWorkbook:sheets=>exported=sheets};tree=env.render(props);assert.equal(nodes(tree,n=>n.type==='article').length,1);assert(JSON.stringify(tree).includes('Conferido por bipagens parciais'));assert(JSON.stringify(tree).includes('esta bipagem'));
  nodes(tree,n=>n.type==='button'&&n.children.includes('Exportar recebimentos do recorte'))[0].props.onClick();assert.equal(exported[0].rows.length,1);assert.equal(exported[0].rows[0]['Grupo de bipagens'],'A');const links=exported.find(s=>s.name==='Bipagens parciais').rows;assert.equal(links.length,2);assert.deepEqual(Array.from(links,r=>r['Quantidade desta bipagem']),[135,110]);assert(links.every(r=>r['Grupo completo']==='Sim'));
 });
+test('busca histórica recupera lançamentos antigos e legado sem misturar filiais',()=>{
+ const old={id:'old',lote:'000123',filial:'01',createdAt:'2026-09-01T12:00:00Z',status:'conferido',docs:[{doc:'SD3-ANTIGO'}],issues:[]};
+ const env=setup({data:{rows:[old,{...old,id:'other',filial:'02'}],excess:[],sd3:{coverage:[]}}});
+ const props={legacyRecords:[{id:'legacy',lote:'000123',filial:'01'},{id:'different',lote:'456'}]};
+ let tree=env.render(props);
+ nodes(tree,n=>n.props.type==='search')[0].props.onChange({target:{value:'123'}});
+ tree=env.render(props);
+ assert.equal(nodes(tree,n=>n.type==='article').length,0);
+ nodes(tree,n=>n.props.type==='checkbox'&&n.props.checked===false)[0].props.onChange({target:{checked:true}});
+ tree=env.render(props);
+ assert.deepEqual(nodes(tree,n=>n.type==='article').map(n=>n.props.key),['old']);
+ assert.equal(nodes(tree,n=>n.type==='tr'&&n.props.key==='legacy').length,1);
+ assert.equal(nodes(tree,n=>n.type==='tr'&&n.props.key==='different').length,0);
+ nodes(tree,n=>n.props.type==='search')[0].props.onChange({target:{value:'sd3-antigo'}});
+ assert.equal(nodes(env.render(props),n=>n.type==='article').length,1);
+});
