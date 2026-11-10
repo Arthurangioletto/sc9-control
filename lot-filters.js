@@ -74,22 +74,6 @@
   function savedAnalysis(saved, type, filial, warehouse) {
     return findings(prepareSaved(saved)[type] || [], filial, warehouse).map(item => item.dados);
   }
-  const validityRows = new WeakMap();
-  function savedValidityRows(saved) {
-    if (!saved) return [];
-    if (!validityRows.has(saved)) {
-      const rows = new Map(), byType = prepareSaved(saved);
-      for (const type of ['validadeVariavel', 'vencimento']) {
-        for (const { dados } of byType[type] || []) {
-          for (const row of dados.registros || [dados]) {
-            rows.set(root.SC9Inventory.recordKey(row), row);
-          }
-        }
-      }
-      validityRows.set(saved, [...rows.values()]);
-    }
-    return validityRows.get(saved);
-  }
   const validityReasons = {
     arm16: 'Saldo no armazém 16 e em outros armazéns',
     expired: 'Validades divergentes com registro vencido',
@@ -170,7 +154,7 @@
         h('option', { value: '3' }, 'Tamboré · 03'),
         h('option', { value: '4' }, 'Paraíso · 04')));
   }
-  root.SC9LotFilters = { normalize, records, findings, warehouses, sourceRows, coverage, analysis, baseAnalysis, prepareSaved, savedAnalysis, savedValidityRows, calendarDay, validityAnalysis, validityDate, validityReasons, branchHeader, CoverageNotice, Selector };
+  root.SC9LotFilters = { normalize, records, findings, warehouses, sourceRows, coverage, analysis, baseAnalysis, prepareSaved, savedAnalysis, calendarDay, validityAnalysis, validityDate, validityReasons, branchHeader, CoverageNotice, Selector };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.SC9LotFilters;
 })(typeof window === 'undefined' ? globalThis : window);
 

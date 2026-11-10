@@ -40,5 +40,12 @@
     return {position:{rows:[...map.values()],updatedAt:now,source,mode,baselineAmbiguous:previous?.baselineAmbiguous||0},stats};
   }
   function hydrate(position){return position?.rows?.map(r=>({...r,dtValidade:r.dtValidade?new Date(r.dtValidade+'T12:00:00'):null}))||[];}
-  const api={code,key,normalize,aggregate,seed,update,hydrate};root.SC9Stock=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  function importTimestamp(position){
+    return position?.importedAt || (position?.source?.backup ? null : position?.updatedAt) || null;
+  }
+  function confirmedRows(rows,position){
+    const timestamp=importTimestamp(position);
+    return timestamp ? rows.filter(row=>row.checkedAt===timestamp) : [];
+  }
+  const api={code,key,normalize,aggregate,seed,update,hydrate,importTimestamp,confirmedRows};root.SC9Stock=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window==='undefined'?globalThis:window);

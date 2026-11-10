@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const expiry = require('../expiry-panel.js');
-require('../inventory-integrity.js');
+const stock = require('../stock-position.js');
 const filters = require('../lot-filters.js');
 
 const today = expiry.day('2026-11-10');
@@ -35,12 +35,20 @@ test('sem o 16, compara datas de locais com saldo e aplica a janela inclusiva de
   assert.deepEqual(analyze([soon, { ...far, lote: 'OUTRO' }]), []);
 });
 
-test('achados salvos recuperam referências disponíveis sem duplicar a mesma posição', () => {
-  const overdue = row('16', '2026-11-01'), far = row('RJ', '2067-11-15');
-  const rows = filters.savedValidityRows([
-    { tipo: 'validadeVariavel', dados: { registros: [overdue, far] } },
-    { tipo: 'vencimento', dados: overdue }
-  ]);
-  assert.equal(analyze(rows)[0].registros.length, 2);
-  assert.equal(filters.validityDate(rows[1].dtValidade), '15/11/2067');
+test('lote ausente da última importação fica guardado, mas sai da análise de validade', () => {
+  const first = '2026-11-09T12:00:00.000Z', last = '2026-11-10T12:00:00.000Z';
+  const lot = { produto: '30301', lote: '129027' };
+  const arm01 = row('01', '2026-06-20', { ...lot, saldo: 3 });
+  const arm16 = row('16', '2026-06-20', { ...lot, saldo: 4 });
+  const previous = stock.update(null, [arm01, arm16], { now: first }).position;
+  const current = stock.update(previous, [arm16], { now: last }).position;
+  const confirmed = position => stock.confirmedRows(stock.hydrate(position), position);
+  assert.equal(analyze(confirmed(previous))[0].reason, 'arm16');
+  assert.equal(current.rows.find(item => item.armazem === '1').saldo, 3);
+  assert.deepEqual(confirmed(current).map(item => item.saldo), [4]);
+  assert.deepEqual(analyze(confirmed(current)), []);
+  const restored = { ...current, importedAt: stock.importTimestamp(current),
+    updatedAt: '2026-11-11T12:00:00.000Z', source: { backup: 'backup' } };
+  assert.deepEqual(confirmed(restored), confirmed(current));
+  assert.equal(filters.validityDate(confirmed(restored)[0].dtValidade), '20/06/2026');
 });
