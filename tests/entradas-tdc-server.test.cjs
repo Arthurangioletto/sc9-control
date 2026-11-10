@@ -61,7 +61,7 @@ test('SD1: 404 antes do envio, valida e acumula sem duplicar', async () => {
   const c = await req('/api/entradas-tdc/sd1', { cookie: admin, body: { rows: [linha('9', 'P9', 'L9', 1, '2026-10-03')], usuarios: ['x'], substituir: true } });
   assert.strictEqual(c.data.total, 1);
 });
-test('fichário: confirma, descarta, remove só manual, carimba quem revisou', async () => {
+test('fichário: confirma, mantém fichas e carimba quem revisou', async () => {
   assert.strictEqual((await req('/api/entradas-tdc/fichas', { cookie: comPerfil, body: { id: 'a', ficha: { status: 'invalido' } } })).status, 400);
   const id = '100|1|P1|L1|qtd_maior';
   const r = await req('/api/entradas-tdc/fichas', { cookie: comPerfil, body: { id, ficha: { status: 'confirmado', tipo: 'qtd_maior', obs: 'contei 10', fisicoQtd: 10, por: 'fraude', em: '2000-01-01' } } });
@@ -71,8 +71,8 @@ test('fichário: confirma, descarta, remove só manual, carimba quem revisou', a
   const g = await req('/api/entradas-tdc/fichas', { cookie: comPerfil });
   assert.strictEqual(g.data.fichas[man].produto, 'PX'); assert.ok(g.data.fichas[id]);
   assert.strictEqual((await req('/api/entradas-tdc/fichas', { cookie: admin, body: { id, remover: true, ficha: {} } })).status, 400);
-  assert.strictEqual((await req('/api/entradas-tdc/fichas', { cookie: admin, body: { id: man, remover: true, ficha: {} } })).status, 200);
-  assert.strictEqual((await req('/api/entradas-tdc/fichas', { cookie: admin })).data.fichas[man], undefined);
+  assert.strictEqual((await req('/api/entradas-tdc/fichas', { cookie: admin, body: { id: man, remover: true, ficha: {} } })).status, 400);
+  assert.ok((await req('/api/entradas-tdc/fichas', { cookie: admin })).data.fichas[man]);
 });
 test('notas em conferência: adiciona sem duplicar (zeros à esquerda), valida e remove', async () => {
   assert.strictEqual((await req('/api/entradas-tdc/notas')).status, 401);
@@ -138,4 +138,20 @@ test('nota divergente exige referências distintas e aceita diferença de quanti
   assert.equal(stored.notaErrada, '000123');
   assert.equal(T.fichaManualParaFinding(id, stored).diferenca, 2);
   assert.equal(T.fichaManualParaFinding(id, { ...stored, qtdFisica: '' }).diferenca, 0);
+});
+test('somente reset explícito do administrador limpa as fichas e inicia novo ciclo', async () => {
+  const url='/api/entradas-tdc/fichas', id='101|1|P2|L2|qtd_maior';
+  const ficha={status:'confirmado',tipo:'qtd_maior',obs:'contagem confirmada',origem:{tipo:'qtd_maior',nota:'101',qtdNota:8}};
+  assert.equal((await req(url,{cookie:comPerfil,body:{id,ficha}})).status,200);
+  const atual=(await req(url,{cookie:admin})).data;
+  assert.equal(atual.fichas[id].origem.qtdNota,8);
+  const dados={acao:'zerar',versao:atual.atualizadoEm,ids:['102|1|P3|L3|qtd_menor']};
+  assert.equal((await req(url,{cookie:comPerfil,body:dados})).status,403);
+  assert.equal((await req(url,{cookie:admin,body:{...dados,versao:null}})).status,409);
+  const novo=(await req(url,{cookie:admin,body:dados})).data;
+  assert.deepEqual(novo.fichas,{});
+  assert.ok(novo.encerradas.includes(id));
+  assert.ok(novo.encerradas.includes(dados.ids[0]));
+  assert.equal((await req(url,{cookie:comPerfil,body:{id:'MANUAL|nova',ficha}})).status,409);
+  assert.equal((await req(url,{cookie:comPerfil,body:{id:'MANUAL|nova',ficha,ciclo:novo.ciclo}})).status,200);
 });

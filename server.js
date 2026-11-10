@@ -2229,18 +2229,37 @@ async function handleApi(req, res, pathname) {
     const sess = await exigir(req, res, ["admin", "operador"], "alteracoes"); if (!sess) return;
     let body;
     try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    if (body?.acao === "zerar") {
+      if (sess.role !== "admin") return sendJson(res, 403, { error: "Somente o administrador pode zerar o fichário." });
+      const ids = body.ids;
+      if (!Array.isArray(ids) || ids.length > 100000 || ids.some(id => typeof id !== "string" || !id || id.length > 300 || id.startsWith("MANUAL|"))) {
+        return sendJson(res, 400, { error: "Lista de fichas inválida." });
+      }
+      try {
+        return await comFila("tdc-fichas", async () => {
+          const atual = await objLoad(TDC_FICHAS_OBJ);
+          if (body.versao !== (atual?.atualizadoEm || null)) return sendJson(res, 409, { error: "O fichário mudou. Reabra o painel e confira antes de zerar." });
+          const anteriores = Object.keys(atual?.fichas || {}).filter(id => !id.startsWith("MANUAL|"));
+          const novo = { v: 1, fichas: {}, encerradas: [...new Set([...(atual?.encerradas || []), ...anteriores, ...ids])], ciclo: crypto.randomUUID(), atualizadoEm: new Date().toISOString() };
+          await objSave(TDC_FICHAS_OBJ, novo);
+          return sendJson(res, 200, novo);
+        });
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao zerar o fichário")); }
+    }
+    if (body?.remover) return sendJson(res, 400, { error: "Use Zerar fichário para começar um novo ciclo." });
     const id = String((body && body.id) || "");
     if (!id || id.length > 300) return sendJson(res, 400, { error: "id da ficha inválido" });
     const f = (body && body.ficha) || {};
     const txt = (v, n) => String(v == null ? "" : v).slice(0, n);
     const status = ["confirmado", "descartado", "pendente"].includes(f.status) ? f.status : null;
-    if (!body.remover && !status) return sendJson(res, 400, { error: "status inválido" });
+    if (!status) return sendJson(res, 400, { error: "status inválido" });
     try {
       const resp = await comFila("tdc-fichas", async () => {
         const d = (await objLoad(TDC_FICHAS_OBJ)) || { v: 1, fichas: {} };
         d.fichas = d.fichas || {};
-        if (body.remover === true) { if (!id.startsWith("MANUAL|")) throw Object.assign(new Error("só fichas manuais podem ser removidas"), { http: 400 }); delete d.fichas[id]; }
-        else {
+        if ((body.ciclo || null) !== (d.ciclo || null)) throw Object.assign(new Error("Um novo ciclo foi iniciado. Reabra o Fichário."), { http: 409 });
+        if (d.encerradas?.includes(id)) throw Object.assign(new Error("Esta ficha pertence a um ciclo encerrado."), { http: 409 });
+        {
           if (!d.fichas[id] && Object.keys(d.fichas).length >= 20000) throw Object.assign(new Error("fichário cheio"), { http: 400 });
           const notaDivergente = f.tipo === "nota_divergente";
           const notaErrada = txt(f.notaErrada ?? d.fichas[id]?.notaErrada, 30).trim();
@@ -2259,6 +2278,14 @@ async function handleApi(req, res, pathname) {
             // ficha manual: guarda os campos da própria ficha
             ...(id.startsWith("MANUAL|") ? { nota: notaDivergente ? notaCorreta : txt(f.nota, 30), notaErrada, notaCorreta, serie: txt(f.serie, 10), fornecedor: txt(f.fornecedor, 80), produto: txt(f.produto, 40), lote: txt(f.lote, 40), loteFisico: txt(f.loteFisico, 40), qtdNota: notaDivergente && (f.qtdNota === "" || f.qtdNota == null) ? "" : Number(f.qtdNota) || 0, qtdFisica: f.qtdFisica === "" || f.qtdFisica == null ? "" : Number(f.qtdFisica) || 0, dtEntrada: txt(f.dtEntrada, 10), usuarioTDC: txt(f.usuarioTDC, 60) } : {}),
             por: sess.usuario || "admin", em: new Date().toISOString(),
+            ...(id.startsWith("MANUAL|") ? { criadoEm: d.fichas[id]?.criadoEm || d.fichas[id]?.em || new Date().toISOString() } : {}),
+            ...(!id.startsWith("MANUAL|") && (d.fichas[id]?.origem || f.origem) ? {
+              origem: d.fichas[id]?.origem || {
+                id, tipo: txt(f.origem.tipo, 30), confianca: f.origem.confianca === "suspeita" ? "suspeita" : "forte",
+                ...Object.fromEntries(["nota", "serie", "fornecedor", "produto", "lote", "loteFisico", "dtEntrada", "usuarioTDC", "descricao"].map(k => [k, txt(f.origem[k], k === "descricao" ? 800 : 100)])),
+                qtdNota: Number(f.origem.qtdNota) || 0, qtdFisica: f.origem.qtdFisica == null ? null : Number(f.origem.qtdFisica) || 0, diferenca: Number(f.origem.diferenca) || 0
+              }
+            } : {}),
           };
         }
         d.atualizadoEm = new Date().toISOString();
@@ -2266,7 +2293,7 @@ async function handleApi(req, res, pathname) {
         return { ok: true, ficha: d.fichas[id] || null, atualizadoEm: d.atualizadoEm };
       });
       return sendJson(res, 200, resp);
-    } catch (e) { return e && e.http === 400 ? sendJson(res, 400, { error: e.message }) : sendJson(res, 500, erroPublico(e, "erro ao salvar a ficha")); }
+    } catch (e) { return e && [400, 409].includes(e.http) ? sendJson(res, e.http, { error: e.message }) : sendJson(res, 500, erroPublico(e, "erro ao salvar a ficha")); }
   }
 
   // Foto do pacote como prova do erro. O navegador já reduz a imagem (JPEG ~1400px); aqui só valida e guarda.

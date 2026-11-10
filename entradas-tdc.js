@@ -315,6 +315,9 @@
       if(r.fisicoQtd!==''&&r.fisicoQtd!=null&&Number.isFinite(Number(r.fisicoQtd))){o.qtdFisica=Number(r.fisicoQtd);o.diferenca=Math.abs(o.qtdFisica-(f.qtdNota||0));}
       return o;});
   }
+  function dataRelatorio(ficha){
+    return ficha.dtEntrada || (ficha.manual ? String(ficha.revisao?.criadoEm || ficha.revisao?.em || '').slice(0,10) : '');
+  }
   function fichaManualParaFinding(id,r){
     const semQuantidade = value => value === '' || value == null;
     const qtdNota = r.tipo === 'nota_divergente' && semQuantidade(r.qtdNota) ? null : num(r.qtdNota);
@@ -341,7 +344,7 @@
     return {resumo,porUsuario,detalhe:det,tempo};
   }
 
-  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
+  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,dataRelatorio,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.SC9EntradasTDC=api;
   if(root.document&&root.React&&typeof root.SC9EntradasTDCMount==='undefined'&&typeof require==='undefined'){/* a tela é carregada por entradas-tdc-ui.js */}
