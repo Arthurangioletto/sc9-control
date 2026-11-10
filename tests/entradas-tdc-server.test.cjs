@@ -125,3 +125,17 @@ test('notas opcionais da ficha manual preservam zeros e sobrevivem a salvamento 
   assert.strictEqual(stored.notaErrada, '000123');
   assert.strictEqual(stored.notaCorreta, '000124');
 });
+test('nota divergente exige referências distintas e aceita diferença de quantidade na mesma ficha', async () => {
+  const id = 'MANUAL|nota-divergente', url = '/api/entradas-tdc/fichas';
+  const ficha = { status: 'confirmado', tipo: 'nota_divergente', produto: 'P1', notaErrada: '000123', qtdNota: 8, qtdFisica: 10 };
+  const save = notaCorreta => req(url, { cookie: comPerfil, body: { id, ficha: { ...ficha, notaCorreta } } });
+  assert.equal((await save('')).status, 400);
+  assert.equal((await save('123')).status, 400);
+  assert.equal((await save('000124')).status, 200);
+  const stored = (await req(url, { cookie: comPerfil })).data.fichas[id];
+  const T = require('../entradas-tdc.js');
+  assert.equal(stored.nota, '000124');
+  assert.equal(stored.notaErrada, '000123');
+  assert.equal(T.fichaManualParaFinding(id, stored).diferenca, 2);
+  assert.equal(T.fichaManualParaFinding(id, { ...stored, qtdFisica: '' }).diferenca, 0);
+});

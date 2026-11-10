@@ -163,6 +163,7 @@
     qtd_menor:{rotulo:'Veio MENOS do que a nota',curto:'Qtd. a menos',cor:'#C2630A'},
     item_fora_nota:{rotulo:'Item que NÃO estava na nota',curto:'Fora da nota',cor:'#7A3FB0'},
     lote_trocado:{rotulo:'Lote trocado / misturado',curto:'Lote errado',cor:'#0B6FA4'},
+    nota_divergente:{rotulo:'Nota diferente da verdadeira',curto:'Nota diferente',cor:'#5F477E'},
   };
   const TIPOS_MANUAL=Object.keys(TIPOS);
   const idFinding=(l,tipo)=>[l.nota,l.serie||'',l.produto,l.lote,tipo].join('|');
@@ -315,8 +316,11 @@
       return o;});
   }
   function fichaManualParaFinding(id,r){
-    return {id,manual:true,tipo:r.tipo,confianca:'forte',nota:r.nota||'',serie:r.serie||'',fornecedor:r.fornecedor||'',produto:normProd(r.produto),lote:normLote(r.lote),loteFisico:normLote(r.loteFisico),qtdNota:num(r.qtdNota),qtdFisica:r.qtdFisica===''||r.qtdFisica==null?null:num(r.qtdFisica),
-      diferenca:Math.abs(num(r.qtdFisica)-num(r.qtdNota))||0,dtEntrada:r.dtEntrada||'',usuarioTDC:r.usuarioTDC||'',corrigidoPor:[r.por].filter(Boolean),movimentos:[],descricao:r.protheus||'Lançado manualmente pelo estoque.',fotos:Array.isArray(r.fotos)?r.fotos:[],protheus:r.protheus||'',revisao:r,status:r.status||'confirmado'};
+    const semQuantidade = value => value === '' || value == null;
+    const qtdNota = r.tipo === 'nota_divergente' && semQuantidade(r.qtdNota) ? null : num(r.qtdNota);
+    const qtdFisica = semQuantidade(r.qtdFisica) ? null : num(r.qtdFisica);
+    return {id,manual:true,tipo:r.tipo,confianca:'forte',nota:r.nota||'',serie:r.serie||'',fornecedor:r.fornecedor||'',produto:normProd(r.produto),lote:normLote(r.lote),loteFisico:normLote(r.loteFisico),qtdNota,qtdFisica,
+      diferenca:r.tipo==='nota_divergente'&&(qtdNota===null||qtdFisica===null)?0:Math.abs((qtdFisica||0)-(qtdNota||0)),dtEntrada:r.dtEntrada||'',usuarioTDC:r.usuarioTDC||'',corrigidoPor:[r.por].filter(Boolean),movimentos:[],descricao:r.protheus||'Lançado manualmente pelo estoque.',fotos:Array.isArray(r.fotos)?r.fotos:[],protheus:r.protheus||'',revisao:r,status:r.status||'confirmado'};
   }
 
   /* ============================ linhas do Excel da súmula ============================ */

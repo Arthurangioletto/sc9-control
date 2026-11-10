@@ -2242,13 +2242,22 @@ async function handleApi(req, res, pathname) {
         if (body.remover === true) { if (!id.startsWith("MANUAL|")) throw Object.assign(new Error("só fichas manuais podem ser removidas"), { http: 400 }); delete d.fichas[id]; }
         else {
           if (!d.fichas[id] && Object.keys(d.fichas).length >= 20000) throw Object.assign(new Error("fichário cheio"), { http: 400 });
+          const notaDivergente = f.tipo === "nota_divergente";
+          const notaErrada = txt(f.notaErrada ?? d.fichas[id]?.notaErrada, 30).trim();
+          const notaCorreta = txt(f.notaCorreta ?? d.fichas[id]?.notaCorreta, 30).trim();
+          if (notaDivergente) {
+            const comparar = nota => /^\d+$/.test(nota) ? nota.replace(/^0+(?=\d)/, "") : nota.toUpperCase();
+            if (!id.startsWith("MANUAL|") || !notaErrada || !notaCorreta || comparar(notaErrada) === comparar(notaCorreta)) {
+              throw Object.assign(new Error("Informe a nota errada e a nota correta com números diferentes em uma ficha manual."), { http: 400 });
+            }
+          }
           const fisico = f.fisicoQtd === "" || f.fisicoQtd == null ? "" : Number(f.fisicoQtd);
           d.fichas[id] = {
             status, tipo: txt(f.tipo, 30), obs: txt(f.obs, 1000), fisicoQtd: Number.isFinite(fisico) ? fisico : "", fisicoLote: txt(f.fisicoLote, 40),
             // fotos do pacote (ids devolvidos por /api/entradas-tdc/fotos) e o que o Protheus mostrava na hora do relato
             fotos: (Array.isArray(f.fotos) ? f.fotos : []).map(String).filter((x) => /^[a-f0-9]{24}$/.test(x)).slice(0, 4), protheus: txt(f.protheus, 800),
             // ficha manual: guarda os campos da própria ficha
-            ...(id.startsWith("MANUAL|") ? { nota: txt(f.nota, 30), notaErrada: txt(f.notaErrada ?? d.fichas[id]?.notaErrada, 30), notaCorreta: txt(f.notaCorreta ?? d.fichas[id]?.notaCorreta, 30), serie: txt(f.serie, 10), fornecedor: txt(f.fornecedor, 80), produto: txt(f.produto, 40), lote: txt(f.lote, 40), loteFisico: txt(f.loteFisico, 40), qtdNota: Number(f.qtdNota) || 0, qtdFisica: f.qtdFisica === "" || f.qtdFisica == null ? "" : Number(f.qtdFisica) || 0, dtEntrada: txt(f.dtEntrada, 10), usuarioTDC: txt(f.usuarioTDC, 60) } : {}),
+            ...(id.startsWith("MANUAL|") ? { nota: notaDivergente ? notaCorreta : txt(f.nota, 30), notaErrada, notaCorreta, serie: txt(f.serie, 10), fornecedor: txt(f.fornecedor, 80), produto: txt(f.produto, 40), lote: txt(f.lote, 40), loteFisico: txt(f.loteFisico, 40), qtdNota: notaDivergente && (f.qtdNota === "" || f.qtdNota == null) ? "" : Number(f.qtdNota) || 0, qtdFisica: f.qtdFisica === "" || f.qtdFisica == null ? "" : Number(f.qtdFisica) || 0, dtEntrada: txt(f.dtEntrada, 10), usuarioTDC: txt(f.usuarioTDC, 60) } : {}),
             por: sess.usuario || "admin", em: new Date().toISOString(),
           };
         }
