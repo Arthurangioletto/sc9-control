@@ -4,7 +4,7 @@
 (function(root){
   'use strict';
   if(!root.document||!root.React||!root.ReactDOM||!root.SC9EntradasTDC)return;
-  const M=root.SC9EntradasTDC,R=root.React,h=R.createElement,{useState,useEffect,useMemo,useCallback}=R;
+  const M=root.SC9EntradasTDC,R=root.React,h=R.createElement,{useState,useEffect,useMemo,useCallback,useRef}=R;
   const forn=v=>/^\d+$/.test(String(v||''))?'Forn. '+v:(v||'');
   const fmtN=n=>n==null||n===''?'—':Number(n).toLocaleString('pt-BR',{maximumFractionDigits:2});
   const fmtD=iso=>iso?iso.split('-').reverse().join('/'):'—';
@@ -96,6 +96,12 @@
 .sc9-tdc-pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:650;background:#EEF1FD;color:#34419A}
 .sc9-tdc-pill.bad{background:#FDECEA;color:#8E241B}.sc9-tdc-pill.ok{background:#E8F6F1;color:#06695A}.sc9-tdc-pill.warn{background:#FFF3DC;color:#8A5A0B}
 .sc9-tdc-table td.l,.sc9-tdc-table th.l{text-align:left}
+.sc9-tdc-lot-check .sc9-tdc-buscar{margin:12px 0 8px;align-items:end}
+.sc9-tdc-lot-check .sc9-tdc-btn{display:inline-flex;align-items:center;gap:6px;min-height:40px}
+.sc9-tdc-lot-table{overflow-x:auto}
+.sc9-tdc-lot-active{background:var(--sc9-border-soft,#E5E9F3);outline:2px solid currentColor;outline-offset:-2px}
+.sc9-tdc-lot-check-label{display:inline-grid;place-items:center;min-width:36px;min-height:36px;cursor:pointer}
+.sc9-tdc-lot-check-label input{width:17px;height:17px;cursor:pointer}
 .sc9-tdc-warn{font-size:11.5px;color:#8A5A0B;background:#FFF8EA;border:1px solid #F0DDB0;border-radius:8px;padding:6px 9px;margin-top:6px}
 .sc9-tdc-buscar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
 .sc9-tdc-buscar .sc9-tdc-in{font-size:16px;padding:10px 12px}
@@ -464,6 +470,55 @@
         h('ul',null,cands.map(c=>h('li',{key:c.id,style:{display:'flex',gap:10,alignItems:'center',justifyContent:'space-between'}},h('span',null,fmtD(c.dtEntrada),' · produto ',h('b',null,c.produto),' · lote ',c.lote,' · ',h('b',null,fmtN(c.qtdFisica)),' pç',c.corrigidoPor&&c.corrigidoPor.length?' · por '+c.corrigidoPor.join(', '):''),
           h('button',{className:'sc9-tdc-btn',onClick:()=>onVincular(c,base,reg)},'Era desta nota'))))));
   }
+  function NotaItens({itens}){
+    const [query,setQuery]=useState(''),[matches,setMatches]=useState([]),[active,setActive]=useState(-1);
+    const [checked,setChecked]=useState(new Set()),[feedback,setFeedback]=useState('');
+    const searchRef=useRef(null),rowRefs=useRef(new Map());
+
+    function showMatch(index){
+      setActive(index);
+      rowRefs.current.get(index)?.scrollIntoView({block:'nearest',inline:'nearest'});
+    }
+
+    function search(event){
+      event.preventDefault();
+      const value=M.normLote(query);
+      if(!value)return;
+      const exact=itens.filter(item=>M.normLote(item.lote)===value);
+      const found=new Set(exact.length?exact:root.SC9FindScannedLot?.(query,itens)?.itens||[]);
+      const indexes=itens.flatMap((item,index)=>found.has(item)?[index]:[]);
+      setMatches(indexes);
+      setFeedback(indexes.length===0?'Lote não encontrado nesta nota.':indexes.length===1?'1 linha encontrada. Confira o produto e a quantidade.':indexes.length+' linhas encontradas. Confira cada item separadamente.');
+      showMatch(indexes.find(index=>!checked.has(index))??indexes[0]??-1);
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    }
+
+    function toggle(index){
+      setChecked(previous=>{
+        const next=new Set(previous);
+        if(next.has(index))next.delete(index);else next.add(index);
+        return next;
+      });
+    }
+
+    return h('div',{className:'sc9-tdc-lot-check'},
+      h('form',{className:'sc9-tdc-buscar',onSubmit:search},
+        h('label',{className:'sc9-tdc-field'},'Localizar lote nesta nota',h('input',{type:'search',className:'sc9-tdc-in',ref:searchRef,value:query,placeholder:'Bipe ou digite o lote',onChange:event=>setQuery(event.target.value)})),
+        h('button',{type:'submit',className:'sc9-tdc-btn pri',disabled:!query.trim()},
+          h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:2,'aria-hidden':'true'},h('circle',{cx:11,cy:11,r:7}),h('path',{d:'m16 16 5 5'})),
+          'Localizar'),
+        matches.length>1&&h('button',{type:'button',className:'sc9-tdc-btn',onClick:()=>showMatch(matches[(matches.indexOf(active)+1)%matches.length])},'Próxima linha')),
+      h('p',{className:'sc9-tdc-sub',role:'status'},checked.size+' de '+itens.length+' itens marcados nesta conferência.'+(feedback?' '+feedback:'')),
+      h('div',{className:'sc9-tdc-lot-table'},h('table',{className:'sc9-tdc-table'},
+        h('thead',null,h('tr',null,[['Produto','l'],['Lote','l'],['Qtd. na nota',''],['Conferido','']].map(([label,style])=>h('th',{key:label,className:style,scope:'col'},label)))),
+        h('tbody',null,itens.map((item,index)=>h('tr',{key:index,ref:node=>{if(node)rowRefs.current.set(index,node);else rowRefs.current.delete(index);},className:active===index?'sc9-tdc-lot-active':undefined},
+          h('td',{className:'l'},h('b',null,item.produto)),
+          h('td',{className:'l'},item.lote||'—'),
+          h('td',null,fmtN(item.qt)),
+          h('td',null,h('label',{className:'sc9-tdc-lot-check-label'},h('input',{type:'checkbox',checked:checked.has(index),onChange:()=>toggle(index),'aria-label':'Conferir item '+(index+1)+', produto '+item.produto+', lote '+(item.lote||'não informado')})))))))));
+  }
+
   function Notas({fresco,sd1All,sd1Raw,res,notasReg,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,onIrDados}){
     const [num,setNum]=useState(''),[serie,setSerie]=useState(''),[busca,setBusca]=useState(null),[busy,setBusy]=useState(false),[err,setErr]=useState('');
     const buscar=()=>{
@@ -491,7 +546,7 @@
         ambigua&&h('div',{className:'sc9-tdc-msg info'},'Existe a nota '+busca.nota+' em mais de uma série. Qual é a sua? ',busca.series.map(sr=>h('button',{key:sr,className:'sc9-tdc-chip',style:{marginLeft:6},onClick:()=>escolherSerie(sr)},'Série '+(sr||'(em branco)')))),
         busca&&itens.length>0&&!ambigua&&h('div',{style:{marginTop:12}},
           h('p',{className:'sc9-tdc-sub',style:{margin:'0 0 6px'}},'Achei ',h('b',null,itens.length+' item(ns)'),' na NF ',h('b',null,busca.nota),' · ',forn(itens[0].fornecedor)||'fornecedor não informado',' · entrada em ',fmtD(itens[0].dtDigit),':'),
-          h('table',{className:'sc9-tdc-table'},h('thead',null,h('tr',null,[['Produto','l'],['Lote','l'],['Qtd. na nota','']].map(([c,k])=>h('th',{key:c,className:k},c)))),h('tbody',null,itens.map((l,i)=>h('tr',{key:i},h('td',{className:'l'},h('b',null,l.produto)),h('td',{className:'l'},l.lote||'—'),h('td',null,fmtN(l.qt)))))),
+          h(NotaItens,{key:busca.nota+'|'+busca.serieEscolhida,itens}),
           h('div',{className:'sc9-tdc-act',style:{marginTop:12}},h('button',{className:'sc9-tdc-btn ok',disabled:busy,onClick:adicionar},busy?'Adicionando…':'✓ Conferir esta nota')))),
       regs.length?h('div',null,h('h2',{style:{fontSize:14,margin:'4px 0 10px'}},'Notas em conferência ('+regs.length+')'),regs.map(r=>h(NotaCard,{key:r.nota+'|'+r.serie,reg:r,res,fObj,achados,onRemover,onFichas,onManual,onVincular}))):
         h('div',{className:'sc9-tdc-card sc9-tdc-empty'},'Nenhuma nota em conferência ainda. Digite o número de uma nota acima.'));
