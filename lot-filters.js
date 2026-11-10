@@ -74,6 +74,77 @@
   function savedAnalysis(saved, type, filial, warehouse) {
     return findings(prepareSaved(saved)[type] || [], filial, warehouse).map(item => item.dados);
   }
+  const validityRows = new WeakMap();
+  function savedValidityRows(saved) {
+    if (!saved) return [];
+    if (!validityRows.has(saved)) {
+      const rows = new Map(), byType = prepareSaved(saved);
+      for (const type of ['validadeVariavel', 'vencimento']) {
+        for (const { dados } of byType[type] || []) {
+          for (const row of dados.registros || [dados]) {
+            rows.set(root.SC9Inventory.recordKey(row), row);
+          }
+        }
+      }
+      validityRows.set(saved, [...rows.values()]);
+    }
+    return validityRows.get(saved);
+  }
+  const validityReasons = {
+    arm16: 'Saldo no armazém 16 e em outros armazéns',
+    expired: 'Validades divergentes com registro vencido',
+    upcoming: 'Validades divergentes com vencimento em até 90 dias'
+  };
+  const calendarDay = date => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000;
+  function validityDate(value) {
+    const parts = root.SC9Expiry.dateParts(value);
+    return parts ? [parts.d, parts.m, parts.y].map(n => String(n).padStart(2, '0')).join('/') : '';
+  }
+  function validityGroups(rows, today) {
+    const groups = new Map(), result = [];
+    for (const row of rows) {
+      const produto = String(row.produto || '').trim(), lote = String(row.lote || '').trim();
+      const warehouse = normalize(row.armazem).toUpperCase();
+      if (!(Number(row.saldo) > 0) || !produto || !lote || !warehouse) continue;
+      const key = JSON.stringify([produto, lote]);
+      if (!groups.has(key)) groups.set(key, { produto, lote, rows: [] });
+      groups.get(key).rows.push({ row, warehouse, date: root.SC9Expiry.day(row.dtValidade) });
+    }
+    for (const { produto, lote, rows } of groups.values()) {
+      const dates = [...new Set(rows.map(entry => entry.date).filter(date => date !== null))].sort((a, b) => a - b);
+      const in16 = rows.some(entry => entry.warehouse === '16');
+      const earliest = dates[0];
+      if (in16) {
+        if (!rows.some(entry => entry.warehouse !== '16')) continue;
+      } else {
+        if (dates.length < 2 || earliest > today + 90) continue;
+        const datedLocations = new Set(rows.filter(entry => entry.date !== null)
+          .map(({row, warehouse}) => JSON.stringify([normalize(row.filial), warehouse])));
+        if (datedLocations.size < 2) continue;
+      }
+      const reason = in16 ? 'arm16' : earliest < today ? 'expired' : 'upcoming';
+      rows.sort((a, b) => Number(b.warehouse === '16') - Number(a.warehouse === '16')
+        || (a.date ?? Infinity) - (b.date ?? Infinity));
+      result.push({ produto, lote, reason, earliest, temSaldoAtivo: true,
+        validadesDistintas: dates.map(date => new Date(date * 86400000).toISOString()),
+        registros: rows.map(entry => entry.row) });
+    }
+    const priority = { arm16: 0, expired: 1, upcoming: 2 };
+    return result.sort((a, b) => priority[a.reason] - priority[b.reason]
+      || (a.earliest ?? Infinity) - (b.earliest ?? Infinity));
+  }
+  const validityCache = new WeakMap();
+  function validityAnalysis(rows, filial, warehouse, today = calendarDay(new Date())) {
+    let cached = validityCache.get(rows);
+    if (!cached || cached.today !== today) {
+      cached = { today, groups: validityGroups(rows, today) };
+      validityCache.set(rows, cached);
+    }
+    const hasWarehouse = warehouse && warehouse !== '__TODOS__';
+    if (!filial && !hasWarehouse) return cached.groups;
+    return cached.groups.filter(group => records(group.registros, filial)
+      .some(row => !hasWarehouse || normalize(row.armazem) === normalize(warehouse)));
+  }
   function branchHeader(value) {
     const key = String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     return ['FILIAL','B8FILIAL','CODFILIAL','CODIGOFILIAL','CODDAFILIAL','CODIGODAFILIAL','FILIALSB8','FILIALB8FILIAL'].includes(key);
@@ -99,7 +170,7 @@
         h('option', { value: '3' }, 'Tamboré · 03'),
         h('option', { value: '4' }, 'Paraíso · 04')));
   }
-  root.SC9LotFilters = { normalize, records, findings, warehouses, sourceRows, coverage, analysis, baseAnalysis, prepareSaved, savedAnalysis, branchHeader, CoverageNotice, Selector };
+  root.SC9LotFilters = { normalize, records, findings, warehouses, sourceRows, coverage, analysis, baseAnalysis, prepareSaved, savedAnalysis, savedValidityRows, calendarDay, validityAnalysis, validityDate, validityReasons, branchHeader, CoverageNotice, Selector };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.SC9LotFilters;
 })(typeof window === 'undefined' ? globalThis : window);
 

@@ -27,6 +27,6 @@ test('ponte da análise usa as listas reais filtradas e limpa os seletores sem g
  assert.strictEqual(props.items,records);props.onClear();assert.deepEqual(changes,[['filial',''],['warehouse','__TODOS__'],['priority',''],['priorityFilial',''],['onlyPriority',false],['worked',false]]);
 });
 test('grupos de validade e filiais preservam a busca e usam chaves estáveis por grupo',()=>{
- const s=fs.readFileSync(require.resolve('../bundle.js'),'utf8'),record={lote:'L',produtoBase:'A'};
- for(const [name,renderer,key]of [['jt','$a','val|L'],['Da','Ur','fil|L|A']]){const marker='items:'+name+',renderItem:',a=s.indexOf(marker),b=s.indexOf('),target:Ja',a);assert(a>0&&b>a);const ctx={React:{createElement:(type,props,child)=>({type,props,child})},window:{SC9DuplicatePanel:'panel'},Ja:'L',ve:value=>value,[renderer]:value=>value};const render=vm.runInNewContext('('+s.slice(a+marker.length,b+1)+')',ctx),out=render(record);assert.equal(out.props.key,key);assert.equal(out.props.target,'L');assert.strictEqual(out.child,record);}
+ const s=fs.readFileSync(require.resolve('../bundle.js'),'utf8'),record={lote:'L',produto:'A',produtoBase:'A'};
+ for(const [name,renderer,key]of [['jt','$a','val|L|A'],['Da','Ur','fil|L|A']]){const marker='items:'+name+',renderItem:',a=s.indexOf(marker),b=s.indexOf('),target:Ja',a);assert(a>0&&b>a);const ctx={React:{createElement:(type,props,child)=>({type,props,child})},window:{SC9DuplicatePanel:'panel'},Ja:'L',ve:value=>value,[renderer]:value=>value};const render=vm.runInNewContext('('+s.slice(a+marker.length,b+1)+')',ctx),out=render(record);assert.equal(out.props.key,key);assert.equal(out.props.target,'L');assert.strictEqual(out.child,record);}
 });
