@@ -1438,11 +1438,22 @@ async function handleApi(req, res, pathname) {
       if(!['preverSD3','aplicarSD3'].includes(body.acao))throw new ErroHttp(400,'Ação inválida.');
       return await comFila('controle-recebimentos',async()=>{
         const current=await receivingLoad();if(upload.revision!==current.revision)throw new ErroHttp(400,'Os recebimentos ou o SD3 mudaram. Carregue o arquivo e confira a prévia novamente.');
-        const options=body.acao==='preverSD3'?{filial:Receiving.code(body.filial),desde:Receiving.date(body.desde),ate:Receiving.date(body.ate)}:upload.preview;
+        const options=body.acao==='preverSD3'?{filial:Receiving.code(body.filial),desde:Receiving.date(body.desde),ate:Receiving.date(body.ate),extractedAt:body.extractedAt??null}:upload.preview;
         if(!options)throw new ErroHttp(400,'Confira a prévia antes de aplicar.');
         if(options.ate>Receiving.spDay(now))throw new ErroHttp(400,'A cobertura do SD3 não pode terminar em uma data futura.');
         const result=Receiving.replacePeriod(current.sd3,upload.rows,{...options,now,name:upload.name,importedBy:owner}),next={...current,revision:crypto.randomUUID(),sd3:result.sd3},analysis=Receiving.reconcile(next.entries,next.sd3);
-        if(body.acao==='preverSD3'){upload.preview=options;return sendJson(res,200,{ok:true,...result.stats,stats:analysis.stats,filial:options.filial,desde:options.desde,ate:options.ate});}
+                if(body.acao==='preverSD3'){
+          const before=new Map(view(current).rows.filter(row=>row.filial===options.filial).map(row=>[row.id,row.status]));
+          const stats={conferido:0,saldo_parcial:0,aguardando_sd3:0,divergente:0,produto_ambiguo:0};
+          const changes={conferido:0,aguardando_sd3:0,divergente:0,other:0};
+          for(const row of analysis.rows){
+            if(row.filial!==options.filial||row.status==='cancelado')continue;
+            stats[row.status]++;
+            if(before.get(row.id)!==row.status)changes[Object.hasOwn(changes,row.status)?row.status:'other']++;
+          }
+          upload.preview=options;
+          return sendJson(res,200,{ok:true,...result.stats,stats,changes,filial:options.filial,desde:options.desde,ate:options.ate});
+        }
         const backup='controle-recebimentos-backup-'+crypto.randomUUID()+'.json';await objSave(backup,{data:current,savedAt:now});await receivingSave(next);receivingUploads.delete(body.id);return sendJson(res,200,{ok:true,backup,...view(next)});
       });
     }catch(e){if(e instanceof Receiving.ValidationError)return sendJson(res,400,{error:e.message});return sendJson(res,e.status||500,erroPublico(e,'Erro no recebimento ou na conferência do SD3.'));}

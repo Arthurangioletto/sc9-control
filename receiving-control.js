@@ -21,11 +21,21 @@
   }
   const movementKey=r=>JSON.stringify([r.filial,r.dt,r.doc,r.produto,lot(r.lote),r.armazem,r.tp,r.cf,r.estornado]);
   function aggregate(rows){const map=new Map();for(const raw of rows){const r=normalizeMovement(raw);if(!r)continue;const k=movementKey(r),old=map.get(k);map.set(k,old?{...r,qt:old.qt+r.qt}:r);if(!Number.isFinite(map.get(k).qt))throw new ValidationError('Quantidade acumulada inválida.');}return [...map.values()];}
-  function replacePeriod(previous,rows,{filial,desde,ate,now=new Date().toISOString(),name='SD3',importedBy=''}={}){
+  function replacePeriod(previous,rows,{filial,desde,ate,now=new Date().toISOString(),name='SD3',importedBy='',extractedAt}={}){
     filial=code(filial);desde=date(desde);ate=date(ate);if(!filial||desde>ate)throw new ValidationError('Informe a filial e um período válido.');
+    if(extractedAt!=null){
+      const timestamp=String(extractedAt);
+      const parsed=Date.parse(timestamp);
+      if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp)||!Number.isFinite(parsed)||parsed>Date.parse(now))throw new ValidationError('Informe uma data e hora de extração válida, anterior à importação.');
+      date(timestamp);
+      extractedAt=new Date(parsed).toISOString();
+      if(ate>spDay(extractedAt))throw new ValidationError('O fim do período não pode ser posterior ao dia da extração.');
+    }
+    const newerOverlap=(previous?.coverage||[]).some(c=>c.filial===filial&&c.desde<=ate&&c.ate>=desde&&c.extractedAt&&(!extractedAt||Date.parse(c.extractedAt)>Date.parse(extractedAt)));
+    if(newerOverlap)throw new ValidationError('Já existe um SD3 com extração mais recente neste período. Importe um arquivo atualizado.');
     const all=aggregate(rows),selected=all.filter(r=>r.filial===filial);
     if(selected.some(r=>r.dt<desde||r.dt>ate))throw new ValidationError('Há movimentos da filial fora do período informado. Amplie o período para cobrir o arquivo completo.');
-    const old=previous?.rows||[],kept=old.filter(r=>r.filial!==filial||r.dt<desde||r.dt>ate),coverage=(previous?.coverage||[]).filter(c=>c.filial!==filial||c.desde!==desde||c.ate!==ate).concat({filial,desde,ate,importedAt:now,name:String(name).slice(0,200),importedBy:String(importedBy).slice(0,100)});
+    const old=previous?.rows||[],kept=old.filter(r=>r.filial!==filial||r.dt<desde||r.dt>ate),coverage=(previous?.coverage||[]).filter(c=>c.filial!==filial||c.desde!==desde||c.ate!==ate).concat({filial,desde,ate,importedAt:now,...(extractedAt!==undefined?{extractedAt}:{}),name:String(name).slice(0,200),importedBy:String(importedBy).slice(0,100)});
     return {sd3:{rows:[...kept,...selected],coverage,updatedAt:now,source:String(name).slice(0,200)},stats:{received:rows.length,selected:selected.length,ignoredOtherBranches:all.length-selected.length,replaced:old.length-kept.length,retained:kept.length,cancelled:selected.filter(r=>r.estornado).length}};
   }
   function transfers(rows){
@@ -37,7 +47,7 @@
     return [...map.values()].filter(t=>t.out>eps||t.into>eps).map(t=>({...t,users:[...t.users],valid:t.out>eps&&Math.abs(t.out-t.into)<=eps&&!Object.values(t.elsewhere).some(q=>q>eps),remaining:t.out>eps&&Math.abs(t.out-t.into)<=eps&&!Object.values(t.elsewhere).some(q=>q>eps)?t.into:0})).sort((a,b)=>a.dt.localeCompare(b.dt)||a.key.localeCompare(b.key));
   }
   function reconcile(entries,sd3={}){
-    const docs=transfers(sd3.rows),coverage=(sd3.coverage||[]).map(c=>({...c,importedDay:spDay(c.importedAt)})),products=new Map(),docIndex=new Map(),pendingTransfers=new Set();
+    const docs=transfers(sd3.rows),coverage=[...(sd3.coverage||[])].reverse(),products=new Map(),docIndex=new Map(),pendingTransfers=new Set();
     for(const doc of docs){const k=JSON.stringify([doc.filial,lot(doc.lote),doc.produto]);doc.day=day(doc.dt);if(!docIndex.has(k))docIndex.set(k,[]);docIndex.get(k).push(doc);}
     for(const r of sd3.rows||[]){
       if(code(r.armazem)==='26')continue;
@@ -45,7 +55,10 @@
     }
     const rows=[...(entries||[])].sort((a,b)=>a.createdAt.localeCompare(b.createdAt)||(a.sequence||0)-(b.sequence||0)||a.id.localeCompare(b.id)).map(e=>{
       const candidates=[...(products.get(JSON.stringify([e.filial,lot(e.lote)]))||[])].sort(),produto=e.produto||(candidates.length===1?candidates[0]:''),receivedDay=spDay(e.createdAt),d=day(receivedDay);
-      const covered=coverage.some(c=>c.filial===e.filial&&c.desde<=receivedDay&&c.ate>=receivedDay&&(receivedDay<c.importedDay||c.importedAt>=e.createdAt));
+      const latestCoverage=coverage.find(c=>c.filial===e.filial&&c.desde<=receivedDay&&c.ate>=receivedDay);
+      // Legacy imports keep their recorded behavior. A new import with unknown extraction cannot prove absence.
+      const evidenceAt=latestCoverage&&(latestCoverage.extractedAt===undefined?latestCoverage.importedAt:latestCoverage.extractedAt);
+      const covered=Boolean(evidenceAt&&Date.parse(evidenceAt)>=Date.parse(e.createdAt));
       const result={...e,receivedDay,produtoResolvido:produto,candidates,covered,allocated:0,missing:e.quantidade,docs:[],issues:[]};
       if(e.cancelledAt)return {...result,status:'cancelado',message:'Registro cancelado; quantidade fora da conferência.'};
       if(!produto&&candidates.length>1)return {...result,status:'produto_ambiguo',message:'Este lote aparece em mais de um produto. Identifique o produto para conferir sem misturar quantidades.'};
@@ -78,6 +91,13 @@
       }
     }
     const excess=docs.filter(t=>t.valid&&t.remaining>eps).map(t=>({filial:t.filial,produto:t.produto,lote:t.lote,doc:t.doc,dt:t.dt,quantidade:t.remaining}));
+    for(const row of rows){
+      if(!['divergente','aguardando_sd3','saldo_parcial'].includes(row.status)||row.missing<=eps)continue;
+      const matching=docIndex.get(JSON.stringify([row.filial,lot(row.lote),row.produtoResolvido]))||[];
+      const cutoff=day(row.receivedDay)-2;
+      const older=matching.filter(doc=>doc.day<cutoff&&doc.valid&&doc.remaining>eps).slice(-5);
+      if(older.length)row.olderCandidates=older.map(doc=>({doc:doc.doc,dt:doc.dt,remaining:doc.remaining}));
+    }
     return {rows:rows.reverse(),partialGroups,excess,stats:{active:rows.filter(r=>!r.cancelledAt).length,received:rows.filter(r=>!r.cancelledAt).reduce((sum,r)=>sum+r.quantidade,0),conferido:rows.filter(r=>r.status==='conferido').length,saldo_parcial:rows.filter(r=>r.status==='saldo_parcial').length,aguardando_sd3:rows.filter(r=>r.status==='aguardando_sd3').length,divergente:rows.filter(r=>r.status==='divergente').length,produto_ambiguo:rows.filter(r=>r.status==='produto_ambiguo').length}};
   }
   function parseWorkbook(wb,XLSX,{filial='01'}={}){
