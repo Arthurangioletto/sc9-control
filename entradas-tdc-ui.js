@@ -195,6 +195,8 @@
         h('div',null,h('label',null,'Na nota (SD1)'),h('strong',null,fmtN(a.qtdNota))),
         h('div',null,h('label',null,'Físico (contado)'),h('input',{className:'sc9-tdc-in',type:'number',value:qtd,placeholder:'—',onChange:e=>setQtd(e.target.value)})),
         h('div',null,h('label',null,'Lote físico'),h('input',{className:'sc9-tdc-in',value:lote,placeholder:a.lote||'—',onChange:e=>setLote(e.target.value)}))),
+      a.revisao?.notaErrada&&h('div',{className:'sc9-tdc-meta'},'Nota errada ',h('b',null,a.revisao.notaErrada)),
+      a.revisao?.notaCorreta&&h('div',{className:'sc9-tdc-meta'},'Nota correta ',h('b',null,a.revisao.notaCorreta)),
       a.descricao&&h('div',{className:'sc9-tdc-desc'},a.descricao),
       a.corrigidoPor&&a.corrigidoPor.length>0&&h('div',{className:'sc9-tdc-meta'},'Corrigido no estoque por: ',h('b',null,a.corrigidoPor.join(', '))),
       a.movimentos&&a.movimentos.length>0&&h('details',{className:'sc9-tdc-ev'},h('summary',null,'Ver o que o Protheus registrou ('+a.movimentos.length+')'),
@@ -220,7 +222,7 @@
     return sub+'.'+(ev?' Movimentações: '+ev+'.':'');
   }
   function FichaManual({onClose,onSave,usuario,inicial,sd1All,analisarNota}){
-    const [f,setF]=useState({tipo:'qtd_maior',nota:'',serie:'',fornecedor:'',produto:'',lote:'',loteFisico:'',qtdNota:'',qtdFisica:'',dtEntrada:'',usuarioTDC:'',obs:'',...(inicial||{})});
+    const [f,setF]=useState({tipo:'qtd_maior',nota:'',notaErrada:'',notaCorreta:'',serie:'',fornecedor:'',produto:'',lote:'',loteFisico:'',qtdNota:'',qtdFisica:'',dtEntrada:'',usuarioTDC:'',obs:'',...(inicial||{})});
     const [fotos,setFotos]=useState([]);const [itensNota,setItensNota]=useState([]);const [series,setSeries]=useState([]);const [achou,setAchou]=useState(inicial&&inicial.nota?'sim':'');
     const [err,setErr]=useState('');const [busy,setBusy]=useState(false);
     const set=k=>e=>setF(x=>({...x,[k]:e.target.value}));
@@ -245,7 +247,7 @@
     const itemRes=useMemo(()=>resNota&&f.produto?resNota.itens.find(i=>M.normNota(i.nota)===M.normNota(f.nota)&&i.produto===f.produto&&i.lote===f.lote):null,[resNota,f.nota,f.produto,f.lote]);
     const protheus=foraDaNota?'':resumoProtheus(itemRes);
     const jaApontado=resNota&&f.produto&&!foraDaNota?resNota.findings.find(x=>x.produto===f.produto&&x.lote===f.lote&&x.tipo===f.tipo&&x.confianca==='forte'):null;
-    const campo=(k,rot,tipo,extra)=>h('div',{className:'sc9-tdc-field',key:k},h('label',null,rot),h('input',{className:'sc9-tdc-in',type:tipo||'text',value:f[k]==null?'':f[k],onChange:set(k),...(extra||{})}));
+    const campo=(k,rot,tipo,extra)=>h('div',{className:'sc9-tdc-field',key:k},h('label',null,rot),h('input',{className:'sc9-tdc-in',type:tipo||'text','aria-label':rot,value:f[k]==null?'':f[k],onChange:set(k),...(extra||{})}));
     const salvar=async()=>{
       if(!f.produto.trim()){setErr('Informe o produto (escolha na lista de itens da nota ou digite).');return;}
       setBusy(true);setErr('');
@@ -271,6 +273,9 @@
         !foraDaNota&&campo('qtdNota','Qtd. na nota','number',{readOnly:itemSel>=0}),campo('qtdFisica','Qtd. física (contada)','number'),
         f.tipo==='lote_trocado'&&campo('loteFisico','Lote que veio no físico'),
         campo('usuarioTDC','Quem lançou no TDC')),
+      h('div',{className:'sc9-tdc-row2',style:{marginTop:10}},
+        campo('notaErrada','Nota errada (opcional)','text',{maxLength:30,placeholder:'ex.: 000123'}),
+        campo('notaCorreta','Nota correta (opcional)','text',{maxLength:30,placeholder:'ex.: 000124'})),
       h('div',{style:{marginTop:10}},h(FotoCampo,{ids:fotos,onChange:setFotos})),
       h('div',{className:'sc9-tdc-field',style:{marginTop:10}},h('label',null,'Justificativa (o que estava errado)'),h('textarea',{className:'sc9-tdc-ta',placeholder:'ex.: nota dizia 8 peças, contei 10 no pacote',value:f.obs,onChange:set('obs')})),
       err&&h('div',{className:'sc9-tdc-msg err'},err),
@@ -414,7 +419,7 @@
     const add=(nome,aoa,larg)=>{const ws=root.XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=larg.map(w=>({wch:w}));root.XLSX.utils.book_append_sheet(wb,ws,nome);};
     add('Súmula',s.resumo,[42,20,12,22]);
     add('Por usuário',s.porUsuario,[30,10,20,22,10,20,18]);
-    add('Detalhe',s.detalhe,[13,26,10,12,7,26,14,14,14,12,12,11,13,18,22,60,40,16,12]);
+    add('Detalhe',s.detalhe,[13,26,10,12,7,26,14,14,14,12,12,11,13,18,22,60,40,16,12,24,18,18]);
     add('Tempo',s.tempo,[12,28,14,14,12,12,16,22,18,16,22]);
     root.SC9Exports.downloadWorkbook(wb,'Sumula_Entradas_TDC_'+new Date().toISOString().slice(0,10)+'.xlsx',root.XLSX);
   }
@@ -588,7 +593,7 @@
     const cont=useMemo(()=>({pendente:achados.filter(a=>a.status==='pendente').length,confirmado:achados.filter(a=>a.status==='confirmado').length,descartado:achados.filter(a=>a.status==='descartado').length,todas:achados.length}),[achados]);
     const lista=useMemo(()=>{
       const q=M.norm(busca);
-      return achados.filter(a=>(fStatus==='todas'||a.status===fStatus)&&(!fTipo||a.tipo===fTipo)&&(!q||M.norm([a.nota,a.produto,a.lote,a.loteFisico,a.fornecedor,a.usuarioTDC].join(' ')).includes(q)));
+      return achados.filter(a=>(fStatus==='todas'||a.status===fStatus)&&(!fTipo||a.tipo===fTipo)&&(!q||M.norm([a.nota,a.revisao?.notaErrada,a.revisao?.notaCorreta,a.produto,a.lote,a.loteFisico,a.fornecedor,a.usuarioTDC].join(' ')).includes(q)));
     },[achados,fStatus,fTipo,busca]);
 
     /* ---- números do dashboard ---- */

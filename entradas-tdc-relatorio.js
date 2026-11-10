@@ -25,14 +25,27 @@
   function montarRelatorio(res,achados,{de='',ate='',escopo='notas informadas'}={}){
     const dentro=d=>(!de||(d&&d>=de))&&(!ate||(d&&d<=ate));
     const todos=(achados||[]).filter(a=>a.status!=='descartado'&&(a.status==='confirmado'||a.manual)&&dentro(a.dtEntrada||''))
-      .map(a=>({...a,fotos:(a.fotos||[]).slice(),revisao:a.revisao?{...a.revisao}:a.revisao}));
+      .map(a=>{
+        const {notaErrada='',notaCorreta=''}=a.revisao||{};
+        return {...a,fotos:(a.fotos||[]).slice(),revisao:a.revisao?{...a.revisao}:a.revisao,
+          notasReferencia:notaErrada||notaCorreta?[{notaErrada,notaCorreta}]:[]};
+      });
     /* o mesmo erro reportado à mão e já apontado pelo Protheus conta uma vez só: as fotos e a justificativa do relato manual vão para a ficha do Protheus */
     const chaveE=e=>[e.nota,e.serie||'',e.produto,e.lote,e.tipo].join('|');
     const autos=new Map(todos.filter(e=>!e.manual&&e.nota).map(e=>[chaveE(e),e]));
     const erros=[];
     for(const e of todos){
       const a=e.manual&&e.nota?autos.get(chaveE(e)):null;
-      if(a){a.fotos=[...new Set([...a.fotos,...e.fotos])].slice(0,4);if(!(a.revisao&&a.revisao.obs)&&e.revisao&&e.revisao.obs)a.revisao={...(a.revisao||{}),obs:e.revisao.obs};continue;}
+      if(a){
+        a.fotos=[...new Set([...a.fotos,...e.fotos])].slice(0,4);
+        if(!a.revisao?.obs&&e.revisao?.obs)a.revisao={...(a.revisao||{}),obs:e.revisao.obs};
+        for(const referencia of e.notasReferencia){
+          if(!a.notasReferencia.some(r=>r.notaErrada===referencia.notaErrada&&r.notaCorreta===referencia.notaCorreta)){
+            a.notasReferencia.push(referencia);
+          }
+        }
+        continue;
+      }
       erros.push(e);
     }
     erros.sort((a,b)=>(a.dtEntrada||'').localeCompare(b.dtEntrada||'')||String(a.nota).localeCompare(String(b.nota)));
@@ -137,6 +150,7 @@ h2.sec{font-size:18px;margin:26px 0 4px}p.secsub{margin:0 0 14px;color:#4F587A;f
     return `<article class="erro" style="--c:${T.cor}"><div class="fotos">${imgs.length?imgs.join(''):'<div class="sem-foto">Sem foto anexada</div>'}</div><div class="corpo">
       <div class="topo"><span class="tag">${esc(T.rotulo)}</span><span class="dt">Entrada no 59 em <b>${esc(fmtD(e.dtEntrada))}</b></span></div>
       <div class="ident">${e.nota?`<span class="nf">NF ${esc(e.nota)}${e.serie?'/'+esc(e.serie):''}</span> · ${esc(forn(e.fornecedor)||'fornecedor não informado')}`:'<span class="nf">Sem nota no SD1</span>'} · Produto <b>${esc(e.produto)}</b>${e.tipo!=='lote_trocado'&&e.lote?' · lote '+esc(e.lote):''}${e.usuarioTDC?' · lançada por <b>'+esc(e.usuarioTDC)+'</b>':''}</div>
+      ${(e.notasReferencia||[]).map(r=>`<div class="ident">${r.notaErrada?`Nota errada <b>${esc(r.notaErrada)}</b>`:''}${r.notaErrada&&r.notaCorreta?' · ':''}${r.notaCorreta?`Nota correta <b>${esc(r.notaCorreta)}</b>`:''}</div>`).join('')}
       <div class="comp">${comp}</div>
       ${(e.protheus||e.descricao)?`<div class="blk"><h3>O que o Protheus mostra</h3><p>${esc(e.protheus||e.descricao)}</p>${movs?`<ul class="mov">${movs}</ul>`:''}</div>`:''}
       ${rev.obs?`<div class="blk"><h3>Justificativa do estoque</h3><p class="just">“${esc(rev.obs)}”</p></div>`:''}

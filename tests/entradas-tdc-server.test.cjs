@@ -113,3 +113,15 @@ test('fotos: valida, guarda e devolve só para quem tem perfil', async () => {
   const f = await req('/api/entradas-tdc/fichas', { cookie: comPerfil, body: { id: 'x|1', ficha: { status: 'confirmado', fotos: [up.data.id, '../etc', 'zz', up.data.id, up.data.id, up.data.id, up.data.id], protheus: 'subiu 10 de 8' } } });
   assert.strictEqual(f.data.ficha.fotos.length, 4); assert.ok(f.data.ficha.fotos.every((x) => /^[a-f0-9]{24}$/.test(x))); assert.strictEqual(f.data.ficha.protheus, 'subiu 10 de 8');
 });
+test('notas opcionais da ficha manual preservam zeros e sobrevivem a salvamento por cliente anterior', async () => {
+  const id = 'MANUAL|referencias';
+  const ficha = { status: 'confirmado', tipo: 'qtd_maior', nota: '000100', produto: 'P1' };
+  const url = '/api/entradas-tdc/fichas';
+  const saved = await req(url, { cookie: comPerfil, body: { id, ficha: { ...ficha, notaErrada: '000123', notaCorreta: '000124' } } });
+  assert.strictEqual(saved.status, 200);
+  await req(url, { cookie: comPerfil, body: { id, ficha: { ...ficha, obs: 'Revisada' } } });
+  const stored = (await req(url, { cookie: comPerfil })).data.fichas[id];
+  assert.strictEqual(stored.nota, '000100');
+  assert.strictEqual(stored.notaErrada, '000123');
+  assert.strictEqual(stored.notaCorreta, '000124');
+});
