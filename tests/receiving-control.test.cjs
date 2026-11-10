@@ -19,6 +19,19 @@ test('duas pontas do mesmo documento precisam conferir; destino errado fica expl
  const mismatch=M.reconcile([receipt()],base([movement(),movement({tp:499,armazem:'01',qt:9,cf:'DE4'})])).rows[0];assert.equal(mismatch.status,'divergente');assert.equal(mismatch.allocated,0);
  assert.equal(M.reconcile([receipt()],base([movement({tp:499,armazem:'01',cf:'DE4'})])).rows[0].allocated,0);
 });
+test('armazém 26 não interfere nas 399 unidades transferidas do 02 para o 01',()=>{
+ const sample=movement({armazem:'26',tp:499,cf:'DE4',qt:1});
+ const sd3=base([...pair(399),sample,{...sample,produto:'OUTRO'}]);
+ const row=M.reconcile([receipt({quantidade:399})],sd3).rows[0];
+ assert.equal(row.status,'conferido');
+ assert.equal(row.allocated,399);
+ assert.deepEqual(row.candidates,['P']);
+ assert.equal(sd3.rows.filter(r=>r.armazem==='26').length,2);
+ const excess=M.reconcile([receipt({quantidade:400})],sd3).rows[0];
+ assert.equal(excess.missing,1);
+ assert.equal(excess.status,'saldo_parcial');
+ assert.equal(M.reconcile([receipt()],base([sample])).rows[0].allocated,0);
+});
 test('documentos, datas, produtos e filiais diferentes nunca completam uma transferência artificialmente',()=>{
  for(const more of [{doc:'OUTRO'},{dt:'2026-11-04'},{produto:'OUTRO'},{filial:'02'}]){const r=M.reconcile([receipt()],base([movement(),movement({tp:499,armazem:'01',cf:'DE4',...more})])).rows[0];assert.notEqual(r.status,'conferido');}
  assert.equal(M.reconcile([receipt()],base(pair(10,{dt:'2026-11-01'}))).rows[0].allocated,0);
