@@ -681,9 +681,40 @@ body:has(.sc9-sidebar) header>div>div { min-width:0; }
 .sc9-receiving-linked{padding:10px 0;border-bottom:1px solid var(--sc9-border);margin-bottom:10px;}
 .sc9-receiving-linked p{font-size:12px;}
 
+.sc9-retem-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: #f4f2ed;
+}
+body:has(.sc9-retem-screen) :is(#sc9-tdc-root, #sc9-i09-root) {
+  display: none;
+}
+.sc9-retem-return {
+  flex: none;
+  padding: 5px 20px;
+  border-bottom: 1px solid #494135;
+  background: #24211d;
+  color: #fffaf0;
+}
+.sc9-retem-return button {
+  border: 0;
+  padding: 4px 0;
+  background: transparent;
+  color: #ffd483;
+  font: 600 13px system-ui, sans-serif;
+  cursor: pointer;
+}
+.sc9-retem-return button:focus-visible {
+  outline: 2px solid #ffd483;
+  outline-offset: 2px;
+}
 .sc9-retem-prototype {
   display: block;
+  flex: 1;
   width: 100%;
-  height: max(560px, calc(100dvh - 160px));
+  min-height: 0;
   border: 0;
 }
