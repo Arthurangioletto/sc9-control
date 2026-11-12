@@ -39,12 +39,22 @@
     return {sd3:{rows:[...kept,...selected],coverage,updatedAt:now,source:String(name).slice(0,200)},stats:{received:rows.length,selected:selected.length,ignoredOtherBranches:all.length-selected.length,replaced:old.length-kept.length,retained:kept.length,cancelled:selected.filter(r=>r.estornado).length}};
   }
   function transfers(rows){
-    const map=new Map();for(const r of rows||[]){if(code(r.armazem)==='26'||r.estornado||r.cf&& !['RE4','DE4','RE7','DE7'].includes(r.cf))continue;
-      const k=JSON.stringify([r.filial,r.dt,r.doc,r.produto,lot(r.lote)]);if(!map.has(k))map.set(k,{key:k,filial:r.filial,dt:r.dt,doc:r.doc,produto:r.produto,lote:r.lote,out:0,into:0,elsewhere:{},users:new Set()});const t=map.get(k);if(r.usuario)t.users.add(r.usuario);
+    const map=new Map();for(const r of rows||[]){if(r.estornado||r.cf&& !['RE4','DE4','RE7','DE7'].includes(r.cf))continue;
+      const k=JSON.stringify([r.filial,r.dt,r.doc,r.produto,lot(r.lote)]);if(!map.has(k))map.set(k,{key:k,filial:r.filial,dt:r.dt,doc:r.doc,produto:r.produto,lote:r.lote,out:0,out21:0,into:0,retained26:0,elsewhere:{},users:new Set()});const t=map.get(k);
+      if(code(r.armazem)==='26'){if(r.tp===499)t.retained26+=r.qt;continue;}
+      if(r.usuario)t.users.add(r.usuario);
       if(r.tp===999&&r.armazem==='02')t.out+=r.qt;
+      if(r.tp===999&&r.armazem==='21')t.out21+=r.qt;
       if(r.tp===499){if(r.armazem==='01')t.into+=r.qt;else t.elsewhere[r.armazem]=(t.elsewhere[r.armazem]||0)+r.qt;}
     }
-    return [...map.values()].filter(t=>t.out>eps||t.into>eps).map(t=>({...t,users:[...t.users],valid:t.out>eps&&Math.abs(t.out-t.into)<=eps&&!Object.values(t.elsewhere).some(q=>q>eps),remaining:t.out>eps&&Math.abs(t.out-t.into)<=eps&&!Object.values(t.elsewhere).some(q=>q>eps)?t.into:0})).sort((a,b)=>a.dt.localeCompare(b.dt)||a.key.localeCompare(b.key));
+    return [...map.values()].filter(t=>t.out>eps||t.out21>eps||t.into>eps).map(t=>{
+      const origem=t.out>eps?'02':t.out21>eps?'21':'';
+      const saida=origem==='02'?t.out:t.out21;
+      const retencaoExplicaDiferenca=t.retained26>eps&&!(t.out>eps&&t.out21>eps)
+        &&Math.abs(saida-t.into-t.retained26)<=eps;
+      const valid=t.into>eps&&(Math.abs(saida-t.into)<=eps||retencaoExplicaDiferenca)&&!Object.values(t.elsewhere).some(q=>q>eps);
+      return {...t,origem,retencaoConciliada:retencaoExplicaDiferenca?t.retained26:0,users:[...t.users],valid,remaining:valid?t.into:0};
+    }).sort((a,b)=>a.dt.localeCompare(b.dt)||a.key.localeCompare(b.key));
   }
   function reconcile(entries,sd3={}){
     const docs=transfers(sd3.rows),coverage=[...(sd3.coverage||[])].reverse(),products=new Map(),docIndex=new Map(),pendingTransfers=new Set();
@@ -63,13 +73,13 @@
       if(e.cancelledAt)return {...result,status:'cancelado',message:'Registro cancelado; quantidade fora da conferência.'};
       if(!produto&&candidates.length>1)return {...result,status:'produto_ambiguo',message:'Este lote aparece em mais de um produto. Identifique o produto para conferir sem misturar quantidades.'};
       const compatible=(docIndex.get(JSON.stringify([e.filial,lot(e.lote),produto]))||[]).filter(t=>t.day>=d-2||pendingTransfers.has(t.key));
-      for(const t of compatible){if(!t.valid||t.remaining<=eps||result.missing<=eps)continue;const used=Math.min(t.remaining,result.missing);t.remaining-=used;result.allocated+=used;result.missing=Math.max(0,e.quantidade-result.allocated);if(t.remaining>eps)pendingTransfers.add(t.key);else pendingTransfers.delete(t.key);result.docs.push({documentKey:t.key,doc:t.doc,dt:t.dt,produto:t.produto,quantidade:used,transferida:t.into,usuarios:t.users});}
-      if(result.missing<=eps){const lateTransfer=result.docs.some(doc=>day(doc.dt)>d);return {...result,lateTransfer,status:'conferido',message:lateTransfer?'Quantidade conciliada com transferência lançada após a data do recebimento. Consulte a data dos documentos.':'Quantidade recebida conciliada com saída do 02 e entrada no 01 no mesmo documento.'};}
+      for(const t of compatible){if(!t.valid||t.remaining<=eps||result.missing<=eps)continue;const used=Math.min(t.remaining,result.missing);t.remaining-=used;result.allocated+=used;result.missing=Math.max(0,e.quantidade-result.allocated);if(t.remaining>eps)pendingTransfers.add(t.key);else pendingTransfers.delete(t.key);result.docs.push({documentKey:t.key,doc:t.doc,dt:t.dt,produto:t.produto,origem:t.origem,retencao26:t.retencaoConciliada,quantidade:used,transferida:t.into,usuarios:t.users});}
+      if(result.missing<=eps){const lateTransfer=result.docs.some(doc=>day(doc.dt)>d),origens=[...new Set(result.docs.map(doc=>doc.origem))].join(' e ');return {...result,lateTransfer,status:'conferido',message:lateTransfer?'Quantidade conciliada com transferência lançada após a data do recebimento. Consulte a data dos documentos.':'Quantidade recebida conciliada com saída de '+origens+' e entrada no 01 no mesmo documento.'};}
       const partial=result.allocated>eps?'O SD3 conciliou '+quantityLabel(result.allocated)+' de '+quantityLabel(e.quantidade)+' recebidas; '+quantityLabel(result.missing)+' ainda sem correspondência. ':'';
       if(!covered)return {...result,status:'aguardando_sd3',message:partial+'Aguardando SD3 atualizado para a data deste recebimento. A ausência na base atual ainda não comprova divergência.'};
-      result.issues=compatible.filter(t=>!t.valid).map(t=>({doc:t.doc,dt:t.dt,saida02:t.out,entrada01:t.into,outrosArmazens:t.elsewhere}));
+      result.issues=compatible.filter(t=>!t.valid).map(t=>({doc:t.doc,dt:t.dt,saida02:t.out,saida21:t.out21,entrada01:t.into,outrosArmazens:t.elsewhere}));
       const other=[...new Set(result.issues.flatMap(i=>Object.entries(i.outrosArmazens).filter(([,q])=>q>eps).map(([arm])=>arm)))];
-      const issue=other.length?'O SD3 registra entrada no armazém '+other.join(', ')+', diferente do 01.':result.issues.length?'O documento não possui saída do 02 e entrada no 01 com quantidades iguais.':partial?'A quantidade recebida excede a quantidade disponível para este recebimento no SD3.':compatible.some(t=>t.valid)?'As quantidades disponíveis nas transferências deste lote já estão vinculadas a outros recebimentos.':'Transferência 02 → 01 não encontrada no período do SD3 importado.';
+      const issue=other.length?'O SD3 registra entrada no armazém '+other.join(', ')+', diferente do 01.':result.issues.length?'O documento não possui saída do 02 ou do 21 e entrada no 01 com quantidades iguais.':partial?'A quantidade recebida excede a quantidade disponível para este recebimento no SD3.':compatible.some(t=>t.valid)?'As quantidades disponíveis nas transferências deste lote já estão vinculadas a outros recebimentos.':'Transferência do 02 ou do 21 para o 01 não encontrada no período do SD3 importado.';
       return {...result,status:'divergente',message:partial+issue};
     });
     // Build groups only through document quantities actually allocated above. Same lot alone is not a link.

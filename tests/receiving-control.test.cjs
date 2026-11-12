@@ -19,6 +19,21 @@ test('duas pontas do mesmo documento precisam conferir; destino errado fica expl
  const mismatch=M.reconcile([receipt()],base([movement(),movement({tp:499,armazem:'01',qt:9,cf:'DE4'})])).rows[0];assert.equal(mismatch.status,'divergente');assert.equal(mismatch.allocated,0);
  assert.equal(M.reconcile([receipt()],base([movement({tp:499,armazem:'01',cf:'DE4'})])).rows[0].allocated,0);
 });
+test('concilia saída direta do 21 para o 01 com o mesmo documento, produto e quantidade',()=>{
+ const moves=pair(50,{doc:'ZB71017KM',produto:'2671001',lote:'172107'});
+ moves[0].armazem='21';
+ const entry=receipt({lote:'172107',quantidade:50});
+ const result=M.reconcile([entry],base(moves)).rows[0];
+ assert.equal(result.status,'conferido');
+ assert.equal(result.docs[0].origem,'21');
+ assert.equal(result.allocated,50);
+ const mismatch=M.reconcile([entry],base([moves[0],{...moves[1],qt:49}])).rows[0];
+ assert.equal(mismatch.status,'divergente');
+ assert.equal(mismatch.issues[0].saida21,50);
+ assert.equal(mismatch.issues[0].entrada01,49);
+ const split=M.reconcile([entry],base([{...moves[0],qt:30},{...moves[0],armazem:'02',qt:20},moves[1]])).rows[0];
+ assert.equal(split.status,'divergente');
+});
 test('armazém 26 não interfere nas 399 unidades transferidas do 02 para o 01',()=>{
  const sample=movement({armazem:'26',tp:499,cf:'DE4',qt:1});
  const sd3=base([...pair(399),sample,{...sample,produto:'OUTRO'}]);
@@ -31,6 +46,22 @@ test('armazém 26 não interfere nas 399 unidades transferidas do 02 para o 01',
  assert.equal(excess.missing,1);
  assert.equal(excess.status,'saldo_parcial');
  assert.equal(M.reconcile([receipt()],base([sample])).rows[0].allocated,0);
+});
+test('entrada do Retem no mesmo documento fecha a saída, mas só o saldo do 01 é conciliado',()=>{
+ const moves=[
+   movement({armazem:'21',qt:469}),
+   movement({armazem:'01',tp:499,cf:'DE4',qt:468}),
+   movement({armazem:'26',tp:499,cf:'DE4',qt:1})
+ ];
+ const entry=receipt({quantidade:360});
+ const result=M.reconcile([entry],base(moves));
+ assert.equal(result.rows[0].status,'saldo_parcial');
+ assert.equal(result.partialGroups[0].expected,468);
+ assert.equal(result.partialGroups[0].remaining,108);
+ const differentDoc=base([moves[0],moves[1],{...moves[2],doc:'OUTRO'}]);
+ assert.equal(M.reconcile([entry],differentDoc).rows[0].status,'divergente');
+ const over=M.reconcile([receipt({quantidade:469})],base(moves)).rows[0];
+ assert.equal(over.missing,1);
 });
 test('documentos, datas, produtos e filiais diferentes nunca completam uma transferência artificialmente',()=>{
  for(const more of [{doc:'OUTRO'},{dt:'2026-11-04'},{produto:'OUTRO'},{filial:'02'}]){const r=M.reconcile([receipt()],base([movement(),movement({tp:499,armazem:'01',cf:'DE4',...more})])).rows[0];assert.notEqual(r.status,'conferido');}
