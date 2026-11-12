@@ -3,7 +3,7 @@
   const R=root.React,h=R.createElement;
   const groups=[
     {name:'Visão geral',description:'Resumo e prioridades',icon:'grid',ids:['geral','dashboard','alertas','criticos']},
-    {name:'Operação',description:'Acompanhe cada etapa',icon:'route',ids:['fluxo','controle0201','controle','saida','recebimento','expedicao','movimentacao']},
+    {name:'Operação',description:'Acompanhe cada etapa',icon:'route',ids:['fluxo','controle0201','controle','retem26','saida','recebimento','expedicao','movimentacao']},
     {name:'Produtividade',description:'Equipe e desempenho',icon:'chart',ids:['separadores','conferencia','performance','horarios']},
     {name:'Análises',description:'Clientes, produtos e evolução',icon:'trend',ids:['clientes','itens','tendencias']},
     {name:'Administração',description:'Cadastros e acessos',icon:'settings',ids:['alteracoes_sep','cadastro_sb8','acessos']}
@@ -16,6 +16,7 @@
     fluxo:{icon:'route',description:'Acompanhe os pedidos nas etapas do fluxo operacional.'},
     controle0201:{label:'Controle 02 → 01',icon:'swap',description:'Registre o recebimento físico no 01 e confira a transferência pelo SD3.'},
     controle:{label:'Controle 02 → 01',icon:'swap',description:'Registre o recebimento físico no 01 e confira a transferência pelo SD3.'},
+    retem26:{label:'Retem - armazem 26',icon:'box',description:'Confira os produtos e lotes da transferência com o SB8 do Retem.'},
     saida:{label:'Saída para expedição',icon:'out',description:'Confira os pedidos encaminhados para expedição.'},
     recebimento:{label:'Recebimento',icon:'in',description:'Acompanhe os pedidos recebidos e suas conferências.'},
     expedicao:{icon:'box',description:'Consulte a situação dos pedidos e da expedição.'},

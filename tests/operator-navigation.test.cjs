@@ -7,6 +7,6 @@ test('menu real exige perfil específico de Alterações',()=>{
   const tabs=flags=>Array.from(vm.runInNewContext(expression,{Yt:false,oe:false,Ve:false,Mt:false,Ae:false,ee:false,...flags}),x=>x[0]);
   assert.deepEqual(tabs({oe:true,ee:true}),['saida','cadastro_sb8']);
   assert.deepEqual(tabs({Yt:true}),['geral']);
-  assert.deepEqual(tabs({Mt:true}),['controle']);
+  assert.deepEqual(tabs({Mt:true}),['controle','retem26']);
   assert.deepEqual(tabs({Ae:true}),['alteracoes_sep']);
 });
