@@ -420,8 +420,9 @@ const MOTIVOS_ALTERACAO = ["Peça não encontrada", "Erro sistêmico", "Lote ven
 let alteracaoSeparacaoCache = null;
 async function alteracaoSeparacaoCarregar() {
   if (alteracaoSeparacaoCache) return alteracaoSeparacaoCache;
-  try { const d = await objLoad(ALTERACAO_SEPARACAO_OBJ); alteracaoSeparacaoCache = { registros: Array.isArray(d && d.registros) ? d.registros : [] }; }
-  catch { alteracaoSeparacaoCache = { registros: [] }; }
+  const dados = await objLoad(ALTERACAO_SEPARACAO_OBJ);
+  if (dados && !Array.isArray(dados.registros)) throw new Error("Histórico de separação inválido");
+  alteracaoSeparacaoCache = { registros: dados?.registros || [] };
   return alteracaoSeparacaoCache;
 }
 async function alteracaoSeparacaoSalvar(dados) { await objSave(ALTERACAO_SEPARACAO_OBJ, dados); alteracaoSeparacaoCache = dados; }
@@ -1710,13 +1711,17 @@ async function handleApi(req, res, pathname) {
   // localiza o registro exato por id, clona só aquele dia, muta só aquele
   // registro — nunca mexe em nenhum outro bipe, de nenhum outro dia.
   if (pathname === "/api/saida/alteracao" && method === "POST") {
-    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
     let body;
     try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
     const id = body && typeof body.id === "string" ? body.id : "";
     const acao = body && body.acao;
     if (!id) return sendJson(res, 400, { error: "informe o id do registro" });
     if (!["marcar", "confirmar", "cancelar"].includes(acao)) return sendJson(res, 400, { error: "ação inválida (use marcar, confirmar ou cancelar)" });
+    const perfis = sess.perfis || [];
+    if (sess.role !== "admin" && !perfis.includes("saida") && (acao === "marcar" || !perfis.includes("alteracoes"))) {
+      return sendJson(res, 403, { error: "seu acesso não permite isso" });
+    }
     const hoje = diaSP();
     try {
       const r = await comFila("saida", async () => {
@@ -1729,6 +1734,9 @@ async function handleApi(req, res, pathname) {
           // validação no meio (ex.: campo faltando), nada foi salvo ainda.
           const novo = JSON.parse(JSON.stringify(atual));
           const e = novo.entries[idx];
+          if (acao === "marcar" ? e.alteracao : e.alteracao?.status !== "pendente") {
+            return { erro: 409, msg: "a situação da alteração mudou. Atualize a revisão antes de continuar." };
+          }
           if (acao === "marcar") {
             // quem bipa só avisa "isso precisa de alteração" — um clique, sem
             // preencher nada. Item, quantidade, lote e o pedido de complemento
@@ -1794,7 +1802,10 @@ async function handleApi(req, res, pathname) {
   // pendentes (esperando o número do pedido de complemento) — pra montar a
   // aba separada, sem precisar o operador adivinhar em qual dia foi bipado.
   if (pathname === "/api/saida/alteracoes" && method === "GET") {
-    const sess = await exigir(req, res, ["admin", "operador"], "saida"); if (!sess) return;
+    const sess = await exigir(req, res, ["admin", "operador"]); if (!sess) return;
+    if (sess.role !== "admin" && !(sess.perfis || []).some(perfil => perfil === "saida" || perfil === "alteracoes")) {
+      return sendJson(res, 403, { error: "seu acesso não permite isso" });
+    }
     try {
       const somenteConfirmadas = new URL(req.url, "http://localhost").searchParams.get("confirmadas") === "1";
       const dias = await diasRecentesPrimeiro(diaSP());
@@ -1810,6 +1821,40 @@ async function handleApi(req, res, pathname) {
       }
       return sendJson(res, 200, { itens: resultado });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar alterações")); }
+  }
+
+  if (pathname === "/api/revisao-alteracoes" && method === "GET") {
+    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
+    res.setHeader("Cache-Control", "no-store");
+    const consulta = (new URL(req.url, "http://localhost").searchParams.get("pedido") || "").trim();
+    const pedido = /^\d+$/.test(consulta) ? normalizarPedido(consulta) : null;
+    if (!pedido) return sendJson(res, 400, { error: "Informe um número de pedido válido." });
+    try {
+      const resumo = (registro, alteracao, tipo) => ({
+        id: registro.id,
+        tipo,
+        pedido: registro.pedido,
+        complemento: alteracao.pedidoComplemento || "",
+        status: alteracao.status,
+        motivo: alteracao.motivo || "",
+        data: alteracao.confirmadoEm || alteracao.canceladoEm || alteracao.marcadoEm || "",
+        responsavel: alteracao.confirmadoPorNome || alteracao.canceladoPorNome || alteracao.marcadoPorNome || ""
+      });
+      const { registros } = await alteracaoSeparacaoCarregar();
+      const itens = registros.filter(registro => normalizarPedido(registro.pedido) === pedido)
+        .map(registro => resumo(registro, registro, "separacao"));
+      for (const dia of await diasRecentesPrimeiro(diaSP())) {
+        const { entries } = await saidaCarregar(dia);
+        for (const registro of entries) {
+          const alteracao = registro.alteracao;
+          if (alteracao && [registro.pedido, alteracao.pedidoComplemento].some(numero => normalizarPedido(numero) === pedido)) {
+            itens.push(resumo(registro, alteracao, "nota"));
+          }
+        }
+      }
+      itens.sort((a, b) => b.data.localeCompare(a.data));
+      return sendJson(res, 200, { pedido, itens });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao buscar alterações do pedido")); }
   }
 
   // Alteração do TIPO 2 — na separação, antes da conferência. O separador só
@@ -1854,17 +1899,17 @@ async function handleApi(req, res, pathname) {
         if (idx === -1) return { erro: 404, msg: "registro não encontrado" };
         const registros = dados.registros.map((r) => ({ ...r })); // cópia rasa: só o registro mutado abaixo troca de referência
         const r = registros[idx];
+        if (r.status !== "pendente") return { erro: 409, msg: "esse registro não está pendente de revisão" };
         if (acao === "cancelar") {
           registros[idx] = { ...r, status: "cancelada", canceladoEm: new Date().toISOString(), canceladoPorUsuario: sess.usuario, canceladoPorNome: sess.nome };
         } else {
-          if (r.status !== "pendente") return { erro: 409, msg: "esse registro não está pendente de confirmação" };
           const motivo = String(body.motivo || "").trim();
           const itens = Array.isArray(body.itens) ? body.itens : [];
           if (!motivo) return { erro: 400, msg: "informe o motivo da alteração" };
           if (!itens.length) return { erro: 400, msg: "informe ao menos um item alterado" };
           for (const it of itens) {
             if (!it || !String(it.item || "").trim()) return { erro: 400, msg: "cada item precisa de um produto/código" };
-            if (isNaN(Number(it.quantidade)) || Number(it.quantidade) <= 0) return { erro: 400, msg: "cada item precisa de uma quantidade válida (maior que zero)" };
+            if (!Number.isFinite(Number(it.quantidade)) || Number(it.quantidade) <= 0) return { erro: 400, msg: "cada item precisa de uma quantidade válida (maior que zero)" };
             if (!String(it.lote || "").trim()) return { erro: 400, msg: "cada item precisa de um lote" };
           }
           // achadoMovimentacao é opcional: um texto curto (gerado no navegador,
