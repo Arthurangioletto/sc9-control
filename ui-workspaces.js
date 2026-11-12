@@ -69,8 +69,48 @@
     return h('section',{className:'sc9-analysis-card','aria-label':'Explorador de movimentações'},h('h2',null,'Consultar movimentações'),h('p',{className:'sc9-view-help'},'Os filtros abaixo afetam somente esta tabela. Os gráficos e indicadores de apoio consideram a base completa de movimentação.'),h('div',{className:'sc9-view-filters'},h('label',null,'Lote, produto, documento ou usuário',h('input',{'aria-label':'Buscar movimentação',type:'search',value:query,onChange:event=>onQuery(event.target.value)})),h('label',null,'Armazém',h('select',{'aria-label':'Armazém da movimentação',value:warehouse,onChange:event=>setWarehouse(event.target.value)},h('option',{value:''},'Todos'),warehouses.map(code=>h('option',{value:code,key:code},code)))),h('label',null,'Tipo',h('select',{'aria-label':'Tipo de movimento',value:type,onChange:event=>setType(event.target.value)},h('option',{value:''},'Todos'),h('option',{value:'499'},'Entrada · 499'),h('option',{value:'999'},'Saída · 999'))),h('label',null,'De',h('input',{'aria-label':'Movimento a partir de',type:'date',value:from,onChange:event=>setFrom(event.target.value),onInput:event=>setFrom(event.target.value)})),h('label',null,'Até',h('input',{'aria-label':'Movimento até',type:'date',value:to,onChange:event=>setTo(event.target.value),onInput:event=>setTo(event.target.value)})),h('button',{type:'button',className:'sc9-ui-button',onClick:()=>{onQuery('');setWarehouse('');setType('');setFrom('');setTo('');}},'Limpar consulta')),from&&to&&from>to&&h('p',{className:'sc9-view-help',role:'status'},'A data inicial está depois da final. Ajuste o período para consultar.'),h(root.SC9View.Table,{items:rows,caption:'Movimentações da base',resetKey:JSON.stringify([query,warehouse,type,from,to]),columns:[{key:'dt',label:'Data',render:row=>timestamp(row.dt)===null?'—':new Date(row.dt).toLocaleDateString('pt-BR')},{key:'tipo',label:'Tipo',render:row=>row.tipoLabel||String(row.tp||'—')},{key:'armazem',label:'Armazém'},{key:'produto',label:'Produto'},{key:'lote',label:'Lote'},{key:'documento',label:'Documento',render:row=>row.documento||row.doc||'—'},{key:'usuario',label:'Usuário'},{key:'qt',label:'Quantidade',render:row=>number(row.qt)}]}));
   };
   root.SC9TrendHistory=function History({rows,historical}){return h('section',{className:'sc9-analysis-card'},h('h2',null,'Histórico do indicador de atraso'),h('p',{className:'sc9-view-help'},historical?'Histórico consolidado geral, combinado com a base atual. Ao aplicar dia, status ou produto, a consulta usa somente o recorte atual.':'Somente o recorte atual. Atraso de separação/conferência exclui a fila de faturamento. O complemento não comprova entrega no prazo.'),h(root.SC9View.Table,{items:[...rows].reverse(),caption:'Indicadores por dia de liberação',resetKey:String(historical),rowKey:row=>row.day,columns:[{key:'day',label:'Dia de liberação',render:row=>String(row.day).split('-').reverse().join('/')},{key:'total',label:'Pedidos',render:row=>number(row.total)},{key:'atrasados',label:'Atrasados · separação/conferência',render:row=>number(row.atrasados)},{key:'pctAtrasado',label:'% Atrasado',render:row=>number(row.pctAtrasado)+'%'},{key:'pctEmDia',label:'% Complementar',render:row=>number(row.pctEmDia)+'%'}]}));};
-  root.SC9AdminWorkspace=function Admin({page,users=[],activity=[],records=[],savedAt,canReview,children}){
+  function ReviewOrderSearch({ onSearch }) {
+    const [pedido, setPedido] = R.useState('');
+    const [consulta, setConsulta] = R.useState(null);
+    const [buscando, setBuscando] = R.useState(false);
+    async function submit(event) {
+      event.preventDefault();
+      const numero = pedido.trim();
+      if (!numero || buscando) return;
+      setBuscando(true);
+      setConsulta(null);
+      try {
+        const resultado = await onSearch(numero);
+        setConsulta({ numero, resultado });
+      } catch (error) {
+        setConsulta({ numero, erro: error.message });
+      } finally {
+        setBuscando(false);
+      }
+    }
+    const atual = consulta?.numero === pedido.trim() ? consulta : null;
+    const itens = atual?.resultado?.itens || [];
+    const rotulos = { pendente: 'Pendente de revisão', confirmada: 'Alteração confirmada', cancelada: 'Marcação cancelada' };
+    return h('div', { className: 'sc9-review-search' },
+      h('form', { className: 'sc9-view-filters', onSubmit: submit },
+        h('label', null, 'Buscar pedido original ou complemento',
+          h('input', { type: 'search', inputMode: 'numeric', maxLength: 24, placeholder: 'Número do pedido', value: pedido,
+            onChange: event => { setPedido(event.target.value); setConsulta(null); } })),
+        h('button', { type: 'submit', className: 'sc9-ui-button', disabled: buscando || !pedido.trim() },
+          buscando ? 'Buscando…' : 'Buscar pedido')),
+      atual?.erro && h('p', { role: 'alert', className: 'sc9-view-help' }, atual.erro),
+      atual?.resultado && h('div', { role: 'status' },
+        itens.length === 0 ? h('p', { className: 'sc9-view-help' }, 'Nenhuma alteração encontrada para o pedido ' + atual.resultado.pedido + ' nos registros disponíveis.') :
+          h('ul', { className: 'sc9-review-results', 'aria-label': 'Alterações do pedido' }, itens.map(item =>
+            h('li', { key: item.tipo + ':' + item.id },
+              h('strong', null, rotulos[item.status] || item.status),
+              h('span', null, (item.tipo === 'nota' ? 'Alteração por nota' : 'Alteração na separação') + ' · Pedido ' + item.pedido +
+                (item.complemento ? ' · Complemento ' + item.complemento : '')),
+              (item.data || item.responsavel) && h('span', null, [item.data ? dateTime(item.data) : '', item.responsavel].filter(Boolean).join(' · ')),
+              item.motivo && h('span', null, item.motivo))))));
+  }
+  root.SC9AdminWorkspace=function Admin({page,users=[],activity=[],records=[],savedAt,canReview,onSearchOrder,children}){
     const access=page==='acessos',movement=page==='movimentacao',metrics=access?[['Acessos de operadores',users.length],['Ativos',users.filter(user=>user.ativo).length],['Desativados',users.filter(user=>!user.ativo).length],['Pessoas com registros no Controle',activity.filter(row=>(Number(row.criados)||0)>0||(Number(row.confirmados)||0)>0).length]]:movement?[['Registros na base',records.length],['Com lote informado',records.filter(row=>String(row.lote||'').trim()).length],['Armazéns identificados',new Set(records.map(row=>row.armazem).filter(Boolean)).size]]:[];
-    return h('div',{className:'sc9-analysis-workspace sc9-admin-workspace sc9-admin-'+page},h('section',{className:'sc9-analysis-context','aria-label':'Contexto administrativo'},h('h2',null,access?'Gestão de acessos':movement?'Base de movimentação':'Revisão de alterações'),h('p',{className:'sc9-view-help'},access?'A gestão usa os usuários cadastrados no servidor. Os perfis selecionados determinam as telas disponíveis; a atividade abaixo se refere ao Controle 02 → 01.':movement?'Todos os armazéns da base de movimentação. Os filtros de pedidos das outras telas não se aplicam a estes registros. Base SC9 salva em: '+dateTime(savedAt):'As filas são carregadas do servidor e têm tratamentos diferentes. Os filtros do Resumo não redefinem estas pendências. As ações e confirmações permanecem nas respectivas seções.'),h('div',{className:'sc9-view-metrics'},metrics.map(([label,value])=>h('div',{className:'sc9-view-metric',key:label},h('span',null,label),h('strong',null,number(value))))),page==='alteracoes'&&h('nav',{className:'sc9-view-jumps','aria-label':'Seções da revisão'},h('a',{href:'#sc9-review-normal',className:'sc9-ui-button'},'Alteração na separação ↓'),canReview&&h('a',{href:'#sc9-review-invoiced',className:'sc9-ui-button'},'Alteração por nota ↓'),canReview&&h('a',{href:'#sc9-review-export',className:'sc9-ui-button'},'Exportar análise ↓'))),children);
+    return h('div',{className:'sc9-analysis-workspace sc9-admin-workspace sc9-admin-'+page},h('section',{className:'sc9-analysis-context','aria-label':'Contexto administrativo'},h('h2',null,access?'Gestão de acessos':movement?'Base de movimentação':'Revisão de alterações'),h('p',{className:'sc9-view-help'},access?'A gestão usa os usuários cadastrados no servidor. Os perfis selecionados determinam as telas disponíveis; a atividade abaixo se refere ao Controle 02 → 01.':movement?'Todos os armazéns da base de movimentação. Os filtros de pedidos das outras telas não se aplicam a estes registros. Base SC9 salva em: '+dateTime(savedAt):'As filas são carregadas do servidor e têm tratamentos diferentes. Os filtros do Resumo não redefinem estas pendências. As ações e confirmações permanecem nas respectivas seções.'),h('div',{className:'sc9-view-metrics'},metrics.map(([label,value])=>h('div',{className:'sc9-view-metric',key:label},h('span',null,label),h('strong',null,number(value))))),page==='alteracoes'&&canReview&&onSearchOrder&&h(ReviewOrderSearch,{onSearch:onSearchOrder}),page==='alteracoes'&&h('nav',{className:'sc9-view-jumps','aria-label':'Seções da revisão'},h('a',{href:'#sc9-review-normal',className:'sc9-ui-button'},'Alteração na separação ↓'),canReview&&h('a',{href:'#sc9-review-invoiced',className:'sc9-ui-button'},'Alteração por nota ↓'),canReview&&h('a',{href:'#sc9-review-export',className:'sc9-ui-button'},'Exportar análise ↓'))),children);
   };
 })(typeof window==='object'?window:globalThis);
