@@ -19,7 +19,7 @@ test('sem recebimentos o resumo não inventa percentual ou tempo médio',()=>{
  assert.doesNotMatch(JSON.stringify(tree),/NaN|0%/);assert.match(JSON.stringify(tree),/Nenhuma entrega aguardando/);
 });
 test('controle usa recebimento direto e conserva registros antigos somente como histórico',()=>{
- const source=fs.readFileSync(require.resolve('../bundle.js'),'utf8'),a=source.indexOf('ks=()=>React.createElement(window.SC9ReceiptControl,'),b=source.indexOf(';return React.createElement',a);assert(a>0&&b>a);let props;
+ const source=fs.readFileSync(require.resolve('../bundle.js'),'utf8'),a=source.indexOf('ks=()=>React.createElement(window.SC9ReceiptControl,'),b=source.indexOf(';',a);assert(a>0&&b>a);let props;
  vm.runInNewContext(source.slice(a+7,b),{React:{createElement:(component,value)=>{props=value;}},window:{SC9ReceiptControl:'new-control'},Me:{role:'operador',usuario:'pessoa'},$e:records,ka:{},wl:'scanner'});
  assert.strictEqual(props.legacyRecords,records);assert.equal(props.isAdmin,false);assert.equal(props.parseLot,'scanner');assert.equal(typeof props.readSD3,'function');assert(!source.includes('title:"Nova Transferência (02 → 01)"'));
 });

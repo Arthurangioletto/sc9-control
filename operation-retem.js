@@ -72,13 +72,17 @@
     });
   }
 
-  function Panel() {
-    return root.React.createElement("iframe", {
-      className: "sc9-retem-prototype",
-      title: "Conferência de lotes do Retem",
-      src: "/conferencia-de-lotes.html",
-      sandbox: "allow-scripts"
-    });
+  function Panel({ onBack }) {
+    const h = root.React.createElement;
+    return h('main', { className: 'sc9-retem-screen', 'aria-label': 'Retem – armazém 26' },
+      h('div', { className: 'sc9-retem-return' },
+        h('button', { type: 'button', onClick: onBack, autoFocus: true }, '← Voltar ao SC9')),
+      h('iframe', {
+        className: 'sc9-retem-prototype',
+        title: 'Conferência de lotes do Retem',
+        src: '/conferencia-de-lotes.html',
+        sandbox: 'allow-scripts'
+      }));
   }
 
   const api = { readTransfer, indexStock, compare, Panel };
