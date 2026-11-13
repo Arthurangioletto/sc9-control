@@ -240,6 +240,55 @@
     return result;
   }
 
-  root.SC9RetemInventory = { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer };
+
+  const calendar = new Intl.DateTimeFormat('en-CA', {timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'});
+
+  function expiryStatus(value, today = calendar.format(new Date())) {
+    const date = validity(text(value));
+    if (!date) return 'Sem validade informada';
+    if (date < today) return 'Vencido';
+    if (date === today) return 'Vence hoje';
+    return 'Dentro da validade';
+  }
+
+  // SheetJS Community Edition does not write cell fills. Add the style to the generated XLSX.
+  function highlightExpiredWorkbook(bytes, xlsx, sheets) {
+    if (!sheets.some(rows => rows.length)) return bytes;
+    const zip = xlsx.CFB.read(new Uint8Array(bytes), {type:'array'});
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    function update(path, edit) {
+      const entry = xlsx.CFB.find(zip, "/"+path);
+      if (!entry) throw Error('Não foi possível formatar a planilha de vencidos.');
+      const data = encoder.encode(edit(decoder.decode(entry.content)));
+      entry.content = data;
+      entry.size = data.length;
+    }
+    let fillId, fontId, styleId;
+    function append(xml, tag, child, setIndex) {
+      return xml.replace(new RegExp('<'+tag+' count="(\\d+)">([\\s\\S]*?)</'+tag+'>'), (_, count, body) => {
+        setIndex(Number(count));
+        return '<'+tag+' count="'+(Number(count)+1)+'">'+body+child+'</'+tag+'>';
+      });
+    }
+    update('xl/styles.xml', xml => {
+      xml=append(xml,'fills','<fill><patternFill patternType="solid"><fgColor rgb="FFB91C1C"/><bgColor indexed="64"/></patternFill></fill>',id=>{fillId=id});
+      xml=append(xml,'fonts','<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>',id=>{fontId=id});
+      return append(xml,'cellXfs','<xf numFmtId="0" fontId="'+fontId+'" fillId="'+fillId+'" borderId="0" xfId="0" applyFont="1" applyFill="1"/>',id=>{styleId=id});
+    });
+    if (styleId === undefined) throw Error('Não foi possível aplicar o destaque de validade no Excel.');
+    sheets.forEach((rows,index)=>{
+      if (!rows.length) return;
+      const highlighted = new Set([1,...rows]);
+      update('xl/worksheets/sheet'+(index+1)+'.xml', xml => xml.replace(/<c\b[^>]*\br="[A-Z]+(\d+)"[^>]*>/g, (cell,row) => {
+        if (!highlighted.has(Number(row))) return cell;
+        const plain = cell.replace(/ s="\d+"/,'');
+        return plain.replace(/(\/?>)$/, ' s="'+styleId+'"$1');
+      }));
+    });
+    return xlsx.CFB.write(zip,{type:'array',fileType:'zip',compression:true});
+  }
+
+  root.SC9RetemInventory = { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus, highlightExpiredWorkbook };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9RetemInventory;
 })(typeof window === 'object' ? window : globalThis);
