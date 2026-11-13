@@ -81,7 +81,7 @@
         className: 'sc9-retem-prototype',
         title: 'Conferência de lotes do Retem',
         src: '/conferencia-de-lotes.html',
-        sandbox: 'allow-scripts'
+        sandbox: 'allow-scripts allow-downloads allow-forms'
       }));
   }
 
