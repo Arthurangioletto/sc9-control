@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { read, findInventoryScan, template, savePartial, readPartial } = require('../retem-inventory');
+const { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer } = require('../retem-inventory');
 
 test('Retem cruza SB8, ZZ2 e SB1 sem misturar filiais, armazéns ou lotes', () => {
   const sheets = {
@@ -58,4 +58,30 @@ test('salvar e restaurar mantém a contagem e separa o mesmo lote por filial', (
   assert.throws(() => readPartial(savePartial('base.xlsx',[item,item])), /inválidos/);
   assert.throws(() => readPartial(savePartial('base.xlsx',[{...item,validade:'2027-99-14'}])), /inválidos/);
   assert.throws(() => readPartial('sem JSON'), /inválido/);
+});
+
+test('documento retomado preserva ordem, saldo, endereço e bipagem', () => {
+  const base = [{id:'a',filial:'01',lote:'L1',conferido:0,avaria:0},{id:'b',filial:'02',lote:'L2',conferido:0,avaria:0}];
+  const saved = records([base[0],{...base[1],conferido:1,bipado:true,endereco:'B26'}]);
+  assert.equal(saved.length,1);
+  const restored = restore(base,saved);
+  assert.deepEqual(restored.map(row=>row.id),['b','a']);
+  assert.equal(restored[0].conferido,1);
+  assert.equal(restored[0].bipado,true);
+  assert.equal(restored[0].endereco,'B26');
+});
+
+test('comparativo exige duas pontas no mesmo documento e sinaliza diferenças e sobras', () => {
+  const expected = [{produto:'P01',lote:'00123',origem:'26',destino:'01',qtd:2}];
+  const common = {produto:'P01',lote:'123',filial:'01',dt:'2026-11-14',doc:'T001',qt:2};
+  const out = {...common,tp:999,cf:'RE4',armazem:'26'};
+  const incoming = {...common,tp:499,cf:'DE4',armazem:'01'};
+  assert.equal(compareTransfer(expected,[out,incoming],{documento:'T001'})[0].situacao,'confere');
+  assert.equal(compareTransfer(expected,[out,{...incoming,doc:'T002'}])[0].situacao,'divergente');
+  assert.equal(compareTransfer(expected,[out,{...incoming,estornado:true}])[0].entradaSd3,0);
+  assert.equal(compareTransfer(expected,[out,{...incoming,qt:1}])[0].situacao,'divergente');
+  assert.equal(compareTransfer(expected,[out,incoming],{filial:'02'})[0].situacao,'nao_encontrado');
+  const rows = compareTransfer(expected,[out,incoming,{...out,produto:'OUTRO'}],{documento:'T001'});
+  assert.deepEqual(rows.map(row=>row.situacao),['confere','divergente']);
+  assert.equal(rows[1].qtdDocumento,0);
 });

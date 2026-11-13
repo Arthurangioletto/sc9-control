@@ -144,6 +144,102 @@
     return { arquivo: data.arquivo, items, lotCount: lots.size };
   }
 
-  root.SC9RetemInventory = { read, findInventoryScan, template, savePartial, readPartial };
+  function records(items) {
+    return items.filter(item => item.conferido || item.avaria).map(item => ({
+      ...item, itemId: item.id, loteId: JSON.stringify([item.filial, item.lote]),
+      loteProduto: item.lote, fornecedor: 'Filial ' + item.filial, nf: '—', doca: '—', placa: '—', chegada: '—'
+    }));
+  }
+
+  function restore(base, saved) {
+    const recorded = new Set(saved.map(item => item.id));
+    return [...saved, ...base.filter(item => !recorded.has(item.id))];
+  }
+
+  function compareTransfer(lines, movements, { filial = '', documento = '' } = {}) {
+    const amountEqual = (a, b) => Math.abs(a - b) < 1e-8;
+    const expected = new Map();
+    for (const row of lines) {
+      const produto = code(row.produto), lote = scope(row.lote);
+      const origem = scope(row.origem), destino = scope(row.destino);
+      if (!produto || !lote || !origem || !destino || origem === destino || !Number.isFinite(row.qtd) || row.qtd <= 0) {
+        throw Error('O documento precisa de produto, lote, origem, destino diferente e quantidade positiva em cada linha.');
+      }
+      const id = key(produto, lote, origem, destino);
+      const previous = expected.get(id);
+      expected.set(id, { ...row, qtd: (previous?.qtd || 0) + row.qtd });
+    }
+
+    const index = new Map();
+    for (const row of movements) {
+      if (![499,999].includes(row.tp) || row.estornado || row.qt <= 0 || (filial && scope(row.filial) !== scope(filial)) ||
+          (documento && scope(row.doc) !== scope(documento))) continue;
+      if (row.cf && row.cf !== (row.tp === 999 ? 'RE4' : 'DE4')) continue;
+      const id = key(code(row.produto), scope(row.lote));
+      if (!index.has(id)) index.set(id, []);
+      index.get(id).push(row);
+    }
+
+    const routesByItem = new Map();
+    for (const row of expected.values()) {
+      const id = key(code(row.produto), scope(row.lote));
+      if (!routesByItem.has(id)) routesByItem.set(id, []);
+      routesByItem.get(id).push(row);
+    }
+
+    const result = [...expected.values()].map(row => {
+      const id = key(code(row.produto), scope(row.lote));
+      const routes = routesByItem.get(id);
+      const origin = scope(row.origem), destination = scope(row.destino);
+      const groups = new Map();
+      const branches = new Set();
+      for (const move of index.get(id) || []) {
+        const local = scope(move.armazem);
+        if (move.tp === 999 ? local !== origin : local !== destination) continue;
+        const groupId = key(move.filial, move.dt, move.doc);
+        if (!groups.has(groupId)) groups.set(groupId, { out:0, incoming:0, doc:move.doc });
+        const group = groups.get(groupId);
+        if (move.tp === 999) group.out += move.qt;
+        else group.incoming += move.qt;
+        branches.add(move.filial);
+      }
+      const groupsFound = [...groups.values()];
+      const saidaSd3 = groupsFound.reduce((sum, group) => sum + group.out, 0);
+      const entradaSd3 = groupsFound.reduce((sum, group) => sum + group.incoming, 0);
+      const sharedRoute = routes.some(other => other !== row && (scope(other.origem) === origin || scope(other.destino) === destination));
+      const matched = !sharedRoute && branches.size === 1 && groupsFound.every(group => amountEqual(group.out, group.incoming)) &&
+        amountEqual(saidaSd3, row.qtd) && amountEqual(entradaSd3, row.qtd);
+      const detalhe = branches.size > 1 ? 'Há movimentos em mais de uma filial. Informe a filial.' :
+        sharedRoute ? 'O produto e lote têm rotas que compartilham uma ponta. Separe os documentos por rota.' :
+        groupsFound.some(group => !amountEqual(group.out, group.incoming)) ? 'Há saída e entrada sem par no mesmo documento, filial e data.' : '';
+      return {
+        produto: row.produto, lote: row.lote, origem: row.origem, destino: row.destino,
+        qtdDocumento: row.qtd, saidaSd3, entradaSd3, detalhe,
+        situacao: matched ? 'confere' : groupsFound.length ? 'divergente' : 'nao_encontrado',
+        documentosSd3: [...new Set(groupsFound.map(group => group.doc))], outrosLotes: []
+      };
+    });
+    const routes = [...new Map([...expected.values()].map(row => [
+      key(scope(row.origem), scope(row.destino)), { origem:row.origem, destino:row.destino }
+    ])).values()];
+    if (documento && routes.length === 1) {
+      const { origem, destino } = routes[0];
+      for (const [id, moves] of index) {
+        if (routesByItem.has(id)) continue;
+        const onRoute = moves.filter(move => scope(move.armazem) === scope(move.tp === 999 ? origem : destino));
+        if (!onRoute.length) continue;
+        result.push({
+          produto:onRoute[0].produto,lote:onRoute[0].lote,origem,destino,qtdDocumento:0,
+          saidaSd3:onRoute.filter(move=>move.tp===999).reduce((sum,move)=>sum+move.qt,0),
+          entradaSd3:onRoute.filter(move=>move.tp===499).reduce((sum,move)=>sum+move.qt,0),
+          situacao:'divergente',detalhe:'Produto e lote presentes no SD3 e ausentes na planilha da transferência.',
+          documentosSd3:[...new Set(onRoute.map(move=>move.doc))],outrosLotes:[]
+        });
+      }
+    }
+    return result;
+  }
+
+  root.SC9RetemInventory = { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9RetemInventory;
 })(typeof window === 'object' ? window : globalThis);
