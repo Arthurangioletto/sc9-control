@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer } = require('../retem-inventory');
+const { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus } = require('../retem-inventory');
 
 test('Retem cruza SB8, ZZ2 e SB1 sem misturar filiais, armazéns ou lotes', () => {
   const sheets = {
@@ -84,4 +84,11 @@ test('comparativo exige duas pontas no mesmo documento e sinaliza diferenças e 
   const rows = compareTransfer(expected,[out,incoming,{...out,produto:'OUTRO'}],{documento:'T001'});
   assert.deepEqual(rows.map(row=>row.situacao),['confere','divergente']);
   assert.equal(rows[1].qtdDocumento,0);
+});
+
+test('validade diferencia vencido, vencimento no dia e data ausente', () => {
+  assert.equal(expiryStatus('2026-11-12','2026-11-13'),'Vencido');
+  assert.equal(expiryStatus('2026-11-13','2026-11-13'),'Vence hoje');
+  assert.equal(expiryStatus('2026-11-14','2026-11-13'),'Dentro da validade');
+  assert.equal(expiryStatus('','2026-11-13'),'Sem validade informada');
 });
