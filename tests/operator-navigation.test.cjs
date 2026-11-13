@@ -4,9 +4,10 @@ test('menu real exige perfil específico de Alterações',()=>{
   const start=bundle.indexOf('Vo=['),end=bundle.indexOf(',Ma=',start);
   assert(start>=0&&end>start);
   const expression=bundle.slice(start+3,end);
-  const tabs=flags=>Array.from(vm.runInNewContext(expression,{Yt:false,oe:false,Ve:false,Mt:false,Ae:false,ee:false,...flags}),x=>x[0]);
+  const tabs=flags=>Array.from(vm.runInNewContext(expression,{Yt:false,oe:false,Ve:false,Mt:false,Ae:false,ee:false,sc9Tr:false,...flags}),x=>x[0]);
   assert.deepEqual(tabs({oe:true,ee:true}),['saida','cadastro_sb8']);
   assert.deepEqual(tabs({Yt:true}),['geral']);
   assert.deepEqual(tabs({Mt:true}),['controle','retem26']);
   assert.deepEqual(tabs({Ae:true}),['alteracoes_sep']);
+  assert.deepEqual(tabs({sc9Tr:true}),['transferencia']);
 });
