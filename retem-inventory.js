@@ -97,6 +97,53 @@
     const matches = items.filter(item => [item.lote, item.sku, item.ean].some(value => code(value) === input));
     return matches.length === 1 ? { item: matches[0] } : { ambiguous: matches.length > 1 };
   }
-  root.SC9RetemInventory = { read, findInventoryScan };
+  function template(xlsx) {
+    const book = xlsx.utils.book_new();
+    const headers = {
+      SB8: ['Filial', 'Produto', 'Armazem', 'Data Validad', 'Saldo Lote', 'Lote'],
+      ZZ2: ['Filial', 'Armazem', 'Endereco', 'Produto', 'Lote'],
+      SB1: ['Filial', 'Codigo', 'Descricao', 'Unidade', 'Cod Barras']
+    };
+    for (const [name, columns] of Object.entries(headers)) {
+      xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet([columns]), name);
+    }
+    return xlsx.write(book, { bookType: 'xlsx', type: 'array' });
+  }
+
+  function savePartial(arquivo, items) {
+    return JSON.stringify({ format: 'sc9-retem-parcial', version: 1, arquivo, items });
+  }
+
+  function readPartial(source) {
+    let data;
+    try {
+      data = JSON.parse(source);
+    } catch {
+      throw Error('O arquivo de conferência parcial está inválido.');
+    }
+    const ids = new Set();
+    const lots = new Set();
+    const textFields = ['id', 'filial', 'lote', 'sku', 'ean', 'descricao', 'validade', 'endereco', 'unidade'];
+    const items = data?.items;
+    if (data?.format !== 'sc9-retem-parcial' || data.version !== 1 ||
+        typeof data.arquivo !== 'string' || !Array.isArray(items) || !items.length) {
+      throw Error('Selecione um arquivo salvo em Salvar parcial no Retem.');
+    }
+    for (const item of items) {
+      if (!item || textFields.some(field => typeof item[field] !== 'string') ||
+          !item.id || !item.filial || !item.lote || !item.sku || ids.has(item.id) ||
+          !Number.isFinite(item.esperado) || item.esperado <= 0 ||
+          !Number.isFinite(item.conferido) || item.conferido < 0 ||
+          !Number.isFinite(item.avaria) || item.avaria < 0 ||
+          (item.validade && validity(item.validade) !== item.validade)) {
+        throw Error('O arquivo de conferência parcial contém itens inválidos.');
+      }
+      ids.add(item.id);
+      lots.add(key(item.filial, item.lote));
+    }
+    return { arquivo: data.arquivo, items, lotCount: lots.size };
+  }
+
+  root.SC9RetemInventory = { read, findInventoryScan, template, savePartial, readPartial };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9RetemInventory;
 })(typeof window === 'object' ? window : globalThis);
