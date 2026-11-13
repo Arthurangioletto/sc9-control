@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { read, findScan } = require('../retem-inventory');
+const { read, findInventoryScan } = require('../retem-inventory');
 
 test('Retem cruza SB8, ZZ2 e SB1 sem misturar filiais, armazéns ou lotes', () => {
   const sheets = {
@@ -20,10 +20,18 @@ test('Retem cruza SB8, ZZ2 e SB1 sem misturar filiais, armazéns ou lotes', () =
   assert.deepEqual(lots.map(lot => lot.itens[0].endereco), ['AA26', 'BB26']);
   assert.equal(lots[0].itens[0].esperado, 2);
   assert.equal(lots[0].itens[0].validade, '2027-08-14');
-  assert.equal(findScan(lots, null, '000123').ambiguous, true);
-  assert.equal(findScan(lots, lots[1].id, '000123').item.endereco, 'BB26');
-  assert.equal(findScan(lots, lots[0].id, '7891234567890').item.descricao, 'Produto');
   sheets.ZZ2.splice(1, 1);
   assert.equal(read(book, xlsx)[0].itens[0].endereco, 'OUTRO (Arm. 01)');
   assert.throws(() => read({ ...book, SheetNames: ['SB8', 'SB1'] }, xlsx), /ZZ2/);
+});
+
+test('bipagem unificada encontra qualquer linha e não aloca códigos ambíguos', () => {
+  const first = { lote: '000123', sku: 'P01', ean: '7891234567890' };
+  const second = { lote: '000124', sku: 'P02', ean: '7891234567891' };
+  assert.equal(findInventoryScan([first, second], '000124').item, second);
+  assert.equal(findInventoryScan([first, second], '7891234567891').item, second);
+  assert.equal(findInventoryScan([first, second], 'p02').item, second);
+  assert.deepEqual(findInventoryScan([first, { ...second, lote: first.lote }], first.lote), { ambiguous: true });
+  assert.deepEqual(findInventoryScan([first, { ...second, sku: first.sku }], first.sku), { ambiguous: true });
+  assert.deepEqual(findInventoryScan([first, second], 'inexistente'), { ambiguous: false });
 });
