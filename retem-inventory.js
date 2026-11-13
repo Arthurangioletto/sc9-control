@@ -91,17 +91,12 @@
     })).filter(group => group.itens.length);
   }
 
-  function findScan(lots, selected, value) {
+  function findInventoryScan(items, value) {
     const input = code(value);
-    const lotMatches = lots.filter(group => code(group.lote) === input);
-    if (lotMatches.length) {
-      const group = lotMatches.find(group => group.id === selected) || (lotMatches.length === 1 ? lotMatches[0] : null);
-      return group?.itens.length === 1 ? { group, item: group.itens[0] } : { group, ambiguous: true };
-    }
-    const group = lots.find(group => group.id === selected);
-    const items = group?.itens.filter(item => code(item.sku) === input || code(item.ean) === input) || [];
-    return items.length === 1 ? { group, item: items[0] } : { ambiguous: items.length > 1 };
+    if (!input) return { ambiguous: false };
+    const matches = items.filter(item => [item.lote, item.sku, item.ean].some(value => code(value) === input));
+    return matches.length === 1 ? { item: matches[0] } : { ambiguous: matches.length > 1 };
   }
-  root.SC9RetemInventory = { read, findScan };
+  root.SC9RetemInventory = { read, findInventoryScan };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9RetemInventory;
 })(typeof window === 'object' ? window : globalThis);
