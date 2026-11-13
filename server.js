@@ -374,6 +374,7 @@ SERVABLE.add("receiving-control.js");
 SERVABLE.add("receiving-ui.js");
 SERVABLE.add("operation-retem.js");
 SERVABLE.add("conferencia-de-lotes.html");
+SERVABLE.add("retem-inventory.js");
 SERVABLE.add("export-workbook.js");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");
@@ -387,7 +388,7 @@ function serveStatic(req, res, urlPath) {
     if (err) { res.writeHead(404); return res.end("não encontrado"); }
     const cabecalhos = { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache", "ETag": e.etag, "Vary": "Accept-Encoding" };
     if (name === "conferencia-de-lotes.html") {
-      cabecalhos["Content-Security-Policy"] = "sandbox allow-scripts; frame-ancestors 'self'; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com";
+      cabecalhos["Content-Security-Policy"] = "sandbox allow-scripts; frame-ancestors 'self'; default-src 'none'; script-src 'unsafe-inline' 'self' https://cdn.sheetjs.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com";
     }
     if (String(req.headers["if-none-match"] || "").split(",").map((x) => x.trim()).includes(e.etag)) {
       res.writeHead(304, { "ETag": e.etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding" });
