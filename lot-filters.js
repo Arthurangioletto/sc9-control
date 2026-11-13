@@ -185,8 +185,9 @@
           Array.from({ length: info.pages }, (_, i) => h('option', { key: i, value: i }, fmt(i + 1)))), ' de ' + fmt(info.pages)),
         h('button', { type: 'button', disabled: info.page === info.pages - 1, onClick: () => onPage(info.page + 1), 'aria-label': 'Próxima página de ' + label }, 'Próxima')));
   }
-  function List({ items, renderItem, target, resetKey, size = 25, label = 'lotes', renderPage, hideSingleControls = false }) {
+  function List({ items, renderItem, target, resetKey, size = 25, label = 'lotes', renderPage, hideSingleControls = false, filter }) {
     const R = root.React, h = R.createElement;
+    items = R.useMemo(() => filter ? items.filter(filter) : items, [items, filter]);
     const [position, setPosition] = R.useState(() => ({ key: resetKey, page: targetPage(items, target, size) || 0 }));
     const [lastTarget, setLastTarget] = R.useState(target);
     let page = position.key === resetKey ? position.page : 0;
