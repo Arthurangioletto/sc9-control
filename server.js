@@ -375,6 +375,7 @@ SERVABLE.add("receiving-ui.js");
 SERVABLE.add("operation-retem.js");
 SERVABLE.add("conferencia-de-lotes.html");
 SERVABLE.add("retem-inventory.js");
+SERVABLE.add("retem-document-storage.js");
 SERVABLE.add("export-workbook.js");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");
