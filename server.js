@@ -153,7 +153,7 @@ if (!process.env.SESSION_SECRET) {
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho"];
+const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho", "transferencia"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -376,6 +376,10 @@ SERVABLE.add("operation-retem.js");
 SERVABLE.add("conferencia-de-lotes.html");
 SERVABLE.add("retem-inventory.js");
 SERVABLE.add("retem-document-storage.js");
+SERVABLE.add("operation-transferencia.js");
+SERVABLE.add("transferencia-de-lotes.html");
+SERVABLE.add("transferencia-inventory.js");
+SERVABLE.add("transferencia-document-storage.js");
 SERVABLE.add("export-workbook.js");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");
@@ -388,7 +392,7 @@ function serveStatic(req, res, urlPath) {
   carregarEstatico(name, (err, e) => {
     if (err) { res.writeHead(404); return res.end("não encontrado"); }
     const cabecalhos = { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache", "ETag": e.etag, "Vary": "Accept-Encoding" };
-    if (name === "conferencia-de-lotes.html") {
+    if (name === "conferencia-de-lotes.html" || name === "transferencia-de-lotes.html") {
       cabecalhos["Content-Security-Policy"] = "sandbox allow-scripts allow-downloads allow-forms; form-action 'none'; frame-ancestors 'self'; default-src 'none'; script-src 'unsafe-inline' 'self' https://cdn.sheetjs.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com";
     }
     if (String(req.headers["if-none-match"] || "").split(",").map((x) => x.trim()).includes(e.etag)) {

@@ -133,7 +133,7 @@ Em hospedagem com disco efêmero, use armazenamento persistente para conservar o
 
 ## Acessos e dados
 
-O sistema possui administrador e usuários com combinações dos perfis `geral`, `controle0201`, `saida`, `alteracoes`, `cadastro`, `recebimento` e `despacho`. A autorização é aplicada no servidor; a navegação acompanha o acesso permitido.
+O sistema possui administrador e usuários com combinações dos perfis `geral`, `controle0201`, `saida`, `alteracoes`, `cadastro`, `recebimento`, `despacho` e `transferencia`. A autorização é aplicada no servidor; a navegação acompanha o acesso permitido.
 
 - As credenciais de serviço do Supabase devem permanecer no ambiente do servidor.
 - Planilhas reais, arquivos de `data/`, backups e credenciais devem ficar fora dos commits.
@@ -269,3 +269,13 @@ Validação da revisão de exportações: botão Excel de atrasados executado a 
 ## Transportadora nas exportações de pedidos
 
 As planilhas geradas a partir de listas de pedidos (atrasados, em aberto, enviados, pedidos críticos, atraso de faturamento, faturados sem despacho e demais listas do recorte) ganharam a coluna **Transportadora**, logo depois do Cliente. O nome vem do SC5 (código → Brasil, São Paulo, Retira 01–04, Emergência; códigos ainda sem nome aparecem como "Código N"), com a coluna do próprio SC9 como alternativa; sem informação, aparece "Não informada". As exportações de Saída, Recebimento e Coleta por transportadora já traziam essa informação.
+
+## Transferência (aba por perfil)
+
+Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
+
+- Lê o SB8 de **todos os armazéns** (59, ES, 26, 01…) e guarda o armazém de cada peça; o saldo repetido de mesmo produto, lote e armazém é aglutinado.
+- Bipar o mesmo lote várias vezes **soma** a quantidade e nunca trava; passou do saldo do SB8 só aparece o aviso. Se o lote está em mais de um armazém, o bip vai primeiro para o 59, depois ES, depois os demais (com a quantidade ainda por conferir).
+- A quantidade conferida pode ser **editada direto** na tabela.
+- Na exportação "Transferência múltipla" a coluna Origem é o armazém do SB8 de cada peça; o destino continua sendo escolhido na tela Documentos (padrão 01). A aba Resumo ganha a coluna Armazém.
+- Documentos ficam num armazenamento separado do Retem (`sc9-transferencia`, ids `TRF-000001`).
