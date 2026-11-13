@@ -26,12 +26,12 @@ test('busca abre o lote correto e eventos reabrem caixas recolhidas',()=>{
  env.listeners.get('sc9-focus-lot')({detail:'L1'});assert.equal(env.render().props.children[1].props.hidden,false);
 });
 test('outras análises recebem o cartão original sem recolhimento',()=>{const env=setup();assert.strictEqual(env.render(false),env.original);});
-test('a configuração real usa dez lotes apenas em produtos duplicados e remove os três blocos',()=>{
+test('a configuração real pagina as filas de revisão em cinco registros e remove os três blocos',()=>{
  const bundle=fs.readFileSync(path.join(__dirname,'..','bundle.js'),'utf8');
- assert.match(bundle,/items:Ya,size:10,/);
- assert.match(bundle,/items:U,size:sc9Analysis==="duplicado"\?10:25,/);
- assert.match(bundle,/items:Ta,size:sc9Analysis==="duplicado"\?10:25,/);
- assert.match(bundle,/items:jt,renderItem:/);
+ assert.match(bundle,/items:Ya,size:5,/);
+ assert.match(bundle,/items:U,size:5,renderPage:/);
+ assert.match(bundle,/items:Ta,size:5,renderPage:/);
+ assert.match(bundle,/items:jt,size:5,renderPage:/);
  assert.doesNotMatch(bundle,/React\.createElement\(window\.SC9LotFilters\.CoverageNotice,/);
  assert.doesNotMatch(bundle,/📋 Mostrando achados salvos/);
  assert.doesNotMatch(bundle,/rot:"Lote duplicado c\/ saldo"/);

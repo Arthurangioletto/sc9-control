@@ -44,7 +44,7 @@
       h('section',{className:'sc9-detail-section'},h('div',{className:'sc9-detail-section-heading'},h('h3',null,'Lotes do produto'),h('span',null,fmt(items.length)+(items.length===1?' registro':' registros'))),
         items.length?h(root.SC9Paging.List,{items,target,size:10,resetKey:product+'|'+items.length,label:'registros do produto',hideSingleControls:true,renderItem:(row,i)=>lotRecord(row,i,renderActions)}):h('p',{className:'sc9-detail-empty',role:'status'},'Não há registros deste produto no recorte atual. As marcações e finalizações podem alterar os itens exibidos.')));
   }
-  function ProductCard({product,description,items,target,renderActions,onOpen}){
+  function ProductCard({product,description,items,target,renderActions,onOpen,embedded=false}){
     const R=root.React,h=R.createElement,hasLot=lot=>items.some(r=>String(r.lote||'').trim().toUpperCase()===String(lot||'').trim().toUpperCase());
     const [open,setOpen]=R.useState(()=>!!target&&hasLot(target)),id=R.useId();
     R.useEffect(()=>{if(target&&hasLot(target))setOpen(true);},[target,items]);
@@ -52,6 +52,12 @@
     const fmt=v=>Number(v||0).toLocaleString('pt-BR'),totals=summarize(items),expired=items.filter(r=>r.expiredDays>0),upcoming=items.filter(r=>r.expiredDays<=0),oldest=items[0];
     const timing=r=>r.expiredDays>0?'Vencido há '+fmt(r.expiredDays)+' dias':r.expiredDays===0?'Vence hoje':'Vence em '+fmt(-r.expiredDays)+' dias';
     const record=(r,i)=>lotRecord(r,i,renderActions);
+
+if(embedded)return h('article',{className:'sc9-lots-v4-detail','aria-label':'Produto '+product},
+      h('div',{className:'sc9-lots-v4-detail-head'},h('h2',null,'Produto '+product),h('p',null,description),
+        h('p',null,fmt(totals.lots)+' lote(s) · '+fmt(items.length)+' registro(s)'),
+        onOpen&&h('button',{type:'button',className:'sc9-ui-button',onClick:()=>onOpen({product,description})},'Ver ficha')),
+      h('div',{className:'sc9-lots-v4-detail-body'},h(root.SC9Paging.List,{items,renderItem:record,size:10,target,resetKey:product+'|'+items.length,label:'registros deste produto',hideSingleControls:true})));
     return h('section',{className:'sc9-exp-product-card','aria-label':'Produto '+product},
       h('div',{className:'sc9-exp-product-heading'},h('button',{type:'button',className:'sc9-exp-product-toggle','aria-expanded':open,'aria-controls':id,onClick:()=>setOpen(v=>!v)},
         h('div',{className:'sc9-exp-product-identity'},h('span',{className:'sc9-exp-product-code'},'Produto '+product),h('h3',null,description),h('div',{className:'sc9-exp-product-summary'},h('span',null,fmt(totals.lots)+' lote(s) · '+fmt(items.length)+' registro(s)'),expired.length>0&&h('span',null,fmt(summarize(expired).units)+' un. vencidas'),upcoming.length>0&&h('span',null,fmt(summarize(upcoming).units)+' un. a vencer'))),
@@ -88,9 +94,9 @@
     const details=selectedProductDetails(groups,selected);
     R.useEffect(()=>setPage(0),[year,month,band,future,filial,warehouse,state]);
     R.useEffect(()=>setState(''),[filial]);
-    R.useEffect(()=>{const focus=event=>{const found=productTargetPage(groups,event.detail);if(found!==null)setPage(found);};root.addEventListener('sc9-focus-lot',focus);return()=>root.removeEventListener('sc9-focus-lot',focus);},[groups]);
-    R.useEffect(()=>{const found=productTargetPage(groups,target);if(found!==null)setPage(found);},[groups,target]);
-    const info=root.SC9Paging.pageInfo(groups.length,page,10),pageGroups=groups.slice(info.start,info.end);
+    R.useEffect(()=>{const focus=event=>{const found=productTargetPage(groups,event.detail,5);if(found!==null)setPage(found);};root.addEventListener('sc9-focus-lot',focus);return()=>root.removeEventListener('sc9-focus-lot',focus);},[groups]);
+    R.useEffect(()=>{const found=productTargetPage(groups,target,5);if(found!==null)setPage(found);},[groups,target]);
+    const info=root.SC9Paging.pageInfo(groups.length,page,5),pageGroups=groups.slice(info.start,info.end);
     const fmt=v=>Number(v||0).toLocaleString('pt-BR'),label=v=>v?String(v).padStart(2,'0'):'Não informado';
     const branchName=v=>(BRANCHES.find(([c])=>c===code(v))||[v,'Filial '+label(v)])[1];
     const warehouses=root.SC9LotFilters.warehouses(inventory,saved,filial).filter(arm=>code(arm)!=='16');
@@ -112,7 +118,7 @@
       !visible.length&&h('p',{className:'sc9-exp-empty'},'Nenhum registro encontrado para esses filtros.'),
       h('div',{className:'sc9-exp-results-heading'},h('div',null,h('h3',null,'Produtos no recorte'),h('p',null,fmt(groups.length)+(groups.length===1?' produto':' produtos')+' · '+fmt(visible.length)+(visible.length===1?' registro':' registros'))),h('div',{className:'sc9-exp-view-switch',role:'group','aria-label':'Visualização dos resultados'},h('button',{type:'button','aria-pressed':view==='cards',onClick:()=>setView('cards')},'Cards'),h('button',{type:'button','aria-pressed':view==='table',onClick:()=>setView('table')},'Tabela'))),
       h('div',{className:'sc9-exp-active-filters','aria-label':'Recorte aplicado'},filters.map((text,i)=>h('span',{key:i},text)),state&&h('button',{type:'button',onClick:()=>setState('')},'Limpar estado')),
-      view==='cards'?h(root.React.Fragment,null,h(root.SC9Paging.Controls,{info,onPage:setPage,label:groups.length===1?'produto':'produtos'}),h('div',{className:'sc9-exp-products'},pageGroups.map(item=>h(ProductCard,{key:item.product,...item,target,renderActions,onOpen:setSelected}))),info.pages>1&&h(root.SC9Paging.Controls,{info,onPage:setPage,label:'produtos'})):h(RecordTable,{items:visible,target,renderActions,onOpen:setSelected}),
+      view==='cards'?h(root.React.Fragment,null,h(root.SC9Paging.Controls,{info,onPage:setPage,label:groups.length===1?'produto':'produtos'}),h(root.SC9LotQueue,{items:pageGroups,target,byProduct:true,renderItem:item=>h(ProductCard,{key:item.product,...item,target,renderActions,onOpen:setSelected,embedded:true})}),info.pages>1&&h(root.SC9Paging.Controls,{info,onPage:setPage,label:'produtos'})):h(RecordTable,{items:visible,target,renderActions,onOpen:setSelected}),
       details&&h(ProductDrawer,{...details,filters,position,renderActions,onClose:()=>setSelected(null)}));
   }
 
