@@ -4,6 +4,11 @@
   const scope = value => code(value).replace(/^0+(?=\d+$)/, '');
   const header = value => code(value).normalize('NFD').replace(/[\u0300-\u036f]|[^A-Z0-9]/g, '');
   const key = (...parts) => JSON.stringify(parts);
+  const stockColumns = {
+    filial: ['FILIAL','B8FILIAL'], arm: ['ARMAZEM','B8LOCAL'],
+    sku: ['PRODUTO','B8PRODUTO'], lote: ['LOTE','B8LOTECTL'],
+    saldo: ['SALDOLOTE','SALDO','B8SALDO']
+  };
 
   function sheetRows(book, xlsx, name, columns, optional = []) {
     const sheetName = book.SheetNames.find(value => header(value) === name);
@@ -15,7 +20,7 @@
       if (positions.some(([field, indexes]) => !indexes.length && !optional.includes(field))) continue;
       return rows.slice(i + 1).map(row => Object.fromEntries(positions.map(([field, indexes]) => {
         const value = indexes.map(index => row[index]).find(value => text(value));
-        return [field, field === 'validade' ? validity(value, xlsx) : text(value)];
+        return [field, field === 'validade' || field === 'fabricacao' ? validity(value, xlsx) : text(value)];
       })));
     }
     throw Error('Confira os cabeçalhos da aba ' + name + '.');
@@ -24,35 +29,24 @@
   function validity(value, xlsx) {
     const raw = text(value);
     if (!raw) return '';
-    const serial = typeof value === 'number' ? xlsx.SSF.parse_date_code(value) : null;
+    const compact = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    const serial = !compact && typeof value === 'number' ? xlsx.SSF.parse_date_code(value) : null;
     const brazil = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     const iso = serial
       ? [serial.y, serial.m, serial.d].map(n => String(n).padStart(2, '0')).join('-')
-      : brazil ? [brazil[3], brazil[2], brazil[1]].join('-') : raw.slice(0, 10);
+      : compact ? compact.slice(1).join('-') : brazil ? [brazil[3], brazil[2], brazil[1]].join('-') : raw.slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
     const date = new Date(iso + 'T00:00:00Z');
     return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === iso ? iso : '';
   }
 
-  function read(book, xlsx) {
-    const stock = sheetRows(book, xlsx, 'SB8', {
-      filial: ['FILIAL','B8FILIAL'], arm: ['ARMAZEM','B8LOCAL'],
-      sku: ['PRODUTO','B8PRODUTO'], lote: ['LOTE','B8LOTECTL'],
-      saldo: ['SALDOLOTE','SALDO','B8SALDO'], validade: ['DATAVALIDAD','DATAVALIDADE','VALIDADE','B8DTVALID']
-    }, ['validade']);
+  function readLocations(book, xlsx) {
     const addresses = sheetRows(book, xlsx, 'ZZ2', {
       filial: ['FILIAL','ZZ2FILIAL'], arm: ['ARMAZEM','ZZ2LOCAL','ZZ2ARM'],
       sku: ['PRODUTO','ZZ2PRODUTO','ZZ2COD'], endereco: ['ENDERECO','ZZ2ENDERE','ZZ2ENDERECO','ZZ2LOCALIZ'],
       lote: ['LOTE','ZZ2LOTECTL','ZZ2LOTE']
     }, ['lote']);
-    const products = sheetRows(book, xlsx, 'SB1', {
-      filial: ['FILIAL','B1FILIAL'], sku: ['CODIGO','PRODUTO','B1COD'],
-      descricao: ['DESCRICAO','B1DESC'], unidade: ['UNIDADE','UM','B1UM'],
-      ean: ['CODBARRAS','CODIGODEBARRAS','CODIGOBARRAS','EAN','B1CODBAR','CODIGOEAN','CODGTIN']
-    }, ['filial','unidade','ean']);
-
-    const catalog = new Map(), locations = new Map(), lots = new Map();
-    for (const row of products) if (row.sku) catalog.set(key(scope(row.filial), code(row.sku)), row);
+    const locations = new Map();
     for (const row of addresses) {
       const arm = scope(row.arm);
       if (!['26', '1'].includes(arm) || !row.sku || !row.endereco) continue;
@@ -60,6 +54,25 @@
       if (!locations.has(id)) locations.set(id, new Set());
       locations.get(id).add(row.endereco);
     }
+    return locations;
+  }
+
+  const findAddress = (locations, filial, arm, sku, lote) =>
+    locations.get(key(filial, arm, sku, lote)) || locations.get(key(filial, arm, sku, ''));
+
+  function read(book, xlsx) {
+    const stock = sheetRows(book, xlsx, 'SB8', {
+      ...stockColumns, validade: ['DATAVALIDAD','DATAVALIDADE','VALIDADE','B8DTVALID']
+    }, ['validade']);
+    const locations = readLocations(book, xlsx);
+    const products = sheetRows(book, xlsx, 'SB1', {
+      filial: ['FILIAL','B1FILIAL'], sku: ['CODIGO','PRODUTO','B1COD'],
+      descricao: ['DESCRICAO','B1DESC'], unidade: ['UNIDADE','UM','B1UM'],
+      ean: ['CODBARRAS','CODIGODEBARRAS','CODIGOBARRAS','EAN','B1CODBAR','CODIGOEAN','CODGTIN']
+    }, ['filial','unidade','ean']);
+
+    const catalog = new Map(), lots = new Map();
+    for (const row of products) if (row.sku) catalog.set(key(scope(row.filial), code(row.sku)), row);
     for (const row of stock) {
       if (scope(row.arm) !== '26') continue;
       const filial = scope(row.filial), sku = code(row.sku), lote = code(row.lote);
@@ -75,7 +88,7 @@
         continue;
       }
       const product = catalog.get(key(filial, sku)) || catalog.get(key('', sku));
-      const addressFor = arm => locations.get(key(filial, arm, sku, lote)) || locations.get(key(filial, arm, sku, ''));
+      const addressFor = arm => findAddress(locations, filial, arm, sku, lote);
       const retemAddress = addressFor('26');
       const addressesForItem = retemAddress || addressFor('1');
       const endereco = addressesForItem
@@ -89,6 +102,38 @@
     return [...lots.values()].map(group => ({
       ...group, itens: [...group.itens.values()].filter(item => item.esperado > 0)
     })).filter(group => group.itens.length);
+  }
+
+  function readReturnStock(book, xlsx) {
+    const name = book.SheetNames.find(value => header(value) === 'SB8') || book.SheetNames[0];
+    if (!name) throw Error('O arquivo não contém dados do SB8.');
+    const stock = sheetRows({ SheetNames:['SB8'], Sheets:{ SB8:book.Sheets[name] } }, xlsx, 'SB8', {
+      ...stockColumns,
+      fabricacao: ['DATAFABRIC','DATAFABRICACAO','FABRICACAO','DTFABRIC','B8DTFABRIC','B8DTFAB'],
+      descricao: ['DESCRICAO','DESCRICAOPRODUTO','B1DESC']
+    }, ['descricao']);
+    const locations = book.SheetNames.some(value => header(value) === 'ZZ2') ? readLocations(book, xlsx) : new Map();
+    const byLot = new Map();
+    for (const row of stock) {
+      if (scope(row.arm) !== '26') continue;
+      const filial = scope(row.filial), sku = code(row.sku), lote = code(row.lote);
+      const saldo = Number(row.saldo.includes(',') ? row.saldo.replace(/\./g, '').replace(',', '.') : row.saldo);
+      if (!filial || !sku || !lote || !row.saldo || !Number.isFinite(saldo)) {
+        throw Error('Há uma linha inválida do armazém 26 no SB8. Confira filial, produto, lote e saldo.');
+      }
+      const id = key(filial, sku, lote);
+      if (!byLot.has(id)) {
+        const address = findAddress(locations, filial, '1', sku, lote);
+        byLot.set(id, { id, filial:filial.padStart(2,'0'), sku, lote, descricao:row.descricao,
+          endereco:address ? [...address].sort().join(' / ') : '', saldo:0, datas:new Set() });
+      }
+      const item = byLot.get(id);
+      item.saldo += saldo;
+      if (row.fabricacao) item.datas.add(row.fabricacao);
+    }
+    return [...byLot.values()].filter(row => row.saldo > 0).map(({datas,...row}) => ({
+      ...row, fabricacao:datas.size === 1 ? [...datas][0] : ''
+    }));
   }
 
   function findInventoryScan(items, value) {
@@ -243,6 +288,25 @@
 
   const calendar = new Intl.DateTimeFormat('en-CA', {timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'});
 
+  function returnSchedule(stock, today = calendar.format(new Date())) {
+    const awaiting = [], upcoming = [];
+    let missingDate = 0;
+    const todayTime = Date.parse(today+'T00:00:00Z');
+    for (const row of stock) {
+      if (row.saldo <= 0) continue;
+      if (!row.fabricacao) { missingDate++; continue; }
+      const [year,month,day] = row.fabricacao.split('-').map(Number);
+      const lastDay = new Date(Date.UTC(year+2, month, 0)).getUTCDate();
+      const due = new Date(Date.UTC(year+2, month-1, Math.min(day,lastDay)));
+      const days = (due.getTime()-todayTime)/86400000;
+      const item = {...row, retorno:due.toISOString().slice(0,10), days};
+      if (days <= 0) awaiting.push(item);
+      else if (days <= 90) upcoming.push(item);
+    }
+    const sortByDue = (a,b) => a.days-b.days || a.sku.localeCompare(b.sku) || a.lote.localeCompare(b.lote);
+    return { awaiting:awaiting.sort(sortByDue), upcoming:upcoming.sort(sortByDue), missingDate };
+  }
+
   function expiryStatus(value, today = calendar.format(new Date())) {
     const date = validity(text(value));
     if (!date) return 'Sem validade informada';
@@ -289,6 +353,6 @@
     return xlsx.CFB.write(zip,{type:'array',fileType:'zip',compression:true});
   }
 
-  root.SC9RetemInventory = { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus, highlightExpiredWorkbook };
+  root.SC9RetemInventory = { read, readReturnStock, returnSchedule, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus, highlightExpiredWorkbook };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9RetemInventory;
 })(typeof window === 'object' ? window : globalThis);

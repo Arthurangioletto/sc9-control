@@ -31,6 +31,8 @@
     base: id => request('base', undefined, id),
     readSettings: () => request('readSettings'),
     writeSettings: value => request('writeSettings', value),
+    readReturns: () => request('readReturns'),
+    writeReturns: value => request('writeReturns', value),
     legacyCount: () => request('legacyCount'),
     migrateLegacy: index => request('migrateLegacy', undefined, index),
     save: (action, value) => request(action, value)

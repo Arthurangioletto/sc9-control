@@ -1,6 +1,38 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus } = require('../retem-inventory');
+const { read, readReturnStock, returnSchedule, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus } = require('../retem-inventory');
+
+test('retornos do Retem usam o saldo do 26 e selecionam os prazos de hoje até 90 dias', () => {
+  const rows = [
+    ['Filial', 'Produto', 'Armazem', 'Saldo Lote', 'Lote', 'Data Fabric'],
+    [1,'P01',26,3,'ATRASADO','14/11/2024'],
+    [1,'P01','026',-1,'ATRASADO',20241114],
+    [1,'P01',1,99,'ATRASADO','14/11/2024'],
+    [1,'P01',26,1,'HOJE',45611],
+    [1,'P01',26,1,'LIMITE','2025-02-13'],
+    [1,'P01',26,1,'FORA','2025-02-14'],
+    [1,'P01',26,0,'ZERADO','2024-01-01'],
+    [1,'P01',26,1,'SEM-DATA',''],
+    [1,'P01',26,1,'DIVERGENTE','2024-01-01'],
+    [1,'P01',26,1,'DIVERGENTE','2024-01-02']
+  ];
+  const xlsx = { utils:{ sheet_to_json:rows=>rows }, SSF:{ parse_date_code:()=>({ y:2024,m:11,d:15 }) } };
+  const zz2 = [
+    ['Filial','Armazem','Produto','Lote','Endereco'],
+    [1,26,'P01','ATRASADO','RETEM-26'],
+    [1,1,'P01','','GERAL-01'],
+    [1,'01','P01','ATRASADO','LOTE-01'],
+    [2,1,'P01','ATRASADO','OUTRA-FILIAL']
+  ];
+  const stock = readReturnStock({ SheetNames:['exportacao','ZZ2'], Sheets:{ exportacao:rows,ZZ2:zz2 } },xlsx);
+  assert.equal(stock.length, 6);
+  const result = returnSchedule(stock,'2026-11-15');
+  assert.deepEqual(result.awaiting.map(({lote,saldo,days})=>[lote,saldo,days]), [['ATRASADO',2,-1],['HOJE',1,0]]);
+  assert.deepEqual(result.awaiting.map(row=>row.endereco), ['LOTE-01','GERAL-01']);
+  assert.deepEqual(result.upcoming.map(({lote,retorno,days})=>[lote,retorno,days]), [['LIMITE','2027-02-13',90]]);
+  assert.equal(result.missingDate, 2);
+  assert.equal(returnSchedule([{sku:'P01',lote:'BISSEXTO',fabricacao:'2024-02-29',saldo:1}],'2026-02-28').awaiting[0].retorno,'2026-02-28');
+});
 
 test('Retem cruza SB8, ZZ2 e SB1 sem misturar filiais, armazéns ou lotes', () => {
   const sheets = {
