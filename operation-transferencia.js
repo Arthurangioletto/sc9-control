@@ -46,6 +46,8 @@
         try {
           if (action === 'readSettings' || action === 'writeSettings') {
             reply.value = await browserStoreRequest('settings', action === 'writeSettings', value);
+          } else if (scope === 'retem' && (action === 'readReturns' || action === 'writeReturns')) {
+            reply.value = await browserStoreRequest('returns', action === 'writeReturns', value);
           } else if (action === 'legacyCount') {
             if (!(await api()).administrador) throw Error('Somente o administrador pode importar documentos antigos.');
             reply.value = (await browserStoreRequest('index'))?.documentos?.length || 0;
