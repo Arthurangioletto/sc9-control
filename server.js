@@ -1214,6 +1214,34 @@ async function handleApi(req, res, pathname) {
       }
       if (baseId) throw new ErroHttp(405, "Método inválido.");
       const body = await readJsonBody(req);
+      if (body?.acao === "consolidar") {
+        if (sess.role !== "admin") throw new ErroHttp(403, "Somente o administrador pode aglutinar documentos.");
+        if (!Array.isArray(body.ids) || new Set(body.ids).size !== body.ids.length || body.ids.length < 2 ||
+            body.ids.some(id => typeof id !== "string" || !id.startsWith(prefix) || !/^\d+$/.test(id.slice(4)))) {
+          throw new ErroHttp(400, "Selecione pelo menos dois documentos diferentes desta aba.");
+        }
+        const state = await load();
+        const selected = new Set(body.ids);
+        const docs = state.documentos.filter(doc => selected.has(doc.id));
+        if (docs.length !== selected.size || docs.some(doc => doc.status !== "finalizado")) {
+          throw new ErroHttp(400, "Selecione somente documentos finalizados e disponíveis.");
+        }
+        const normalize = value => String(value ?? "").trim().toUpperCase().replace(/^0+(?=\d+$)/, "");
+        const rows = docs.flatMap(doc => doc.registros.map(row => ({ ...row, documentoOrigem: doc.id })));
+        const filiais = new Set(rows.filter(row => row.conferido > 0).map(row => normalize(row.filial)));
+        const destinations = new Set(docs.map(doc => normalize(doc.armazens?.destino)));
+        const origins = new Set(docs.map(doc => normalize(doc.armazens?.origem)));
+        if (filiais.size !== 1 || filiais.has("") || destinations.size !== 1 || destinations.has("") ||
+            (retem && (origins.size !== 1 || origins.has("")))) {
+          throw new ErroHttp(400, retem
+            ? "Escolha documentos da mesma filial e com a mesma origem e destino."
+            : "Escolha documentos da mesma filial e com o mesmo armazém de destino.");
+        }
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        return sendJson(res, 200, { documento: {
+          id: prefix + "Consolidado-" + timestamp, consolidado: true, registros: rows, armazens: docs[0].armazens
+        } });
+      }
       const updated = await comFila(object, async () => {
         const state = await load();
         const now = new Date().toISOString();

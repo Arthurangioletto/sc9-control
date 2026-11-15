@@ -56,7 +56,7 @@
             const base = await browserStoreRequest(doc.baseKey);
             await api(url, { acao: 'importarLegado', documento: doc, base });
           } else {
-            const post = ['criar', 'atualizar', 'excluir'].includes(action);
+            const post = ['criar', 'atualizar', 'excluir', 'consolidar'].includes(action);
             if (action === 'base' && !/^(TRF|DOC)-\d+$/.test(id)) return;
             if (!post && !['list', 'base'].includes(action)) return;
             const result = await api(action === 'base' ? url + '/' + id + '/base' : url, post ? { ...value, acao: action } : undefined);
