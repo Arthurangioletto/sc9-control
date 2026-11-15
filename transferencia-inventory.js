@@ -4,6 +4,8 @@
   const scope = value => code(value).replace(/^0+(?=\d+$)/, '');
   const header = value => code(value).normalize('NFD').replace(/[\u0300-\u036f]|[^A-Z0-9]/g, '');
   const key = (...parts) => JSON.stringify(parts);
+  const isSource = arm => ['59', 'ES'].includes(scope(arm));
+  const destinationAddress = row => row.enderecoDestino || '';
 
   function sheetRows(book, xlsx, name, columns, optional = []) {
     const sheetName = book.SheetNames.find(value => header(value) === name);
@@ -55,16 +57,15 @@
     for (const row of products) if (row.sku) catalog.set(key(scope(row.filial), code(row.sku)), row);
     for (const row of addresses) {
       const arm = scope(row.arm);
-      if (!arm || !row.sku || !row.endereco) continue;
-      const id = key(scope(row.filial), arm, code(row.sku), code(row.lote));
+      if (arm !== '1' || !row.sku || !row.endereco) continue;
+      const id = key(scope(row.filial), code(row.sku), code(row.lote));
       if (!locations.has(id)) locations.set(id, new Set());
       locations.get(id).add(row.endereco);
     }
     for (const row of stock) {
       const arm = scope(row.arm);
       const filial = scope(row.filial), sku = code(row.sku), lote = code(row.lote);
-      // Linhas sem armazém, produto ou lote não identificam onde a peça está: ficam de fora.
-      if (!arm || !filial || !sku || !lote) continue;
+      if (!isSource(arm) || !filial || !sku || !lote) continue;
       const amount = Number(row.saldo.includes(',') ? row.saldo.replace(/\./g, '').replace(',', '.') : row.saldo);
       if (!row.saldo || !Number.isFinite(amount)) throw Error('Há uma linha inválida no SB8 (armazém ' + code(row.arm) + ', lote ' + lote + '). Confira o saldo.');
       const id = key(filial, lote);
@@ -79,10 +80,11 @@
         continue;
       }
       const product = catalog.get(key(filial, sku)) || catalog.get(key('', sku));
-      const addresses = locations.get(key(filial, arm, sku, lote)) || locations.get(key(filial, arm, sku, ''));
-      group.itens.set(itemKey, { id: key(filial, sku, lote, arm), sku: row.sku, lote, arm: code(row.arm),
+      const addresses = locations.get(key(filial, sku, lote)) || locations.get(key(filial, sku, ''));
+      const enderecoDestino = addresses ? [...addresses].sort().join(' / ') : '';
+      group.itens.set(itemKey, { id: key(filial, sku, lote, arm), sku: row.sku, lote, arm,
         validade: row.validade, descricao: product?.descricao || sku, ean: product?.ean || '',
-        unidade: product?.unidade || '', endereco: addresses ? [...addresses].sort().join(' / ') : '',
+        unidade: product?.unidade || '', endereco: '', enderecoDestino,
         esperado: amount, conferido: 0, avaria: 0 });
     }
     return [...lots.values()].map(group => ({
@@ -90,20 +92,51 @@
     })).filter(group => group.itens.length);
   }
 
-  // Ordem de preferência quando o mesmo lote está em mais de um armazém do SB8.
-  const armPriority = arm => { const value = scope(arm); return value === '59' ? 0 : value === 'ES' ? 1 : 2; };
-
-  function findInventoryScan(items, value) {
+  function findInventoryScan(items, value, amount = 1) {
     const input = code(value);
     if (!input) return { ambiguous: false };
-    const matches = items.filter(item => [item.lote, item.sku, item.ean].some(value => code(value) === input));
+    const matches = items.filter(item => isSource(item.arm) && [item.lote, item.sku, item.ean].some(value => code(value) === input));
     if (!matches.length) return { ambiguous: false };
     // Várias linhas só se contam como o mesmo item quando diferem apenas no armazém.
     const same = matches.every(item => item.filial === matches[0].filial && code(item.sku) === code(matches[0].sku) && code(item.lote) === code(matches[0].lote));
     if (!same) return { ambiguous: true };
-    const ordered = [...matches].sort((a, b) => armPriority(a.arm) - armPriority(b.arm) || b.esperado - a.esperado);
-    const item = ordered.find(row => row.conferido < row.esperado) || ordered[0];
-    return { item, outrosArmazens: ordered.filter(row => row !== item).map(row => row.arm) };
+    const ordered = matches.sort((a, b) => scope(a.arm).localeCompare(scope(b.arm)));
+    const allocations = [];
+    let remaining = amount;
+    for (const row of ordered) {
+      const quantity = Math.min(remaining, Math.max(0, row.esperado - row.conferido));
+      if (quantity > 0) allocations.push({ row, quantity });
+      remaining -= quantity;
+    }
+    if (remaining > 0) {
+      if (allocations.length) allocations.at(-1).quantity += remaining;
+      else allocations.push({ row: ordered[0], quantity: remaining });
+    }
+    const balances = new Map();
+    for (const row of ordered) {
+      const arm = scope(row.arm);
+      balances.set(arm, (balances.get(arm) || 0) + row.esperado);
+    }
+    return { item: allocations[0]?.row, allocations, balances };
+  }
+
+  function aggregateExportRecords(rows) {
+    const grouped = new Map();
+    for (const row of rows) {
+      const arm = isSource(row.arm) ? scope(row.arm) : code(row.arm);
+      const lote = text(row.lote || row.loteProduto || row.loteId);
+      const id = key(scope(row.filial), code(row.sku), code(lote), scope(arm));
+      const previous = grouped.get(id);
+      if (!previous) {
+        grouped.set(id, { ...row, arm, lote });
+        continue;
+      }
+      previous.esperado += row.esperado;
+      previous.conferido += row.conferido;
+      previous.avaria += row.avaria;
+      if (previous.validade !== row.validade) previous.validade = '';
+    }
+    return [...grouped.values()];
   }
   function template(xlsx) {
     const book = xlsx.utils.book_new();
@@ -139,6 +172,7 @@
     }
     for (const item of items) {
       if (!item || textFields.some(field => typeof item[field] !== 'string') ||
+          (item.enderecoDestino !== undefined && typeof item.enderecoDestino !== 'string') ||
           !item.id || !item.filial || !item.lote || !item.sku || ids.has(item.id) ||
           !Number.isFinite(item.esperado) || item.esperado <= 0 ||
           !Number.isFinite(item.conferido) || item.conferido < 0 ||
@@ -297,6 +331,6 @@
     return xlsx.CFB.write(zip,{type:'array',fileType:'zip',compression:true});
   }
 
-  root.SC9TransferenciaInventory = { read, findInventoryScan, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus, highlightExpiredWorkbook };
+  root.SC9TransferenciaInventory = { read, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus, highlightExpiredWorkbook };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9TransferenciaInventory;
 })(typeof window === 'object' ? window : globalThis);
