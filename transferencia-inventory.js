@@ -233,32 +233,38 @@
       const id = key(code(row.produto), scope(row.lote));
       const routes = routesByItem.get(id);
       const origin = scope(row.origem), destination = scope(row.destino);
+      const siblingOrigins = new Set(routes.filter(other => scope(other.destino) === destination).map(other => scope(other.origem)));
+      const sharedOrigin = routes.some(other => other !== row && scope(other.origem) === origin);
       const groups = new Map();
       const branches = new Set();
       for (const move of index.get(id) || []) {
         const local = scope(move.armazem);
-        if (move.tp === 999 ? local !== origin : local !== destination) continue;
+        if (move.tp === 999 ? !siblingOrigins.has(local) : local !== destination) continue;
         const groupId = key(move.filial, move.dt, move.doc);
-        if (!groups.has(groupId)) groups.set(groupId, { out:0, incoming:0, doc:move.doc });
+        if (!groups.has(groupId)) groups.set(groupId, { out:0, totalOut:0, incoming:0, doc:move.doc });
         const group = groups.get(groupId);
-        if (move.tp === 999) group.out += move.qt;
+        if (move.tp === 999) {
+          group.totalOut += move.qt;
+          if (local === origin) group.out += move.qt;
+        }
         else group.incoming += move.qt;
         branches.add(move.filial);
       }
       const groupsFound = [...groups.values()];
       const saidaSd3 = groupsFound.reduce((sum, group) => sum + group.out, 0);
-      const entradaSd3 = groupsFound.reduce((sum, group) => sum + group.incoming, 0);
-      const sharedRoute = routes.some(other => other !== row && (scope(other.origem) === origin || scope(other.destino) === destination));
-      const matched = !sharedRoute && branches.size === 1 && groupsFound.every(group => amountEqual(group.out, group.incoming)) &&
+      const allPaired = groupsFound.every(group => amountEqual(group.totalOut, group.incoming));
+      const entradaSd3 = siblingOrigins.size === 1 ? groupsFound.reduce((sum, group) => sum + group.incoming, 0) :
+        groupsFound.reduce((sum, group) => sum + (amountEqual(group.totalOut, group.incoming) ? group.out : 0), 0);
+      const matched = !sharedOrigin && branches.size === 1 && allPaired &&
         amountEqual(saidaSd3, row.qtd) && amountEqual(entradaSd3, row.qtd);
       const detalhe = branches.size > 1 ? 'Há movimentos em mais de uma filial. Informe a filial.' :
-        sharedRoute ? 'O produto e lote têm rotas que compartilham uma ponta. Separe os documentos por rota.' :
-        groupsFound.some(group => !amountEqual(group.out, group.incoming)) ? 'Há saída e entrada sem par no mesmo documento, filial e data.' : '';
+        sharedOrigin ? 'A mesma origem tem mais de um destino para este item.' :
+        !allPaired ? 'Há saída e entrada sem par no mesmo documento, filial e data.' : '';
       return {
         produto: row.produto, lote: row.lote, origem: row.origem, destino: row.destino,
         qtdDocumento: row.qtd, saidaSd3, entradaSd3, detalhe,
         situacao: matched ? 'confere' : groupsFound.length ? 'divergente' : 'nao_encontrado',
-        documentosSd3: [...new Set(groupsFound.map(group => group.doc))], outrosLotes: []
+        documentosSd3: [...new Set(groupsFound.filter(group=>siblingOrigins.size===1||group.out>0).map(group => group.doc))], outrosLotes: []
       };
     });
     const routes = [...new Map([...expected.values()].map(row => [
@@ -280,6 +286,29 @@
       }
     }
     return result;
+  }
+
+  function compareDaily(documents, movements, day) {
+    const byBranch = new Map();
+    for (const document of documents) {
+      const branch = scope(document.filial);
+      if (!byBranch.has(branch)) byBranch.set(branch, []);
+      byBranch.get(branch).push(document);
+    }
+    const dailyMovements = movements.filter(row => row.dt === day);
+    return [...byBranch].flatMap(([filial, docs]) => {
+      const identity = row => key(code(row.produto), scope(row.lote), scope(row.origem), scope(row.destino));
+      const references = new Map();
+      const lines = docs.flatMap(doc => doc.lines.map(row => {
+        const id = identity(row);
+        if (!references.has(id)) references.set(id, new Set());
+        references.get(id).add(doc.id);
+        return row;
+      }));
+      return compareTransfer(lines, dailyMovements, { filial }).map(row => ({
+        ...row, filial: docs[0].filial, documentos: [...references.get(identity(row))]
+      }));
+    });
   }
 
 
@@ -331,6 +360,6 @@
     return xlsx.CFB.write(zip,{type:'array',fileType:'zip',compression:true});
   }
 
-  root.SC9TransferenciaInventory = { read, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, expiryStatus, highlightExpiredWorkbook };
+  root.SC9TransferenciaInventory = { read, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, compareDaily, expiryStatus, highlightExpiredWorkbook };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9TransferenciaInventory;
 })(typeof window === 'object' ? window : globalThis);
