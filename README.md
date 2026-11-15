@@ -279,5 +279,5 @@ Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transfere
 - A bipagem mostra o saldo de cada armazém. A quantidade bipada preenche primeiro o saldo ainda disponível no 59 e depois no ES. A tela avisa quando a contagem excede o saldo.
 - A quantidade conferida pode ser **editada direto** na tabela.
 - A exportação soma as quantidades por filial, produto, lote e armazém de origem nas duas abas. O destino é escolhido na tela Documentos (padrão 01).
-- Os documentos da Transferência são salvos no servidor com numeração global (`TRF-000001`). Operadores consultam e editam somente os próprios documentos. O administrador consulta todos e também pode importar documentos antigos no navegador onde foram criados. O histórico antigo é identificado sem atribuir autoria.
-- O comparativo do administrador usa um arquivo SD3 com filial e reúne os documentos finalizados na data selecionada. Mantém as referências dos documentos SC9 para cada lote e rota.
+- Transferência e Retem salvam os documentos no servidor com numeração própria (`TRF-000001` e `DOC-000001`). Operadores consultam e editam somente os próprios documentos conforme o perfil de cada aba. O administrador consulta todos e pode importar documentos antigos no navegador onde foram criados. O histórico antigo é identificado sem atribuir autoria.
+- Em cada aba, o comparativo do administrador usa um arquivo SD3 com filial e reúne os documentos finalizados na data selecionada. Mantém as referências dos documentos SC9 para cada lote e rota.

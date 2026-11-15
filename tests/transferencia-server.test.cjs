@@ -31,7 +31,7 @@ test('documentos da Transferência pertencem à conta e somente o administrador 
   try {
     assert.equal((await api(endpoint)).status, 401);
     const { cookie:admin } = await api('/api/login', null, { password });
-    for (const [usuario,perfil] of [['ana','transferencia'],['pedro','transferencia'],['sem-perfil','saida']]) {
+    for (const [usuario,perfil] of [['ana','transferencia'],['pedro','transferencia'],['sem-perfil','saida'],['retem-ana','controle0201'],['retem-pedro','controle0201']]) {
       assert.equal((await api('/api/usuarios', admin, { acao:'criar', usuario, nome:usuario, senha:'teste-123', perfis:[perfil] })).status, 200);
     }
     const login = async usuario => (await api('/api/login', null, { usuario, password:'teste-123' })).cookie;
@@ -81,6 +81,27 @@ test('documentos da Transferência pertencem à conta e somente o administrador 
     assert.equal(imported.data.documento.finalizadoEm, legacy.documento.finalizadoEm);
     assert.equal((await api(endpoint, admin, legacy)).data.documento.id, imported.data.documento.id);
     assert.equal((await api(endpoint, ana)).data.documentos.length, 1);
+
+    const retem = '/api/retem-documentos';
+    const retemAna = await login('retem-ana'), retemPedro = await login('retem-pedro');
+    assert.equal((await api(retem, ana)).status, 403);
+    assert.equal((await api(endpoint, retemAna)).status, 403);
+    const retDoc = (await api(retem, retemAna, { acao:'criar' })).data.documento;
+    assert.match(retDoc.id, /^DOC-/);
+    const retRecord = { ...record, arm:undefined };
+    const retFinal = await api(retem, retemAna, { acao:'atualizar', id:retDoc.id, versao:retDoc.versao,
+      status:'finalizado', registros:[retRecord], armazens:{origem:'26',destino:'01'} });
+    assert.equal(retFinal.status, 200);
+    assert.deepEqual(retFinal.data.documento.armazens, {origem:'26',destino:'01'});
+    assert.equal((await api(retem, retemPedro)).data.documentos.length, 0);
+    assert.equal((await api(retem, retemAna)).data.documentos.length, 1);
+    assert.equal((await api(retem, admin)).data.documentos[0].autor, 'retem-ana');
+    assert.equal((await api(retem, admin)).data.documentos[0].editavel, false);
+    assert.equal((await api(endpoint, admin)).data.documentos.length, 3);
+    const oldRetem = { ...legacy, documento:{ ...legacy.documento, id:'DOC-000001', registros:[retRecord],
+      armazens:{origem:'26',destino:'01'} } };
+    assert.equal((await api(retem, retemAna, oldRetem)).status, 403);
+    assert.equal((await api(retem, admin, oldRetem)).data.documento.idLegado, 'DOC-000001');
   } finally {
     await new Promise(resolve=>server.close(resolve));
     fs.rmSync(dir, { recursive:true, force:true });
