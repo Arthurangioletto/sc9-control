@@ -68,6 +68,22 @@ test('documentos da Transferência pertencem à conta e somente o administrador 
     assert.equal(saved.status, 'finalizado');
     assert.equal(saved.registros[0].conferido, 8);
     assert.equal(saved.baseObject, undefined);
+    const consolidate = { acao:'consolidar', ids:[first.id,second.id] };
+    assert.equal((await api(endpoint, ana, consolidate)).status, 403);
+    assert.equal((await api(endpoint, admin, consolidate)).status, 400);
+    assert.equal((await api(endpoint, pedro, { acao:'atualizar', id:second.id, versao:second.versao,
+      status:'finalizado', registros:[{ ...record, conferido:4 }], armazens:{destino:'01'} })).status, 200);
+    const consolidated = await api(endpoint, admin, consolidate);
+    assert.equal(consolidated.status, 200);
+    assert.equal(consolidated.data.documento.consolidado, true);
+    assert.deepEqual(new Set(consolidated.data.documento.registros.map(row=>row.documentoOrigem)), new Set(consolidate.ids));
+    assert.equal(consolidated.data.documento.registros.reduce((total,row)=>total+row.conferido,0), 12);
+    assert.equal((await api(endpoint, admin)).data.documentos.length, 2);
+    assert.equal((await api(endpoint, admin, { ...consolidate, ids:[first.id,first.id] })).status, 400);
+    const incompatible = (await api(endpoint, pedro, { acao:'criar' })).data.documento;
+    assert.equal((await api(endpoint, pedro, { acao:'atualizar', id:incompatible.id, versao:incompatible.versao,
+      status:'finalizado', registros:[{ ...record, filial:'02' }], armazens:{destino:'01'} })).status, 200);
+    assert.equal((await api(endpoint, admin, { ...consolidate, ids:[first.id,incompatible.id] })).status, 400);
     const legacy = {
       acao:'importarLegado', base:update.base,
       documento:{ id:'TRF-000001', baseKey:'base:96a57733-ec7a-437d-95d2-dd4217114c79', criadoEm:'2026-11-13T10:00:00Z',
@@ -97,11 +113,14 @@ test('documentos da Transferência pertencem à conta e somente o administrador 
     assert.equal((await api(retem, retemAna)).data.documentos.length, 1);
     assert.equal((await api(retem, admin)).data.documentos[0].autor, 'retem-ana');
     assert.equal((await api(retem, admin)).data.documentos[0].editavel, false);
-    assert.equal((await api(endpoint, admin)).data.documentos.length, 3);
+    assert.equal((await api(endpoint, admin)).data.documentos.length, 4);
     const oldRetem = { ...legacy, documento:{ ...legacy.documento, id:'DOC-000001', registros:[retRecord],
       armazens:{origem:'26',destino:'01'} } };
     assert.equal((await api(retem, retemAna, oldRetem)).status, 403);
-    assert.equal((await api(retem, admin, oldRetem)).data.documento.idLegado, 'DOC-000001');
+    const recovered = (await api(retem, admin, oldRetem)).data.documento;
+    assert.equal(recovered.idLegado, 'DOC-000001');
+    assert.equal((await api(retem, retemAna, { acao:'consolidar', ids:[retDoc.id,recovered.id] })).status, 403);
+    assert.equal((await api(retem, admin, { acao:'consolidar', ids:[retDoc.id,recovered.id] })).status, 200);
   } finally {
     await new Promise(resolve=>server.close(resolve));
     fs.rmSync(dir, { recursive:true, force:true });

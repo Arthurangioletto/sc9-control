@@ -1,5 +1,48 @@
 (function (root) {
-  root.SC9OperationalDocumentViews = function ({ y, z, Pn, C, zn, _n, Vj, storage, loadDocuments, readSD3 }) {
+  root.SC9OperationalDocumentViews = function ({ y, z, Pn, C, zn, _n, Vj, storage, loadDocuments, readSD3, exportDocument }) {
+    function ConsolidatedExport() {
+      const { administrador, documentos } = Pn();
+      const [selection, setSelection] = y.useState([]);
+      const [busy, setBusy] = y.useState(false);
+      const [error, setError] = y.useState('');
+      if (!administrador) return null;
+      const finalized = documentos.filter(doc => doc.status === 'finalizado');
+      const ids = finalized.filter(doc => selection.includes(doc.id)).map(doc => doc.id);
+      async function exportSelected() {
+        setBusy(true);
+        setError('');
+        try {
+          const doc = await storage.save('consolidar', { ids });
+          await exportDocument(doc, doc.armazens);
+        } catch (error) {
+          setError(error.message);
+        } finally {
+          setBusy(false);
+        }
+      }
+      return z.jsxs('details', { className:'space-y-3 rounded-md border border-border bg-card p-4', children:[
+        z.jsx('summary', { className:'cursor-pointer font-semibold', children:'Aglutinar documentos' }),
+        z.jsx('p', { className:'text-sm text-muted-foreground',
+          children:'Selecione dois ou mais documentos finalizados da mesma filial e rota compatível para gerar um Excel consolidado.' }),
+        finalized.length < 2 ? z.jsx('p', { className:'text-sm', children:'São necessários pelo menos dois documentos finalizados.' }) :
+          z.jsx('fieldset', { disabled:busy, className:'grid gap-2 overflow-y-auto', style:{maxHeight:'16rem'},
+            'aria-label':'Documentos a aglutinar', children:finalized.map(doc=>z.jsxs('label', {
+              className:'flex items-center gap-2 rounded-sm border border-border px-3 py-2 text-sm', children:[
+                z.jsx('input', { type:'checkbox', checked:selection.includes(doc.id), onChange:event=>{
+                  const checked=event.target.checked;
+                  setSelection(current=>checked?[...current,doc.id]:current.filter(id=>id!==doc.id));
+                  setError('');
+                } }),
+                doc.id+' · '+doc.operador+' · '+new Date(doc.finalizadoEm).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'})
+              ]
+            },doc.id)) }),
+        z.jsx('button', { type:'button', disabled:ids.length<2||busy, onClick:()=>void exportSelected(),
+          className:'rounded-sm bg-foreground px-3 py-2 text-sm font-semibold text-background disabled:opacity-50',
+          children:busy?'Gerando Excel…':'Exportar consolidado ('+ids.length+')' }),
+        error&&z.jsx('p', { role:'alert', className:'text-sm text-destructive', children:error })
+      ] });
+    }
+
     function LegacyTransferImport(){
       const [count,setCount]=y.useState(0), [busy,setBusy]=y.useState(false);
       const [message,setMessage]=y.useState(''), [complete,setComplete]=y.useState(false);
@@ -101,6 +144,6 @@
         ]});
       }
     }
-    return { LegacyTransferImport, DailyTransferComparison };
+    return { LegacyTransferImport, DailyTransferComparison, ConsolidatedExport };
   };
 })(window);
