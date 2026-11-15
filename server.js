@@ -38,6 +38,15 @@ const TDC_FICHAS_OBJ = "entradas-tdc-fichas.json"; // revisões do estoque (conf
 const TDC_NOTAS_OBJ = "entradas-tdc-notas.json"; // notas que o estoque está conferindo (número digitado pela pessoa)
 const TDC_FOTO_PREFIX = "entradas-tdc-foto-"; // uma foto por objeto: entradas-tdc-foto-<id>.json
 const CONTROLE_SD3_OBJ = "controle-sd3.json"; // { coberturaAte, desde, semRegistro, atualizadoEm, atualizadoPor }
+const TRANSFERENCIA_OBJ = "transferencia-documentos.json";
+const transferenciaTextFields = ["id", "itemId", "loteId", "loteProduto", "descricao", "ean", "validade", "unidade",
+  "endereco", "enderecoDestino", "fornecedor", "nf", "doca", "placa", "chegada"];
+const transferenciaRecordsValid = records => Array.isArray(records) && records.every(row =>
+  row && ["sku", "lote", "filial", "arm"].every(field => typeof row[field] === "string" && row[field].trim()) &&
+  transferenciaTextFields.every(field => row[field] === undefined || typeof row[field] === "string") &&
+  Number.isFinite(row.conferido) && row.conferido >= 0 && Number.isFinite(row.avaria) && row.avaria >= 0 &&
+  Number.isFinite(row.esperado) && row.esperado > 0);
+const transferenciaBaseValid = base => base && typeof base.arquivo === "string" && transferenciaRecordsValid(base.items);
 const usingSupabase = Boolean(SB_URL && SB_KEY);
 let snapshotCache = null, snapshotRead = null, snapshotGeneration = 0;
 const saveSnapshot = async data => {
@@ -231,7 +240,7 @@ async function getSession(req) {
     if (p.r === "admin") return ADMIN();
     const u = await achaUsuario(p.u);
     // desativar o acesso ou trocar a senha (sv) derruba a sessão na hora
-    if (u && u.ativo !== false && (u.sv || 0) === (p.sv || 0)) return { usuario: u.usuario, nome: u.nome, role: "operador", perfis: perfisDe(u) };
+    if (u && u.ativo !== false && (u.sv || 0) === (p.sv || 0)) return { usuario: u.usuario, nome: u.nome, role: "operador", perfis: perfisDe(u), contaCriadaEm: u.criadoEm ?? null };
     return null;
   }
   // compatibilidade: cookie antigo (senha do administrador) e cabeçalho x-app-password
@@ -1162,6 +1171,124 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === "/api/health" && method === "GET") {
     return sendJson(res, 200, { ok: true, storage: usingSupabase ? "supabase" : "local-file", controle: "autossuficiente-v2", acessos: "v3", saida: "v3", dashboard: "v6", time: new Date().toISOString() });
+  }
+
+  const transferencia = pathname.match(/^\/api\/transferencia-documentos(?:\/(TRF-\d+)\/base)?$/);
+  if (transferencia && ["GET", "POST"].includes(method)) {
+    res.setHeader("Cache-Control", "private, no-store");
+    const sess = await exigir(req, res, ["admin", "operador"], "transferencia");
+    if (!sess) return;
+    const load = async () => (await objLoad(TRANSFERENCIA_OBJ)) || { ultimoNumero: 0, documentos: [] };
+    const owns = doc => doc.autor === sess.usuario && doc.contaCriadaEm === (sess.contaCriadaEm ?? null);
+    const canRead = doc => sess.role === "admin" || owns(doc);
+    const publicDoc = doc => {
+      const { baseObject, contaCriadaEm, legacyKey, ...visible } = doc;
+      return { ...visible, editavel: owns(doc) };
+    };
+    try {
+      if (method === "GET") {
+        if (transferencia[1]) {
+          const base = await comFila(TRANSFERENCIA_OBJ, async () => {
+            const current = await load();
+            const doc = current.documentos.find(row => row.id === transferencia[1] && owns(row));
+            if (!doc) throw new ErroHttp(404, "Documento indisponível.");
+            const data = doc.baseObject ? await objLoad(doc.baseObject) : null;
+            if (doc.baseObject && !data) throw new ErroHttp(503, "A base salva da transferência está indisponível.");
+            return data;
+          });
+          return sendJson(res, 200, { base });
+        }
+        const state = await load();
+        return sendJson(res, 200, {
+          documentos: state.documentos.filter(canRead).map(publicDoc),
+          administrador: sess.role === "admin"
+        });
+      }
+      if (transferencia[1]) throw new ErroHttp(405, "Método inválido.");
+      const body = await readJsonBody(req);
+      const updated = await comFila(TRANSFERENCIA_OBJ, async () => {
+        const state = await load();
+        const now = new Date().toISOString();
+        if (["criar", "importarLegado"].includes(body?.acao)) {
+          const legacy = body.acao === "importarLegado" ? body.documento : null;
+          if (body.acao === "importarLegado") {
+            if (sess.role !== "admin") throw new ErroHttp(403, "Somente o administrador pode importar documentos antigos.");
+            if (!/^TRF-\d+$/.test(legacy?.id || "") || !/^base:[a-f0-9-]{36}$/i.test(legacy?.baseKey || "") ||
+                !["andamento", "pausado", "finalizado"].includes(legacy.status) || !transferenciaRecordsValid(legacy.registros) ||
+                !Number.isFinite(Date.parse(legacy.criadoEm)) ||
+                (legacy.status === "finalizado" && (!Number.isFinite(Date.parse(legacy.finalizadoEm)) ||
+                  !legacy.registros.some(row => row.conferido > 0) || !/^[A-Z0-9]{1,8}$/i.test(legacy.armazens?.destino || ""))) ||
+                (body.base && !transferenciaBaseValid(body.base))) {
+              throw new ErroHttp(400, "Documento antigo inválido.");
+            }
+            const imported = state.documentos.find(row => row.legacyKey === legacy.baseKey);
+            if (imported) return publicDoc(imported);
+          }
+          const numero = ++state.ultimoNumero;
+          const doc = { id: "TRF-" + String(numero).padStart(6, "0"), numero, versao: 1,
+            status: "andamento", criadoEm: now, atualizadoEm: now, autor: sess.usuario,
+            operador: sess.nome, contaCriadaEm: sess.contaCriadaEm ?? null, registros: [] };
+          if (legacy) {
+            Object.assign(doc, { idLegado: legacy.id, legacyKey: legacy.baseKey, criadoEm: legacy.criadoEm,
+              status: legacy.status === "finalizado" ? "finalizado" : "pausado", operador: "Legado · autor não identificado", registros: legacy.registros });
+            if (doc.status === "finalizado") {
+              doc.finalizadoEm = legacy.finalizadoEm;
+              doc.armazens = { origem: "SB8", destino: legacy.armazens.destino };
+            }
+            if (body.base) {
+              doc.baseObject = "transferencia-base-" + crypto.randomUUID() + ".json";
+              await objSave(doc.baseObject, body.base);
+            }
+          }
+          state.documentos.unshift(doc);
+          await objSave(TRANSFERENCIA_OBJ, state);
+          return publicDoc(doc);
+        }
+        if (!["atualizar", "excluir"].includes(body?.acao)) throw new ErroHttp(400, "Ação inválida.");
+        const doc = state.documentos.find(row => row.id === body.id && owns(row));
+        if (!doc) throw new ErroHttp(404, "Documento indisponível.");
+        if (doc.versao !== body.versao) throw new ErroHttp(409, "O documento mudou em outra aba. Reabra a Transferência para atualizar.");
+        const oldBase = doc.baseObject;
+        if (body.acao === "excluir") {
+          state.documentos = state.documentos.filter(row => row !== doc);
+        } else {
+          if (doc.status === "finalizado") throw new ErroHttp(409, "Documento já finalizado.");
+          if (!["andamento", "pausado", "finalizado"].includes(body.status) || !transferenciaRecordsValid(body.registros)) {
+            throw new ErroHttp(400, "Registros da transferência inválidos.");
+          }
+          if (body.status === "finalizado") {
+            const counted = body.registros.filter(row => row.conferido > 0);
+            const destino = String(body.armazens?.destino || "").trim().toUpperCase();
+            const scope = value => value.toUpperCase().replace(/^0+(?=\d+$)/, "");
+            if (!/^[A-Z0-9]{1,8}$/.test(destino) || !counted.length ||
+                new Set(counted.map(row => scope(row.filial))).size !== 1 ||
+                counted.some(row => !row.filial || !row.arm || scope(row.arm) === scope(destino))) {
+              throw new ErroHttp(400, "Informe um destino distinto da origem, uma única filial e itens conferidos.");
+            }
+            doc.finalizadoEm = now;
+            doc.armazens = { origem: "SB8", destino };
+          }
+          if (body.base !== undefined) {
+            if (!transferenciaBaseValid(body.base)) {
+              throw new ErroHttp(400, "Base de transferência inválida.");
+            }
+            doc.baseObject = "transferencia-base-" + crypto.randomUUID() + ".json";
+            await objSave(doc.baseObject, body.base);
+          }
+          Object.assign(doc, { status: body.status, registros: body.registros, atualizadoEm: now, versao: doc.versao + 1 });
+        }
+        await objSave(TRANSFERENCIA_OBJ, state);
+        if (oldBase && (body.acao === "excluir" || oldBase !== doc.baseObject)) {
+          await objDelete(oldBase).catch(error => console.error("Limpeza de base de transferência:", error.message));
+        }
+        return body.acao === "excluir" ? null : publicDoc(doc);
+      });
+      return sendJson(res, 200, { documento: updated });
+    } catch (error) {
+      if (error instanceof ErroHttp) return sendJson(res, error.status, { error: error.message });
+      console.error("Documentos de transferência:", error.message);
+      return sendJson(res, 500, { error: "Não foi possível acessar os documentos da Transferência." });
+    }
   }
 
   // DIAGNÓSTICO TEMPORÁRIO: mostra exatamente o que está guardado no servidor

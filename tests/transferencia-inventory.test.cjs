@@ -111,3 +111,23 @@ test('a página da Transferência exporta a origem de cada peça e deixa a quant
   assert(html.includes("' · Saldo SB8 '+stock+combined"));
   assert(!/Retem · Armazém 26|SC9RetemInventory|SC9RetemDocumentStorage/.test(html));
 });
+
+test('comparativo diário soma documentos sem reaproveitar entradas do SD3 entre filiais, datas ou origens', () => {
+  const day = '2026-11-15';
+  const line = (origem,qtd) => ({ produto:'P1', lote:'L1', origem, destino:'01', qtd });
+  const docs = [
+    { id:'TRF-000001', filial:'01', lines:[line('59',2)] },
+    { id:'TRF-000002', filial:'01', lines:[line('59',3),line('ES',4)] },
+    { id:'TRF-000003', filial:'02', lines:[line('ES',4)] }
+  ];
+  const move = (armazem,qt,tp,more={}) => ({ filial:'01', armazem, qt, tp, dt:day, doc:'D1', produto:'P1', lote:'L1', ...more });
+  const movements = [move('59',5,999),move('ES',4,999),move('01',9,499),
+    move('ES',4,999,{dt:'2026-11-14',filial:'02'}),move('01',4,499,{dt:'2026-11-14',filial:'02'})];
+  const result = inventory.compareDaily(docs,movements,day);
+  assert.deepEqual(result.map(row=>[row.filial,row.origem,row.qtdDocumento,row.entradaSd3,row.situacao]), [
+    ['01','59',5,5,'confere'], ['01','ES',4,4,'confere'], ['02','ES',4,0,'nao_encontrado']
+  ]);
+  assert.deepEqual(result[0].documentos,['TRF-000001','TRF-000002']);
+  assert(inventory.compareDaily(docs,movements.map(row=>row.tp===499?{...row,qt:5}:row),day)
+    .filter(row=>row.filial==='01').every(row=>row.situacao==='divergente'));
+});

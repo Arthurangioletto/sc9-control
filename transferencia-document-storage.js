@@ -12,21 +12,25 @@
     else request.resolve(message.value);
   });
 
-  function request(action, key, value, revision, base) {
+  function request(action, value, id) {
     return new Promise((resolve, reject) => {
       const requestId = ++sequence;
       const timeout = setTimeout(() => {
         requests.delete(requestId);
         reject(Error('O armazenamento da Transferência não respondeu. Abra a conferência pelo SC9 e tente novamente.'));
-      }, 5000);
+      }, 40000);
       requests.set(requestId, { resolve, reject, timeout });
-      root.parent.postMessage({type: 'sc9-transferencia-storage', requestId, action, key, value, revision, base}, '*');
+      root.parent.postMessage({type: 'sc9-transferencia-storage', requestId, action, value, id}, '*');
     });
   }
 
   root.SC9TransferenciaDocumentStorage = {
-    read: key => request('read', key),
-    write: (key, value) => request('write', key, value),
-    commit: (value, revision, base) => request('commit', 'index', value, revision, base)
+    list: () => request('list'),
+    base: id => request('base', undefined, id),
+    readSettings: () => request('readSettings'),
+    writeSettings: value => request('writeSettings', value),
+    legacyCount: () => request('legacyCount'),
+    migrateLegacy: index => request('migrateLegacy', undefined, index),
+    save: (action, value) => request(action, value)
   };
 })(window);

@@ -14,45 +14,55 @@
     const frame = React.useRef(null);
     React.useEffect(() => {
       let store;
+      async function browserStoreRequest(key, write, value) {
+        store ||= openDocumentStore();
+        const db = await store;
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction('documents', write ? 'readwrite' : 'readonly');
+          const items = transaction.objectStore('documents');
+          const request = write ? items.put(value, key) : items.get(key);
+          transaction.oncomplete = () => resolve(request.result);
+          transaction.onabort = () => reject(transaction.error);
+        });
+      }
+      const url = '/api/transferencia-documentos';
+      async function api(path = url, body) {
+        const response = await fetch(path, body ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-SC9-App': '1' },
+          body: JSON.stringify(body)
+        } : { cache: 'no-store' });
+        const result = await response.json();
+        if (!response.ok) throw Error(result.error || 'Não foi possível acessar a Transferência.');
+        return result;
+      }
       async function receive(event) {
         const message = event.data;
         if (event.source !== frame.current?.contentWindow || message?.type !== 'sc9-transferencia-storage') return;
-        const { requestId, action, key, value, revision, base } = message;
-        if (!Number.isSafeInteger(requestId) || !['read','write','commit'].includes(action) ||
-            !/^(index|settings|base:[a-f0-9-]+)$/.test(key)) return;
+        const { requestId, action, id, value } = message;
+        if (!Number.isSafeInteger(requestId)) return;
         const reply = { type: 'sc9-transferencia-storage-result', requestId };
         try {
-          store ||= openDocumentStore();
-          const db = await store;
-          const result = await new Promise((resolve, reject) => {
-            const transaction = db.transaction('documents', action === 'read' ? 'readonly' : 'readwrite');
-            const items = transaction.objectStore('documents');
-            if (action === 'commit') {
-              const request = items.get('index');
-              let conflict = false;
-              request.onsuccess = () => {
-                if ((request.result?.revision || 0) !== revision) {
-                  conflict = true;
-                  transaction.abort();
-                  return;
-                }
-                if (base && /^base:[a-f0-9-]+$/.test(base.key)) {
-                  if (base.remove) items.delete(base.key);
-                  else items.put(base.value, base.key);
-                }
-                items.put({...value, revision: revision + 1}, 'index');
-              };
-              transaction.oncomplete = () => resolve(revision + 1);
-              transaction.onabort = () => conflict ? resolve(null) : reject(transaction.error);
-              return;
-            }
-            const request = action === 'read' ? items.get(key) : items.put(value, key);
-            transaction.oncomplete = () => resolve(request.result);
-            transaction.onabort = () => reject(transaction.error);
-          });
-          reply.value = result;
-        } catch {
-          reply.error = 'Não foi possível acessar os documentos neste navegador.';
+          if (action === 'readSettings' || action === 'writeSettings') {
+            reply.value = await browserStoreRequest('settings', action === 'writeSettings', value);
+          } else if (action === 'legacyCount') {
+            if (!(await api()).administrador) throw Error('Somente o administrador pode importar documentos antigos.');
+            reply.value = (await browserStoreRequest('index'))?.documentos?.length || 0;
+          } else if (action === 'migrateLegacy') {
+            if (!Number.isSafeInteger(id) || id < 0) return;
+            const doc = (await browserStoreRequest('index'))?.documentos?.[id];
+            if (!doc || !/^base:[a-f0-9-]{36}$/i.test(doc.baseKey)) throw Error('Documento antigo indisponível.');
+            const base = await browserStoreRequest(doc.baseKey);
+            await api(url, { acao: 'importarLegado', documento: doc, base });
+          } else {
+            const post = ['criar', 'atualizar', 'excluir'].includes(action);
+            if (action === 'base' && !/^TRF-\d+$/.test(id)) return;
+            if (!post && !['list', 'base'].includes(action)) return;
+            const result = await api(action === 'base' ? url + '/' + id + '/base' : url, post ? { ...value, acao: action } : undefined);
+            reply.value = action === 'list' ? result : action === 'base' ? result.base : result.documento;
+          }
+        } catch (error) {
+          reply.error = error.message || 'Não foi possível acessar os documentos da Transferência.';
         }
         event.source.postMessage(reply, '*');
       }
