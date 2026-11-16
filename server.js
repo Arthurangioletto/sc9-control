@@ -89,9 +89,10 @@ async function desempacotarObj(buf) {
   return JSON.parse((ehGzip ? await gunzipAsync(b) : b).toString("utf8"));
 }
 
-async function objLoad(name) {
+async function objLoad(name, { fresh = false } = {}) {
   if (SB_URL && SB_KEY) {
-    const res = await fetch(objUrl(name), { headers: { Authorization: `Bearer ${SB_KEY}`, apikey: SB_KEY } });
+    const url = objUrl(name) + (fresh ? "?cacheNonce=" + crypto.randomUUID() : "");
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${SB_KEY}`, apikey: SB_KEY } });
     if (res.ok) return await desempacotarObj(Buffer.from(await res.arrayBuffer()));
     const txt = await res.text().catch(() => "");
     let code = "";
@@ -1186,7 +1187,7 @@ async function handleApi(req, res, pathname) {
     const basePrefix = retem ? "retem-base-" : "transferencia-base-";
     const sess = await exigir(req, res, ["admin", "operador"], retem ? "controle0201" : "transferencia");
     if (!sess) return;
-    const load = async () => (await objLoad(object)) || { ultimoNumero: 0, documentos: [] };
+    const load = async () => (await objLoad(object, { fresh: true })) || { ultimoNumero: 0, documentos: [] };
     const is59 = row => /^0*59$/.test(row.arm || "");
     const owns = doc => doc.autor === sess.usuario && doc.contaCriadaEm === (sess.contaCriadaEm ?? null);
     const canRead = doc => sess.role === "admin" || owns(doc);
