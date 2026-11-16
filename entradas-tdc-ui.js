@@ -475,18 +475,80 @@
       fisica!==null&&fisica!==qtdNota&&h('span',{className:'sc9-tdc-physical-difference'},'Diferença: '+fmtN(fisica-qtdNota)));
   }
 
-  function NotaCard({reg,res,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular}){
+  function ComparativoNota({conferencia,sd3,onSD3}){
+    const [numero,setNumero]=useState(''),[consulta,setConsulta]=useState(''),[escolha,setEscolha]=useState('');
+    const [busy,setBusy]=useState(false),[erro,setErro]=useState('');
+    const documentos=useMemo(()=>sd3&&consulta?M.localizarTransferenciasSD3(sd3.movimentos,consulta):[],[sd3,consulta]);
+    const documento=documentos.length===1?documentos[0]:documentos.find(item=>item.chave===escolha);
+    const linhas=useMemo(()=>documento?M.compararConferenciaSD3(conferencia,documento):[],[conferencia,documento]);
+    const rotuloDocumento=item=>'Filial '+item.filial+' · '+fmtD(item.data);
+    const situacoes={
+      confere:{texto:'Confere',cor:'ok'},
+      divergente:{texto:'Divergente',cor:'bad'},
+      nao_encontrado:{texto:'Não está no SD3',cor:'warn'}
+    };
+    const quantidade=valor=>valor==null?'—':Number(valor.toPrecision(15)).toLocaleString('pt-BR',{maximumFractionDigits:8});
+    async function importar(file){
+      if(!file)return;
+      setBusy(true);setErro('');setConsulta('');setEscolha('');onSD3(null);
+      try{
+        const xlsx=root.XLSX;
+        if(!xlsx)throw Error('A biblioteca de Excel ainda não carregou. Atualize a página e tente novamente.');
+        const wb=xlsx.read(await file.arrayBuffer(),{type:'array'});
+        const base=root.SC9Receiving.parseWorkbook(wb,xlsx,{filial:''});
+        if(!base.hasBranch)throw Error('Inclua a coluna Filial na exportação do SD3.');
+        onSD3({nome:file.name,movimentos:base.rows});
+      }catch(e){setErro(e.message);}
+      finally{setBusy(false);}
+    }
+    return h('div',{className:'sc9-tdc-card',style:{marginTop:10}},
+      h('p',{className:'sc9-tdc-sub'},'Use o documento de transferência do Protheus para comparar a quantidade física salva com a saída do 59 e a entrada no 01 por produto e lote.'),
+      h('form',{className:'sc9-tdc-buscar',onSubmit:event=>{
+        event.preventDefault();
+        if(!sd3||busy||!numero.trim())return;
+        setConsulta(numero.trim());setEscolha('');
+      }},
+        h('label',{className:'sc9-tdc-field'},'Arquivo SD3',h('input',{type:'file',accept:'.xlsx,.xls,.xlsm,.csv',disabled:busy,onChange:event=>{
+          void importar(event.target.files[0]);
+          event.target.value='';
+        }})),
+        h('label',{className:'sc9-tdc-field'},'Documento no SD3',h('input',{className:'sc9-tdc-in',value:numero,disabled:busy,onChange:event=>{
+          setNumero(event.target.value);setConsulta('');setEscolha('');
+        }})),
+        h('button',{type:'submit',className:'sc9-tdc-btn pri',disabled:busy||!sd3||!numero.trim()},'Comparar')),
+      busy&&h('p',{role:'status'},'Lendo o SD3…'),
+      sd3&&h('p',{className:'sc9-tdc-sub',role:'status',style:{marginTop:8}},'Arquivo lido · '+sd3.nome),
+      erro&&h('div',{className:'sc9-tdc-msg err',role:'alert'},erro),
+      consulta&&documentos.length===0&&h('div',{className:'sc9-tdc-msg info',role:'status'},'Nenhuma saída do 59 ou entrada no 01 encontrada para esse documento no SD3 importado. Confira o número e o período do arquivo.'),
+      documentos.length>1&&h('label',{className:'sc9-tdc-field'},'Filial e data do documento',h('select',{className:'sc9-tdc-in',value:escolha,onChange:event=>setEscolha(event.target.value)},
+        h('option',{value:''},'Selecione a filial e a data'),documentos.map(item=>h('option',{key:item.chave,value:item.chave},rotuloDocumento(item))))),
+      documento&&h('div',null,
+        h('p',{className:'sc9-tdc-sub',role:'status',style:{marginTop:12}},'Documento '+consulta+' · '+rotuloDocumento(documento)),
+        h('div',{style:{overflowX:'auto'}},h('table',{className:'sc9-tdc-table'},
+          h('thead',null,h('tr',null,['Produto','Lote','Qtd. física salva','Saída do 59','Entrada no 01','Situação'].map((label,index)=>
+            h('th',{key:label,scope:'col',className:index<2||index===5?'l':''},label)))),
+          h('tbody',null,linhas.map(linha=>{
+            const {texto,cor}=situacoes[linha.situacao];
+            return h('tr',{key:M.chaveConferenciaFisica(linha)},
+              h('td',{className:'l'},linha.produto),h('td',{className:'l'},linha.lote),h('td',null,quantidade(linha.fisica)),
+              h('td',null,quantidade(linha.saida)),h('td',null,quantidade(linha.entrada)),
+              h('td',{className:'l'},h('span',{className:'sc9-tdc-pill '+cor},texto),
+                linha.fisica===null&&h('div',{className:'sc9-tdc-sub'},'Produto e lote fora da conferência da nota')));
+          }))))));
+  }
+
+  function NotaCard({reg,res,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,sd3Comparativo,onSD3Comparativo}){
     const [draft,setDraft]=useState({}),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[notice,setNotice]=useState('');
+    const [comparativoAberto,setComparativoAberto]=useState(false);
     const itens=res?res.itens.filter(i=>M.combinaNota(i,[reg])):[];
-    const chaveFisica=i=>JSON.stringify([M.normProd(i.produto),M.normLote(i.lote)]);
     const contagens=new Map();
     for(const item of reg.conferenciaFisica||[]){
-      const chave=chaveFisica(item);
+      const chave=M.chaveConferenciaFisica(item);
       if(!contagens.has(chave))contagens.set(chave,[]);
       contagens.get(chave).push(item.quantidade);
     }
     const quantidades=itens.map((item,index)=>{
-      const salva=contagens.get(chaveFisica(item))?.shift();
+      const salva=contagens.get(M.chaveConferenciaFisica(item))?.shift();
       return draft[index]??salva??'';
     });
     function updateQuantity(index,value){
@@ -503,8 +565,11 @@
       finally{setBusy(false);}
     }
     const nome='NF '+reg.nota+(reg.serie?'/'+reg.serie:'');
+    const comparativo=reg.conferenciaFisica?.length>0&&h('details',{className:'sc9-tdc-ev',style:{marginTop:10},onToggle:event=>setComparativoAberto(event.currentTarget.open)},
+      h('summary',null,'Comparar com SD3'),
+      comparativoAberto&&h(ComparativoNota,{conferencia:reg.conferenciaFisica,sd3:sd3Comparativo,onSD3:onSD3Comparativo}));
     if(!itens.length)return h('div',{className:'sc9-tdc-nota'},h('div',{className:'sc9-tdc-nota-h'},h('h3',null,nome),h('button',{className:'sc9-tdc-btn bad',onClick:()=>onRemover(reg)},'Tirar da conferência')),
-      h('div',{className:'sc9-tdc-msg info'},'Esta nota não está no SD1 que está no painel. Envie o SD1 mais recente na aba Dados.'));
+      h('div',{className:'sc9-tdc-msg info'},'Esta nota não está no SD1 que está no painel. Envie o SD1 mais recente na aba Dados.'),comparativo);
     const base=itens[0];
     const erros=itens.filter(i=>i.erroForte).length,susp=itens.filter(i=>!i.erroForte&&i.erro).length;
     const fichas=achados.filter(a=>a.nota&&M.combinaNota(a,[reg]));
@@ -530,6 +595,7 @@
         h('button',{type:'button',className:'sc9-tdc-btn ok',disabled:busy,onClick:salvar},busy?'Salvando…':'Salvar e exportar')),
       err&&h('div',{className:'sc9-tdc-msg err',role:'alert'},err),
       notice&&h('div',{className:'sc9-tdc-msg info',role:'status'},notice),
+      comparativo,
       cands.length>0&&h('details',{className:'sc9-tdc-ev',style:{marginTop:10}},h('summary',null,'Entradas manuais no 59 sem nota, até 7 dias depois ('+cands.length+') — algum desses veio junto com esta nota?'),
         h('ul',null,cands.map(c=>h('li',{key:c.id,style:{display:'flex',gap:10,alignItems:'center',justifyContent:'space-between'}},h('span',null,fmtD(c.dtEntrada),' · produto ',h('b',null,c.produto),' · lote ',c.lote,' · ',h('b',null,fmtN(c.qtdFisica)),' pç',c.corrigidoPor&&c.corrigidoPor.length?' · por '+c.corrigidoPor.join(', '):''),
           h('button',{className:'sc9-tdc-btn',onClick:()=>onVincular(c,base,reg)},'Era desta nota'))))));
@@ -598,6 +664,7 @@
   function Notas({fresco,sd1All,sd1Raw,res,notasReg,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,onIrDados}){
     const [num,setNum]=useState(''),[serie,setSerie]=useState(''),[busca,setBusca]=useState(null),[busy,setBusy]=useState(false),[err,setErr]=useState('');
     const [quantidades,setQuantidades]=useState([]),[notice,setNotice]=useState('');
+    const [sd3Comparativo,setSD3Comparativo]=useState(null);
     const tentativa=useRef(0);
     const buscar=()=>{
       setErr('');setNotice('');setQuantidades([]);const b=M.buscarNota(sd1All,num,serie);
@@ -645,7 +712,7 @@
             });
           }}),
           h('div',{className:'sc9-tdc-act',style:{marginTop:12}},h('button',{className:'sc9-tdc-btn ok',disabled:busy,onClick:adicionar},busy?'Adicionando…':'✓ Conferir esta nota')))),
-      regs.length?h('div',null,h('h2',{style:{fontSize:14,margin:'4px 0 10px'}},'Notas em conferência ('+regs.length+')'),regs.map(r=>h(NotaCard,{key:r.nota+'|'+r.serie,reg:r,res,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular}))):
+      regs.length?h('div',null,h('h2',{style:{fontSize:14,margin:'4px 0 10px'}},'Notas em conferência ('+regs.length+')'),regs.map(r=>h(NotaCard,{key:r.nota+'|'+r.serie,reg:r,res,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,sd3Comparativo,onSD3Comparativo:setSD3Comparativo}))):
         h('div',{className:'sc9-tdc-card sc9-tdc-empty'},'Nenhuma nota em conferência ainda. Digite o número de uma nota acima.'));
   }
 

@@ -351,6 +351,8 @@
     return Number.isFinite(quantity)&&quantity<=1e9?quantity:null;
   }
 
+  const chaveConferenciaFisica=item=>JSON.stringify([normProd(item.produto),normLote(item.lote)]);
+
   function conferenciaParaTransferencia(itens,quantidades){
     const registros=[],porProdutoLote=new Map();
     for(const [index,item] of itens.entries()){
@@ -360,7 +362,7 @@
       if(quantidade>0&&(!produto||!lote||/[;\r\n]/.test(produto+lote)))throw Error('O item '+(index+1)+' precisa de produto e lote válidos para gerar a transferência.');
       registros.push({produto,lote,quantidade});
       if(quantidade===0)continue;
-      const chave=JSON.stringify([normProd(produto),normLote(lote)]);
+      const chave=chaveConferenciaFisica({produto,lote});
       const existing=porProdutoLote.get(chave);
       if(existing)existing.qtde=Number((existing.qtde+quantidade).toPrecision(15));
       else porProdutoLote.set(chave,{produto,origem:'59',lote,produtoDestino:produto,armDestino:'01',loteDestino:lote,qtde:quantidade});
@@ -368,7 +370,43 @@
     return {registros,transferencias:[...porProdutoLote.values()]};
   }
 
-  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,dataRelatorio,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding,quantidadeConferida,conferenciaParaTransferencia};
+  function localizarTransferenciasSD3(movimentos,documento){
+    const numero=normNota(documento), grupos=new Map();
+    if(!numero)return [];
+    for(const mov of movimentos){
+      const saida=mov.tp===999&&normArm(mov.armazem)==='59'&&(!mov.cf||mov.cf==='RE4');
+      const entrada=mov.tp===499&&normArm(mov.armazem)==='1'&&(!mov.cf||mov.cf==='DE4');
+      if(mov.estornado||mov.qt<=0||normNota(mov.doc)!==numero||(!saida&&!entrada))continue;
+      const chave=JSON.stringify([mov.filial,mov.dt]);
+      if(!grupos.has(chave))grupos.set(chave,{chave,filial:mov.filial,data:mov.dt,movimentos:[]});
+      grupos.get(chave).movimentos.push(mov);
+    }
+    return [...grupos.values()].sort((a,b)=>b.data.localeCompare(a.data)||a.filial.localeCompare(b.filial));
+  }
+
+  function compararConferenciaSD3(conferencia,transferencia){
+    const itens=new Map();
+    for(const ref of [...conferencia,...transferencia.movimentos]){
+      if(!normProd(ref.produto)||!normLote(ref.lote))continue;
+      const chave=chaveConferenciaFisica(ref);
+      if(!itens.has(chave))itens.set(chave,{produto:ref.produto,lote:ref.lote,fisica:null,saida:0,entrada:0});
+    }
+    for(const item of conferencia){
+      const linha=itens.get(chaveConferenciaFisica(item));
+      if(linha)linha.fisica=(linha.fisica??0)+item.quantidade;
+    }
+    for(const mov of transferencia.movimentos){
+      const linha=itens.get(chaveConferenciaFisica(mov));
+      if(linha)linha[mov.tp===999?'saida':'entrada']+=mov.qt;
+    }
+    return [...itens.values()].map(linha=>{
+      const {fisica,saida,entrada}=linha;
+      const igual=fisica!==null&&Math.abs(saida-fisica)<1e-8&&Math.abs(entrada-fisica)<1e-8;
+      return {...linha,situacao:igual?'confere':saida===0&&entrada===0?'nao_encontrado':'divergente'};
+    });
+  }
+
+  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,dataRelatorio,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding,quantidadeConferida,chaveConferenciaFisica,conferenciaParaTransferencia,localizarTransferenciasSD3,compararConferenciaSD3};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.SC9EntradasTDC=api;
   if(root.document&&root.React&&typeof root.SC9EntradasTDCMount==='undefined'&&typeof require==='undefined'){/* a tela é carregada por entradas-tdc-ui.js */}

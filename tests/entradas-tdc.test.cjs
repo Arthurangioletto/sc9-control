@@ -13,6 +13,34 @@ test('conferência de nota usa exclusivamente a quantidade física para a transf
   assert.deepStrictEqual(T.conferenciaParaTransferencia(itens,['0','0','0']).transferencias,[]);
 });
 
+test('comparativo físico do 59 exige saída e entrada do mesmo documento, filial e data', () => {
+  const base={doc:'000123',filial:'01',dt:'2026-11-16',produto:'P01',lote:'L1',qt:203};
+  const saida={...base,tp:999,cf:'RE4',armazem:'59'};
+  const entrada={...base,tp:499,cf:'DE4',armazem:'01'};
+  const candidatos=T.localizarTransferenciasSD3([
+    saida,entrada,{...saida,estornado:true,qt:900},{...saida,armazem:'02'},
+    {...entrada,doc:'NF-OUTRA'},{...entrada,dt:'2026-11-15'},{...entrada,filial:'02'},
+    {...saida,cf:'RE7'}
+  ],'123');
+  assert.strictEqual(candidatos.length,3);
+  const principal=candidatos.find(item=>item.filial==='01'&&item.data==='2026-11-16');
+  assert.deepStrictEqual(principal.movimentos,[saida,entrada]);
+  const fisica=[{produto:'p01',lote:'l1',quantidade:100},{produto:'P01',lote:'L1',quantidade:103}];
+  assert.deepStrictEqual(T.compararConferenciaSD3(fisica,principal).map(row=>[row.fisica,row.saida,row.entrada,row.situacao]),[[203,203,203,'confere']]);
+  const parcial=candidatos.find(item=>item.filial==='02');
+  assert.strictEqual(T.compararConferenciaSD3(fisica,parcial)[0].situacao,'divergente');
+  assert.strictEqual(T.compararConferenciaSD3([{...fisica[0],quantidade:204}],principal)[0].situacao,'divergente');
+  assert.deepStrictEqual(T.localizarTransferenciasSD3([saida,entrada],'456'),[]);
+});
+
+test('comparativo físico do 59 distingue lote faltante, quantidade zerada e lote extra', () => {
+  const transferencia={movimentos:[{tp:999,produto:'P02',lote:'L2',qt:5}]};
+  const fisica=[{produto:'P01',lote:'L1',quantidade:3},{produto:'P03',lote:'L3',quantidade:0}];
+  assert.deepStrictEqual(T.compararConferenciaSD3(fisica,transferencia).map(row=>[row.produto,row.fisica,row.situacao]),[
+    ['P01',3,'nao_encontrado'],['P03',0,'confere'],['P02',null,'divergente']
+  ]);
+});
+
 const sd1 = (nota, produto, lote, qt, dtDigit, usuario = 'tdc1') => ({ nota, serie: '1', fornecedor: 'FORN', produto, lote, qt, armazem: '59', dtDigit, emissao: dtDigit, hora: '09:00', usuario, validade: '', tipo: '', cfop: '' });
 const mv = (o) => ({ estornado: false, usuario: 'est1', ...o });
 // par de transferência RE4 (saída) + DE4 (entrada)
