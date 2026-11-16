@@ -4,7 +4,7 @@
   const scope = value => code(value).replace(/^0+(?=\d+$)/, '');
   const header = value => code(value).normalize('NFD').replace(/[\u0300-\u036f]|[^A-Z0-9]/g, '');
   const key = (...parts) => JSON.stringify(parts);
-  const isSource = arm => ['59', 'ES'].includes(scope(arm));
+  const isSource = arm => scope(arm) === '59';
   const destinationAddress = row => row.enderecoDestino || '';
 
   function sheetRows(book, xlsx, name, columns, optional = []) {
@@ -92,32 +92,11 @@
     })).filter(group => group.itens.length);
   }
 
-  function findInventoryScan(items, value, amount = 1) {
+  function findInventoryScan(items, value) {
     const input = code(value);
     if (!input) return { ambiguous: false };
     const matches = items.filter(item => isSource(item.arm) && [item.lote, item.sku, item.ean].some(value => code(value) === input));
-    if (!matches.length) return { ambiguous: false };
-    // Várias linhas só se contam como o mesmo item quando diferem apenas no armazém.
-    const same = matches.every(item => item.filial === matches[0].filial && code(item.sku) === code(matches[0].sku) && code(item.lote) === code(matches[0].lote));
-    if (!same) return { ambiguous: true };
-    const ordered = matches.sort((a, b) => scope(a.arm).localeCompare(scope(b.arm)));
-    const allocations = [];
-    let remaining = amount;
-    for (const row of ordered) {
-      const quantity = Math.min(remaining, Math.max(0, row.esperado - row.conferido));
-      if (quantity > 0) allocations.push({ row, quantity });
-      remaining -= quantity;
-    }
-    if (remaining > 0) {
-      if (allocations.length) allocations.at(-1).quantity += remaining;
-      else allocations.push({ row: ordered[0], quantity: remaining });
-    }
-    const balances = new Map();
-    for (const row of ordered) {
-      const arm = scope(row.arm);
-      balances.set(arm, (balances.get(arm) || 0) + row.esperado);
-    }
-    return { item: allocations[0]?.row, allocations, balances };
+    return matches.length === 1 ? { item: matches[0] } : { ambiguous: matches.length > 1 };
   }
 
   function aggregateExportRecords(rows) {
@@ -360,6 +339,6 @@
     return xlsx.CFB.write(zip,{type:'array',fileType:'zip',compression:true});
   }
 
-  root.SC9TransferenciaInventory = { read, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, compareDaily, expiryStatus, highlightExpiredWorkbook };
+  root.SC9TransferenciaInventory = { read, isSource, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, compareDaily, expiryStatus, highlightExpiredWorkbook };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9TransferenciaInventory;
 })(typeof window === 'object' ? window : globalThis);

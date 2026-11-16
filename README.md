@@ -274,9 +274,9 @@ As planilhas geradas a partir de listas de pedidos (atrasados, em aberto, enviad
 
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
 
-- Lê os saldos dos armazéns **59 e ES** no SB8 e soma as linhas do mesmo produto, lote e armazém.
+- Lê somente o saldo do armazém **59** no SB8 e soma as linhas do mesmo produto e lote.
 - Mostra o endereço de destino no armazém **01** a partir da aba ZZ2, cruzando filial, produto e lote quando disponível.
-- A bipagem mostra o saldo de cada armazém. A quantidade bipada preenche primeiro o saldo ainda disponível no 59 e depois no ES. A tela avisa quando a contagem excede o saldo.
+- A bipagem mostra o saldo do 59 e avisa quando a contagem excede esse saldo.
 - A quantidade conferida pode ser **editada direto** na tabela.
 - A exportação soma as quantidades por filial, produto, lote e armazém de origem nas duas abas. O destino é escolhido na tela Documentos (padrão 01).
 - Transferência e Retem salvam os documentos no servidor com numeração própria (`TRF-000001` e `DOC-000001`). Operadores consultam e editam somente os próprios documentos conforme o perfil de cada aba. O administrador consulta todos e pode importar documentos antigos no navegador onde foram criados. O histórico antigo é identificado sem atribuir autoria.

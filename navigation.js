@@ -17,7 +17,7 @@
     controle0201:{label:'Controle 02 → 01',icon:'swap',description:'Registre o recebimento físico no 01 e confira a transferência pelo SD3.'},
     controle:{label:'Controle 02 → 01',icon:'swap',description:'Registre o recebimento físico no 01 e confira a transferência pelo SD3.'},
     retem26:{label:'Retem - armazem 26',icon:'box',description:'Confira os produtos e lotes da transferência com o SB8 do Retem.'},
-    transferencia:{label:'Transferência',icon:'swap',description:'Bipe os lotes, some o saldo e veja em qual armazém do SB8 (59, ES ou outro) cada peça está.'},
+    transferencia:{label:'Transferência',icon:'swap',description:'Confira os lotes e o saldo do armazém 59.'},
     saida:{label:'Saída para expedição',icon:'out',description:'Confira os pedidos encaminhados para expedição.'},
     recebimento:{label:'Recebimento',icon:'in',description:'Acompanhe os pedidos recebidos e suas conferências.'},
     expedicao:{icon:'box',description:'Consulte a situação dos pedidos e da expedição.'},
