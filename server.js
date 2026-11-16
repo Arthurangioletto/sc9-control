@@ -2559,7 +2559,7 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === "/api/entradas-tdc/notas" && method === "GET") {
     if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
-    try { return sendJson(res, 200, (await objLoad(TDC_NOTAS_OBJ)) || { v: 1, notas: {} }); }
+    try { return sendJson(res, 200, (await objLoad(TDC_NOTAS_OBJ, { fresh: true })) || { v: 1, notas: {} }); }
     catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar as notas")); }
   }
   if (pathname === "/api/entradas-tdc/notas" && method === "POST") {
@@ -2569,15 +2569,27 @@ async function handleApi(req, res, pathname) {
     const txt = (v, n) => String(v == null ? "" : v).trim().slice(0, n);
     const nota = txt(body && body.nota, 30), serie = txt(body && body.serie, 10);
     if (!nota || !/^[0-9A-Za-z._-]+$/.test(nota)) return sendJson(res, 400, { error: "informe o número da nota" });
+    const fisico = body.conferenciaFisica;
+    if (fisico !== undefined && (!Array.isArray(fisico) || !fisico.length || fisico.length > 10000 || fisico.some(row =>
+      !row || typeof row.produto !== "string" || typeof row.lote !== "string" ||
+      row.produto.length > 100 || row.lote.length > 100 || !Number.isFinite(row.quantidade) ||
+      row.quantidade < 0 || row.quantidade > 1e9 ||
+      row.quantidade > 0 && (!row.produto.trim() || !row.lote.trim() || /[;\r\n]/.test(row.produto+row.lote))
+    ))) return sendJson(res, 400, { error: "informe quantidades físicas válidas para os itens da nota" });
     const chave = (/^\d+$/.test(nota) ? nota.replace(/^0+(?=\d)/, "") : nota.toUpperCase()) + "|" + serie;
     try {
       const resp = await comFila("tdc-notas", async () => {
-        const d = (await objLoad(TDC_NOTAS_OBJ)) || { v: 1, notas: {} };
+        const d = (await objLoad(TDC_NOTAS_OBJ, { fresh: true })) || { v: 1, notas: {} };
         d.notas = d.notas || {};
         if (body.remover === true) delete d.notas[chave];
         else {
           if (!d.notas[chave] && Object.keys(d.notas).length >= 5000) throw Object.assign(new Error("limite de notas em conferência atingido"), { http: 400 });
           if (!d.notas[chave]) d.notas[chave] = { nota, serie, por: sess.usuario || "admin", em: new Date().toISOString() };
+          if (fisico !== undefined) {
+            d.notas[chave].conferenciaFisica = fisico.map(({produto,lote,quantidade}) => ({produto,lote,quantidade}));
+            d.notas[chave].conferidaPor = sess.usuario || "admin";
+            d.notas[chave].conferidaEm = new Date().toISOString();
+          }
         }
         await objSave(TDC_NOTAS_OBJ, d);
         return { ok: true, notas: d.notas };

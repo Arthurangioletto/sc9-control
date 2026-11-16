@@ -21,3 +21,11 @@ test('falha de exportação avisa uma vez e não deixa a ação seguinte continu
  const alerts=[],root={alert:message=>alerts.push(message)};vm.runInNewContext(fs.readFileSync(require.resolve('../export-workbook.js'),'utf8'),{window:root});let continued=false;
  assert.throws(()=>{root.SC9Exports.exportWorkbook([{name:'Dados',rows:[]}],'dados');continued=true;},/biblioteca do Excel/);assert.equal(continued,false);assert.equal(alerts.length,1);assert.match(alerts[0],/Não foi possível exportar/);
 });
+test('exportação de transferência mantém o layout do importador e a quantidade numérica',()=>{
+ const X=excel();X.utils.aoa_to_sheet=rows=>({rows});
+ const wb=E.buildTransferWorkbook([{produto:'0012',origem:'59',lote:'001',produtoDestino:'0012',armDestino:'01',loteDestino:'001',qtde:3}],X);
+ assert.deepEqual(wb.SheetNames,['Transferência múltipla']);
+ const sheet=wb.Sheets[wb.SheetNames[0]];
+ assert.deepEqual(sheet.rows[1],['0012','59','001','0012','01','001',3,'0012;59;001;0012;01;001;3']);
+ assert.equal(sheet.H2.f,'A2&";"&B2&";"&C2&";"&D2&";"&E2&";"&F2&";"&G2');
+});
