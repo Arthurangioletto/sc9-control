@@ -1187,6 +1187,7 @@ async function handleApi(req, res, pathname) {
     const sess = await exigir(req, res, ["admin", "operador"], retem ? "controle0201" : "transferencia");
     if (!sess) return;
     const load = async () => (await objLoad(object)) || { ultimoNumero: 0, documentos: [] };
+    const is59 = row => /^0*59$/.test(row.arm || "");
     const owns = doc => doc.autor === sess.usuario && doc.contaCriadaEm === (sess.contaCriadaEm ?? null);
     const canRead = doc => sess.role === "admin" || owns(doc);
     const publicDoc = doc => {
@@ -1228,6 +1229,9 @@ async function handleApi(req, res, pathname) {
         }
         const normalize = value => String(value ?? "").trim().toUpperCase().replace(/^0+(?=\d+$)/, "");
         const rows = docs.flatMap(doc => doc.registros.map(row => ({ ...row, documentoOrigem: doc.id })));
+        if (!retem && rows.some(row => row.conferido > 0 && !is59(row))) {
+          throw new ErroHttp(400, "Selecione documentos com origem somente no armazém 59.");
+        }
         const filiais = new Set(rows.filter(row => row.conferido > 0).map(row => normalize(row.filial)));
         const destinations = new Set(docs.map(doc => normalize(doc.armazens?.destino)));
         const origins = new Set(docs.map(doc => normalize(doc.armazens?.origem)));
@@ -1293,6 +1297,12 @@ async function handleApi(req, res, pathname) {
           if (!["andamento", "pausado", "finalizado"].includes(body.status) || !transferenciaRecordsValid(body.registros)) {
             throw new ErroHttp(400, "Registros da transferência inválidos.");
           }
+          if (!retem && doc.registros.some(row => !is59(row))) {
+            throw new ErroHttp(409, "Este documento contém lançamentos de outra origem. Gere um novo documento para conferir o armazém 59.");
+          }
+          if (!retem && body.registros.some(row => !is59(row))) {
+            throw new ErroHttp(400, "A origem da Transferência deve ser o armazém 59.");
+          }
           if (body.status === "finalizado") {
             const counted = body.registros.filter(row => row.conferido > 0);
             const destino = String(body.armazens?.destino || "").trim().toUpperCase();
@@ -1307,7 +1317,7 @@ async function handleApi(req, res, pathname) {
             doc.armazens = { origem, destino };
           }
           if (body.base !== undefined) {
-            if (!transferenciaBaseValid(body.base)) {
+            if (!transferenciaBaseValid(body.base) || !retem && body.base.items.some(row => !is59(row))) {
               throw new ErroHttp(400, "Base de transferência inválida.");
             }
             doc.baseObject = basePrefix + crypto.randomUUID() + ".json";

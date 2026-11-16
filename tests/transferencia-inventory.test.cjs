@@ -9,7 +9,7 @@ const xlsx = { utils: { sheet_to_json: rows => rows } };
 const book = sheets => ({ SheetNames: Object.keys(sheets), Sheets: sheets });
 const sb1 = [['Filial', 'Codigo', 'Descricao', 'Unidade', 'Cod Barras'], ['', 'P01', 'Produto', 'UN', '7891234567890']];
 
-test('Transferência lê os saldos do 59 e ES e mostra somente o endereço de destino no 01', () => {
+test('Transferência lê somente o saldo do 59 e mostra o endereço de destino no 01', () => {
   const lots = read(book({
     SB8: [
       ['Filial', 'Produto', 'Armazem', 'Data Validad', 'Saldo Lote', 'Lote'],
@@ -26,7 +26,7 @@ test('Transferência lê os saldos do 59 e ES e mostra somente o endereço de de
   assert.equal(lots.length, 1);
   const items = lots[0].itens;
   assert.deepEqual(items.map(item => [item.arm, item.esperado, inventory.destinationAddress(item)]), [
-    ['59', 5, 'D01'], ['ES', 3, 'D01']
+    ['59', 5, 'D01']
   ]);
   assert.equal(inventory.destinationAddress({ endereco: 'A59' }), '');
 });
@@ -55,23 +55,17 @@ test('Transferência rejeita saldo inválido em vez de contar errado', () => {
   }), xlsx), /linha inválida/);
 });
 
-test('bipagem exibe o saldo por armazém e divide a quantidade entre 59 e ES', () => {
+test('bipagem só localiza o 59, inclusive com itens de outros armazéns numa base antiga', () => {
   const base = { filial: '01', sku: 'P01', lote: '000123', ean: '', conferido: 0 };
   const items = [
     { ...base, id: 'a', arm: '26', esperado: 20 },
     { ...base, id: 'b', arm: 'ES', esperado: 3 },
     { ...base, id: 'c', arm: '59', esperado: 5 }
   ];
-  let scan = findInventoryScan(items, '000123', 7);
-  assert.equal(scan.item.arm, '59');
-  assert.deepEqual([...scan.balances], [['59', 5], ['ES', 3]]);
-  assert.deepEqual(scan.allocations.map(({ row, quantity }) => [row.arm, quantity]), [['59', 5], ['ES', 2]]);
+  assert.equal(findInventoryScan(items, '000123').item, items[2]);
   items[2].conferido = 5;
-  assert.equal(findInventoryScan(items, '000123').item.arm, 'ES');
-  items[1].conferido = 3;
-  scan = findInventoryScan(items, '000123');
-  assert.equal(scan.item.arm, '59', 'com tudo conferido continua aceitando o bip, sem erro');
-  assert.deepEqual(findInventoryScan([items[0]], '000123'), { ambiguous: false });
+  assert.equal(findInventoryScan(items, '000123').item, items[2], 'o excesso continua sendo apontado no 59');
+  assert.deepEqual(findInventoryScan(items.slice(0,2), '000123'), { ambiguous: false });
 });
 
 test('lotes iguais de produtos ou filiais diferentes continuam ambíguos', () => {
@@ -108,7 +102,7 @@ test('a página da Transferência exporta a origem de cada peça e deixa a quant
     ['000123', '59', 5], ['000123', 'ES', 3], ['000124', '59', 0]
   ]);
   assert(html.includes('onEditar:edit'));
-  assert(html.includes("' · Saldo SB8 '+stock+combined"));
+  assert(html.includes("' · Saldo SB8 59: '+stock"));
   assert(!/Retem · Armazém 26|SC9RetemInventory|SC9RetemDocumentStorage/.test(html));
 });
 
