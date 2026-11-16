@@ -3,6 +3,16 @@ const test = require('node:test');
 const assert = require('node:assert');
 const T = require('../entradas-tdc.js');
 
+test('conferência de nota usa exclusivamente a quantidade física para a transferência 59 a 01', () => {
+  const itens=[{produto:'00012',lote:'L1',qt:4},{produto:'00012',lote:'L1',qt:9},{produto:'25',lote:'L2',qt:4}];
+  const {registros,transferencias}=T.conferenciaParaTransferencia(itens,['2,5','1','0']);
+  assert.deepStrictEqual(registros.map(row=>row.quantidade),[2.5,1,0]);
+  assert.deepStrictEqual(transferencias,[{produto:'00012',origem:'59',lote:'L1',produtoDestino:'00012',armDestino:'01',loteDestino:'L1',qtde:3.5}]);
+  assert.throws(()=>T.conferenciaParaTransferencia(itens,['2,5','','0']),/item 2/);
+  assert.throws(()=>T.conferenciaParaTransferencia([{produto:'12',qt:4}],['1']),/lote válid/);
+  assert.deepStrictEqual(T.conferenciaParaTransferencia(itens,['0','0','0']).transferencias,[]);
+});
+
 const sd1 = (nota, produto, lote, qt, dtDigit, usuario = 'tdc1') => ({ nota, serie: '1', fornecedor: 'FORN', produto, lote, qt, armazem: '59', dtDigit, emissao: dtDigit, hora: '09:00', usuario, validade: '', tipo: '', cfop: '' });
 const mv = (o) => ({ estornado: false, usuario: 'est1', ...o });
 // par de transferência RE4 (saída) + DE4 (entrada)

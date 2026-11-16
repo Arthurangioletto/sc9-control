@@ -83,6 +83,13 @@ test('notas em conferência: adiciona sem duplicar (zeros à esquerda), valida e
   const r = await req('/api/entradas-tdc/notas', { cookie: comPerfil, body: { nota: '123', serie: '1' } });
   assert.strictEqual(Object.keys(r.data.notas).length, 1); assert.strictEqual(r.data.notas['123|1'].por, 'estoque');
   assert.strictEqual(Object.keys((await req('/api/entradas-tdc/notas', { cookie: admin })).data.notas).length, 1);
+  const conferenciaFisica = [{produto:'P1',lote:'L1',quantidade:3},{produto:'P2',lote:'L2',quantidade:0}];
+  assert.strictEqual((await req('/api/entradas-tdc/notas', { cookie: comPerfil,body:{nota:'123',serie:'1',conferenciaFisica:[{...conferenciaFisica[0],quantidade:-1}]} })).status,400);
+  const saved=await req('/api/entradas-tdc/notas',{cookie:comPerfil,body:{nota:'123',serie:'1',conferenciaFisica}});
+  assert.strictEqual(saved.status,200);
+  const nota=(await req('/api/entradas-tdc/notas',{cookie:admin})).data.notas['123|1'];
+  assert.deepStrictEqual(nota.conferenciaFisica,conferenciaFisica);
+  assert.strictEqual(nota.conferidaPor,'estoque');
   const d = await req('/api/entradas-tdc/notas', { cookie: admin, body: { nota: '123', serie: '1', remover: true } });
   assert.strictEqual(Object.keys(d.data.notas).length, 0);
 });

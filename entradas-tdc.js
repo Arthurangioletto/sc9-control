@@ -344,7 +344,31 @@
     return {resumo,porUsuario,detalhe:det,tempo};
   }
 
-  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,dataRelatorio,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding};
+  function quantidadeConferida(value){
+    const raw=String(value??'').trim();
+    if(!/^\d+(?:[,.]\d+)?$/.test(raw))return null;
+    const quantity=Number(raw.replace(',','.'));
+    return Number.isFinite(quantity)&&quantity<=1e9?quantity:null;
+  }
+
+  function conferenciaParaTransferencia(itens,quantidades){
+    const registros=[],porProdutoLote=new Map();
+    for(const [index,item] of itens.entries()){
+      const quantidade=quantidadeConferida(quantidades[index]);
+      if(quantidade===null)throw Error('Informe a quantidade física válida do item '+(index+1)+'. Digite 0 se não houver saldo.');
+      const produto=String(item.produto??'').trim(),lote=String(item.lote??'').trim();
+      if(quantidade>0&&(!produto||!lote||/[;\r\n]/.test(produto+lote)))throw Error('O item '+(index+1)+' precisa de produto e lote válidos para gerar a transferência.');
+      registros.push({produto,lote,quantidade});
+      if(quantidade===0)continue;
+      const chave=JSON.stringify([normProd(produto),normLote(lote)]);
+      const existing=porProdutoLote.get(chave);
+      if(existing)existing.qtde=Number((existing.qtde+quantidade).toPrecision(15));
+      else porProdutoLote.set(chave,{produto,origem:'59',lote,produtoDestino:produto,armDestino:'01',loteDestino:lote,qtde:quantidade});
+    }
+    return {registros,transferencias:[...porProdutoLote.values()]};
+  }
+
+  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,dataRelatorio,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding,quantidadeConferida,conferenciaParaTransferencia};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.SC9EntradasTDC=api;
   if(root.document&&root.React&&typeof root.SC9EntradasTDCMount==='undefined'&&typeof require==='undefined'){/* a tela é carregada por entradas-tdc-ui.js */}
