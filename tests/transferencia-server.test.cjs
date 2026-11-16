@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const http = require('node:http');
 
 test('documentos da Transferência pertencem à conta e somente o administrador consulta o conjunto', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-transferencia-'));
@@ -126,5 +127,57 @@ test('documentos da Transferência pertencem à conta e somente o administrador 
   } finally {
     await new Promise(resolve=>server.close(resolve));
     fs.rmSync(dir, { recursive:true, force:true });
+  }
+});
+
+test('Transferência e Retem abrem e salvam bases de documentos novos mesmo com uma cópia antiga no cache', async () => {
+  const objects = new Map(), cached = new Map();
+  const storage = http.createServer(async (req,res) => {
+    const url = new URL(req.url, 'http://localhost');
+    const key = url.pathname;
+    if (req.method === 'POST') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      objects.set(key, Buffer.concat(chunks));
+      res.writeHead(200).end('{}');
+      return;
+    }
+    if (!cached.has(key)) cached.set(key, objects.get(key));
+    const object = url.searchParams.has('cacheNonce') ? objects.get(key) : cached.get(key);
+    res.writeHead(object ? 200 : 404).end(object || '{"statusCode":404}');
+  });
+  await new Promise(resolve => storage.listen(0,'127.0.0.1',resolve));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(),'sc9-transferencia-cache-'));
+  let server;
+  try {
+    for (const name of ['server.js','stock-position.js','inventory-integrity.js']) {
+      fs.copyFileSync(path.join(__dirname,'..',name),path.join(dir,name));
+    }
+    const password = 'admin-ficticio-transferencia-cache';
+    Object.assign(process.env,{ SUPABASE_URL:'http://127.0.0.1:'+storage.address().port,
+      SUPABASE_SERVICE_KEY:'storage-ficticio',PORT:'0',APP_PASSWORD:password,SESSION_SECRET:password });
+    server=require(path.join(dir,'server.js'));
+    if (!server.listening) await new Promise(resolve=>server.once('listening',resolve));
+    for (const scope of ['transferencia','retem']) {
+      const endpoint='http://127.0.0.1:'+server.address().port+'/api/'+scope+'-documentos';
+      const api=(suffix='',body)=>fetch(endpoint+suffix,{
+        method:body?'POST':'GET',headers:{'X-App-Password':password,'X-SC9-App':'1','Content-Type':'application/json'},
+        body:body?JSON.stringify(body):undefined
+      });
+      assert.deepEqual((await (await api()).json()).documentos,[]);
+      const { documento }=await (await api('',{acao:'criar'})).json();
+      const basePath='/'+documento.id+'/base';
+      assert.deepEqual(await (await api(basePath)).json(),{base:null});
+      const item={sku:'P1',lote:'L1',filial:'01',conferido:0,avaria:0,esperado:1};
+      if(scope==='transferencia')item.arm='59';
+      const base={arquivo:'SB8.xlsx',items:[item]};
+      const saved=await api('',{acao:'atualizar',id:documento.id,versao:documento.versao,status:'andamento',registros:[],base});
+      assert.equal(saved.status,200);
+      assert.deepEqual(await (await api(basePath)).json(),{base});
+    }
+  } finally {
+    if (server) await new Promise(resolve=>server.close(resolve));
+    await new Promise(resolve=>storage.close(resolve));
+    fs.rmSync(dir,{recursive:true,force:true});
   }
 });
