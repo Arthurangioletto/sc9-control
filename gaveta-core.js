@@ -312,6 +312,8 @@
   }
 
   // ---------- cruzamentos ----------
+  // No ZZ2 os armários vêm como endereços ZARM01, ZARM02…; o resto são gavetas.
+  const isArmario = codigo => /^ZARM/.test(upper(codigo));
   const gavetaId = (filial, arm, codigo) => [place(filial), place(arm), upper(codigo)].join('|');
 
   // Uma gaveta = um endereço do ZZ2 num armazém e filial.
@@ -471,7 +473,7 @@
   }
 
   const api = {
-    BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
+    BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, isArmario, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
     cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, cleanAnalysis, summarize,
     dashboard, baseState
   };

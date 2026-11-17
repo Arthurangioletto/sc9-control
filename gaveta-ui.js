@@ -57,21 +57,31 @@
   function GavetaList({ data, onOpen }) {
     const [query, setQuery] = useState('');
     const [filter, setFilter] = useState('faltam');
+    const [kind, setKind] = useState('gaveta');
     const [limit, setLimit] = useState(60);
-    const counts = useMemo(() => ({
-      faltam: data.gavetas.filter(item => !item.ultima).length,
-      feitas: data.gavetas.filter(item => item.ultima).length,
-      todas: data.gavetas.length
+    // Armários (ZARM…) têm dezenas de produtos: ficam separados das gavetas.
+    const scope = useMemo(() => data.gavetas.filter(item => kind === 'todos' || (kind === 'armario') === Core.isArmario(item.codigo)), [data, kind]);
+    const kindCounts = useMemo(() => ({
+      gaveta: data.gavetas.filter(item => !Core.isArmario(item.codigo)).length,
+      armario: data.gavetas.filter(item => Core.isArmario(item.codigo)).length,
+      todos: data.gavetas.length
     }), [data]);
+    const counts = useMemo(() => ({
+      faltam: scope.filter(item => !item.ultima).length,
+      feitas: scope.filter(item => item.ultima).length,
+      todas: scope.length
+    }), [scope]);
     const rows = useMemo(() => {
       const q = Core.upper(query);
-      return data.gavetas.filter(item => (filter === 'todas' || (filter === 'faltam') === !item.ultima) &&
+      return scope.filter(item => (filter === 'todas' || (filter === 'faltam') === !item.ultima) &&
         (!q || item.codigo.includes(q) || item.armario.includes(q)));
-    }, [data, query, filter]);
-    useEffect(() => setLimit(60), [query, filter]);
+    }, [scope, query, filter]);
+    useEffect(() => setLimit(60), [query, filter, kind]);
     const blocked = !data.bases.sb8.presente;
     return h('div', { className: 'sc9g-stack' },
       h('input', { className: 'sc9g-input sc9g-search', type: 'search', inputMode: 'search', autoCapitalize: 'characters', placeholder: 'Buscar gaveta ou armário', value: query, onChange: event => setQuery(event.target.value), 'aria-label': 'Buscar gaveta' }),
+      kindCounts.armario > 0 && h('div', { className: 'sc9g-seg', role: 'tablist', 'aria-label': 'Tipo de endereço' }, [['gaveta', 'Gavetas'], ['armario', 'Armários'], ['todos', 'Ambos']].map(([id, label]) =>
+        h('button', { key: id, type: 'button', role: 'tab', 'aria-selected': kind === id, className: kind === id ? 'is-on' : '', onClick: () => setKind(id) }, label, h('span', null, num(kindCounts[id]))))),
       h('div', { className: 'sc9g-seg', role: 'tablist' }, [['faltam', 'Faltam'], ['feitas', 'Analisadas'], ['todas', 'Todas']].map(([id, label]) =>
         h('button', { key: id, type: 'button', role: 'tab', 'aria-selected': filter === id, className: filter === id ? 'is-on' : '', onClick: () => setFilter(id) }, label, h('span', null, num(counts[id]))))),
       !data.gavetas.length && h('p', { className: 'sc9g-empty' }, 'Nenhuma gaveta cadastrada. O administrador precisa carregar o ZZ2.'),

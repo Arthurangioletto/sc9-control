@@ -176,3 +176,10 @@ test('leitura em fluxo lê ZZ2 e SB1 com textos compartilhados', async () => {
 test('leitura em fluxo recusa arquivo que não é xlsx', async () => {
   await assert.rejects(() => G.readWorkbookStream(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24])), /xlsx/);
 });
+
+test('endereços ZARM são armários, o resto é gaveta', () => {
+  assert.equal(G.isArmario('ZARM03'), true);
+  assert.equal(G.isArmario(' zarm11 '), true);
+  assert.equal(G.isArmario('AA06'), false);
+  assert.equal(G.isArmario('ZA01'), false);
+});
