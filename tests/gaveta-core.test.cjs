@@ -90,7 +90,7 @@ test('a análise só fecha com todos os produtos conferidos e valida os dados', 
   assert.throws(() => G.cleanAnalysis({ itens: [item('P1', { transferir: [{ arm: '59', lote: 'L1', qtd: 0 }] }), item('P2')] }, gaveta), /positiva/);
   const ok = G.cleanAnalysis({ itens: [item('P1', { lotes: [{ lote: 'l1', saldo: 10, validadeSistema: '2027-05-01', validadeNova: '2027-06-01', analisado: true }], transferir: [{ arm: '59', lote: 'l1', qtd: 7, obs: 'trazer' }] }), item('P2', { semSaldo: true })], extras: [{ lote: 'zz9', obs: 'sem cadastro' }] }, gaveta);
   const resumo = G.summarize(ok.itens, '2026-11-17');
-  assert.deepEqual(resumo, { produtos: 2, semSaldo: 1, validadesAlteradas: 1, vencidos: 0, transferencias: 1, lotes: 1, lotesAnalisados: 1 });
+  assert.deepEqual(resumo, { produtos: 2, semSaldo: 1, validadesAlteradas: 1, vencidos: 0, transferencias: 1, lotes: 1, lotesAnalisados: 1, lotesContados: 0, divergencias: 0 });
   assert.equal(ok.itens[0].lotes[0].analisado, true);
   const semMarca = G.cleanAnalysis({ itens: [item('P1', { lotes: [{ lote: 'l1', saldo: 10, validadeSistema: '2027-05-01' }] }), item('P2', { semSaldo: true })] }, gaveta);
   assert.equal(semMarca.itens[0].lotes[0].analisado, false);
@@ -242,4 +242,59 @@ test('exportação traz o lote em todas as linhas da aba Lotes e se foi analisad
   assert.equal(gavetas[1][gavetas[0].indexOf('Hora')], '09:30');
   assert.deepEqual(transferir[1].slice(4, 8), ['L9', '59', '01', 4]);
   assert.ok(lotes.slice(1).every(row => row.length === head.length));
+});
+
+test('contagem física: achou mais que o saldo do armazém da gaveta e a diferença vem de outros armazéns, em ordem de prioridade', () => {
+  const outros = [{ arm: '59', lote: 'L1', saldo: 1, validade: '2027-01-01' }, { arm: 'ES', lote: 'L1', saldo: 5 }, { arm: '30', lote: 'L1', saldo: 4 }];
+  // Exemplo do operador: achou 2, o sistema tem 1 no 01 e 1 no 59
+  const um = G.reconcile(2, 1, outros);
+  assert.equal(um.status, 'outro-armazem');
+  assert.deepEqual(um.plano.map(p => [p.arm, p.qtd]), [['59', 1]]);
+  assert.equal(um.dif, 1); assert.equal(um.restante, 0);
+  // Pede mais do que o 59 tem: continua nos próximos armazéns (59, 30, ES)
+  const dez = G.reconcile(10, 1, outros);
+  assert.deepEqual(dez.plano.map(p => [p.arm, p.qtd]), [['59', 1], ['30', 4], ['ES', 4]]);
+  assert.equal(dez.status, 'outro-armazem');
+  // Nenhum armazém cobre: sobra sem saldo no sistema
+  const sobra = G.reconcile(20, 1, outros);
+  assert.equal(sobra.status, 'sobra'); assert.equal(sobra.restante, 9); assert.equal(sobra.plano.length, 3);
+  assert.equal(G.reconcile(3, 3, outros).status, 'confere');
+  const abaixo = G.reconcile(1, 3, outros);
+  assert.equal(abaixo.status, 'abaixo'); assert.equal(abaixo.dif, -2); assert.deepEqual(abaixo.plano, []);
+  // Lote só existe em outro armazém (saldo 0 na gaveta)
+  assert.deepEqual(G.reconcile(2, 0, [{ arm: '59', saldo: 5 }]).plano.map(p => [p.arm, p.qtd]), [['59', 2]]);
+  assert.equal(G.reconcile('', 1, outros), null);
+  assert.equal(G.reconcile(-1, 1, outros), null);
+  assert.equal(G.reconcile(0.3, 0.1, [{ arm: '59', saldo: 0.2 }]).status, 'outro-armazem');
+});
+
+test('a análise guarda a contagem por lote, os lotes achados só em outro armazém e a quantidade física dos lotes fora do cadastro', () => {
+  const found = G.readWorkbook(book, xlsx);
+  const ctx = G.makeContext(found.zz2.rows, G.cleanSb1(found.sb1.rows), found.sb8.rows);
+  const gaveta = ctx.gavetas.get('1|1|AB1');
+  const item = (produto, extra = {}) => ({ produto, conferido: true, lotes: [], transferir: [], ...extra });
+  const ok = G.cleanAnalysis({
+    itens: [item('P1', { lotes: [{ lote: 'l1', saldo: 1, analisado: true, contagem: { fisico: 2, saldo: 1, status: 'outro-armazem', restante: 0 } }, { lote: 'l2', saldo: 5, contagem: { fisico: '', status: 'confere' } }],
+      achados: [{ lote: 'lx', contagem: { fisico: 3, saldo: 0, status: 'sobra', restante: 3 } }, { lote: 'ly', contagem: null }],
+      transferir: [{ arm: '59', lote: 'l1', qtd: 1 }] }), item('P2')],
+    extras: [{ lote: 'ZZ9', produto: 'P7', fisico: '4', sistema: [{ arm: '59', saldo: 1 }] }, { lote: 'ZZ8', fisico: -2 }]
+  }, gaveta);
+  assert.deepEqual(ok.itens[0].lotes[0].contagem, { fisico: 2, saldo: 1, status: 'outro-armazem', restante: 0 });
+  assert.equal(ok.itens[0].lotes[1].contagem, null);
+  assert.deepEqual(ok.itens[0].achados.map(a => [a.lote, a.contagem.status]), [['LX', 'sobra']]);
+  assert.equal(ok.extras[0].fisico, 4); assert.deepEqual(ok.extras[0].sistema, [{ arm: '59', saldo: 1 }]);
+  assert.equal(ok.extras[1].fisico, null);
+  const resumo = G.summarize(ok.itens, '2026-11-17');
+  assert.equal(resumo.lotesContados, 2); assert.equal(resumo.divergencias, 2);
+  const { lotes, gavetas } = G.exportRows([{ dia: '2026-11-17', em: '2026-11-17T12:30:00.000Z', por: 'ana', duracaoSeg: 60, obs: '', gaveta: { codigo: 'AB1', arm: '01', armario: '' }, resumo,
+    itens: ok.itens.map(i => ({ ...i, descricao: 'D' })), extras: ok.extras }], () => '09:30');
+  const head = lotes[0], col = name => head.indexOf(name);
+  const l1 = lotes.slice(1).find(r => r[col('Lote')] === 'L1' && r[col('Tipo')] === 'Lote da gaveta');
+  assert.deepEqual([l1[col('Qtd física')], l1[col('Diferença (físico − saldo)')], l1[col('Contagem')]], [2, 1, 'Achado em outro armazém']);
+  const achado = lotes.slice(1).find(r => r[col('Tipo')] === 'Lote achado (saldo só em outro armazém)');
+  assert.deepEqual([achado[col('Lote')], achado[col('Qtd física')], achado[col('Contagem')]], ['LX', 3, 'Sobra sem saldo no sistema (3 sem saldo)']);
+  const extra = lotes.slice(1).find(r => r[col('Lote')] === 'ZZ9');
+  assert.equal(extra[col('Qtd física')], 4); assert.match(extra[col('Observação')], /arm\. 59 saldo 1/);
+  assert.ok(lotes.slice(1).every(row => row.length === head.length));
+  assert.equal(gavetas[1][gavetas[0].indexOf('Divergências na contagem')], 2);
 });

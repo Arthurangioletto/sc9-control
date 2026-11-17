@@ -311,9 +311,19 @@
   }
 
   // ---------- análise de uma gaveta ----------
-  const emptyItem = () => ({ c: false, o: '', v: {}, t: {}, a: {} });
+  const emptyItem = () => ({ c: false, o: '', v: {}, t: {}, a: {}, f: {} });
   // Chave do lote no rascunho (validade corrigida e "analisado"): lote + validade do SB8.
   const loteKey = l => l.lote + '|' + l.validade;
+
+  // Contagem física de um lote do produto: saldo no armazém da gaveta contra o que o operador achou; o excedente vem de outros armazéns.
+  const contagemDe = (item, state, lote) => {
+    const c = Core.reconcile((state.f || {})[lote], item.lotes.filter(l => l.lote === lote).reduce((sum, l) => sum + l.saldo, 0), item.outros.filter(l => l.lote === lote));
+    return c ? { ...c, lote } : null;
+  };
+  const armsOf = plano => plano.map(p => Core.armLabel(p.arm)).filter((arm, index, all) => all.indexOf(arm) === index).join(', ');
+  const contagemTag = c => c && (c.status === 'confere' ? '✓ físico ' + num(c.fisico)
+    : c.status === 'abaixo' ? 'físico ' + num(c.fisico) + ' (faltam ' + num(-c.dif) + ')'
+    : num(c.dif - c.restante) + ' un. de outro armazém' + (c.plano.length ? ' (' + armsOf(c.plano) + ')' : '') + (c.restante ? ' · ' + num(c.restante) + ' sem saldo' : ''));
 
   function GavetaView({ summary, data, onClose, onDone }) {
     const draftKey = 'sc9g:' + summary.id + ':' + (data.bases.sb8.updatedAt || '');
@@ -371,8 +381,8 @@
       } catch (e) { showFound({ q, rows: [], error: e.message }); }
     };
     const search = event => { event.preventDefault(); runSearch(scan); };
-    const addExtra = (lote, produto, note) => {
-      setDraft(previous => ({ ...previous, extras: [...previous.extras.filter(extra => extra.lote !== lote), { lote, produto: produto || '', obs: note }] }));
+    const addExtra = (lote, produto, note, fisico, sistema) => {
+      setDraft(previous => ({ ...previous, extras: [...previous.extras.filter(extra => extra.lote !== lote), { lote, produto: produto || '', obs: note, fisico: fisico === '' ? null : fisico, sistema: sistema || [] }] }));
       setFound(null);
     };
 
@@ -386,7 +396,9 @@
             const state = itemState(item.produto);
             return {
               produto: item.produto, conferido: state.c, semSaldo: item.semSaldo, obs: state.o,
-              lotes: item.lotes.map(l => ({ lote: l.lote, saldo: l.saldo, validadeSistema: l.validade, validadeNova: state.v[loteKey(l)] && state.v[loteKey(l)] !== l.validade ? state.v[loteKey(l)] : '', analisado: Boolean((state.a || {})[loteKey(l)]) })),
+              lotes: item.lotes.map((l, index) => ({ lote: l.lote, saldo: l.saldo, validadeSistema: l.validade, validadeNova: state.v[loteKey(l)] && state.v[loteKey(l)] !== l.validade ? state.v[loteKey(l)] : '', analisado: Boolean((state.a || {})[loteKey(l)]),
+                contagem: item.lotes.findIndex(x => x.lote === l.lote) === index ? contagemDe(item, state, l.lote) : null })),
+              achados: [...new Set(item.outros.map(l => l.lote))].filter(lote => !item.lotes.some(l => l.lote === lote)).map(lote => ({ lote, contagem: contagemDe(item, state, lote) })).filter(a => a.contagem),
               transferir: Object.values(state.t).map(move => ({ arm: move.arm, lote: move.lote, qtd: move.q, obs: move.o || '' }))
             };
           })
@@ -399,11 +411,12 @@
 
     const summaryLines = useMemo(() => {
       if (!detail) return null;
-      let validades = 0, transfer = 0, vencidos = 0, semSaldo = 0, lotes = 0, analisados = 0;
+      let validades = 0, transfer = 0, vencidos = 0, semSaldo = 0, lotes = 0, analisados = 0, contados = 0, divergencias = 0;
       for (const item of detail.itens) {
         const state = itemState(item.produto);
         if (item.semSaldo) semSaldo++;
         transfer += Object.keys(state.t).length;
+        for (const lote of new Set([...item.lotes, ...item.outros].map(l => l.lote))) { const c = contagemDe(item, state, lote); if (c) { contados++; if (c.status !== 'confere') divergencias++; } }
         for (const l of item.lotes) {
           lotes++;
           if ((state.a || {})[loteKey(l)]) analisados++;
@@ -413,7 +426,7 @@
           if (date && Core.validity(date, today).days < 0) vencidos++;
         }
       }
-      return { validades, transfer, vencidos, semSaldo, lotes, analisados };
+      return { validades, transfer, vencidos, semSaldo, lotes, analisados, contados, divergencias };
     }, [detail, draft, today]);
 
     if (done) {
@@ -445,7 +458,7 @@
         detail && !visible.length && h('p', { className: 'sc9g-empty' }, 'Tudo conferido. Revise e finalize a gaveta.'),
         visible.map(item => h(ProductCard, { key: item.produto, item, state: itemState(item.produto), patch: change => patch(item.produto, change), today, arm: detail.arm, flash: flash === item.produto, focus })),
         draft.extras.length > 0 && h('section', { className: 'sc9g-card' }, h('h3', null, 'Lotes encontrados fora do cadastro'),
-          h('ul', { className: 'sc9g-plain' }, draft.extras.map(extra => h('li', { key: extra.lote }, h('span', null, extra.lote), h('small', null, extra.obs || 'sem observação'),
+          h('ul', { className: 'sc9g-plain' }, draft.extras.map(extra => h('li', { key: extra.lote }, h('span', null, extra.lote + (extra.fisico != null ? ' · achou ' + num(extra.fisico) : '')), h('small', null, extra.obs || 'sem observação'),
             h(Button, { kind: 'ghost', onClick: () => setDraft(previous => ({ ...previous, extras: previous.extras.filter(x => x.lote !== extra.lote) })) }, 'Remover')))))),
       detail && h('footer', { className: 'sc9g-foot' },
         h('span', null, checked + ' de ' + total + ' conferidos'),
@@ -459,6 +472,7 @@
             h('li', null, h('span', null, 'Sem saldo no armazém'), h('strong', null, summaryLines.semSaldo)),
             h('li', null, h('span', null, 'Validades alteradas'), h('strong', null, summaryLines.validades)),
             h('li', null, h('span', null, 'Lotes vencidos'), h('strong', null, summaryLines.vencidos)),
+            summaryLines.contados > 0 && h('li', null, h('span', null, 'Lotes contados · com diferença'), h('strong', null, summaryLines.contados + ' · ' + summaryLines.divergencias)),
             h('li', null, h('span', null, 'Marcados p/ transferir ao ' + Core.armLabel(detail.arm)), h('strong', null, summaryLines.transfer)),
             h('li', null, h('span', null, 'Lotes fora do cadastro'), h('strong', null, draft.extras.length))),
           h('textarea', { className: 'sc9g-input', rows: 3, placeholder: 'Observação da gaveta (opcional)', value: obs, onChange: event => setObs(event.target.value), maxLength: 1000 }),
@@ -470,8 +484,11 @@
 
   function FoundPanel({ found, today, arm, onAdd, onClose }) {
     const [note, setNote] = useState('');
+    const [fisico, setFisico] = useState('');
     const first = found.rows[0];
     const arms = new Set(found.rows.map(row => row.arm)).size;
+    const sistema = found.rows.map(row => ({ arm: row.arm, saldo: row.saldo }));
+    const c = Core.reconcile(fisico, 0, found.rows.map(row => ({ arm: row.arm, saldo: row.saldo, lote: found.q })));
     return h('section', { className: 'sc9g-card sc9g-found', role: 'status' },
       h('div', { className: 'sc9g-found-head' },
         h('h3', null, found.rows.length ? 'Lote ' + found.q + ' · saldo em ' + arms + (arms === 1 ? ' armazém' : ' armazéns') : 'Lote ' + found.q + ' · sem saldo em nenhum armazém'),
@@ -484,8 +501,13 @@
             row.enderecos.length > 0 && h('small', null, 'Endereços: ' + row.enderecos.map(item => Core.armLabel(item.arm) + ' ' + item.endereco).join(' · ')))))
         : !found.error && h('p', { className: 'sc9g-muted' }, 'O SB8 carregado não tem saldo desse lote em nenhum armazém. Se ele está fisicamente aqui, anote abaixo.'),
       found.rows.length > 0 && h('p', { className: 'sc9g-muted' }, 'Esse lote não está cadastrado nesta gaveta.'),
+      h('label', { className: 'sc9g-count' }, h('span', null, 'Quantas peças achou nesta gaveta?'),
+        h('input', { className: 'sc9g-input', type: 'number', inputMode: 'decimal', min: 0, step: 'any', value: fisico, onChange: event => setFisico(event.target.value === '' ? '' : Number(event.target.value)), 'aria-label': 'Quantidade encontrada do lote ' + found.q })),
+      c && h('p', { className: 'sc9g-count-msg sc9g-count-' + c.status, role: 'status' },
+        c.status === 'sobra' && !found.rows.length ? 'Achou ' + num(c.fisico) + ' e o sistema não tem saldo desse lote em nenhum armazém: sobra sem registro.'
+          : 'Achou ' + num(c.fisico) + '. O sistema tem esse lote em: ' + found.rows.map(row => 'arm. ' + Core.armLabel(row.arm) + ' (' + num(row.saldo) + ')').join(', ') + '.' + (c.restante ? ' Sobram ' + num(c.restante) + ' sem saldo no sistema.' : '')),
       h('input', { className: 'sc9g-input', value: note, onChange: event => setNote(event.target.value), placeholder: 'Observação (ex.: lote físico sem cadastro)', maxLength: 500, 'aria-label': 'Observação do lote' }),
-      h(Button, { kind: 'primary', onClick: () => onAdd(found.q, first?.produto, note) }, 'Anotar como encontrado nesta gaveta'));
+      h(Button, { kind: 'primary', onClick: () => onAdd(found.q, first?.produto, note, fisico, sistema) }, 'Anotar como encontrado nesta gaveta'));
   }
 
   const moveKey = l => l.arm + '|' + l.lote + '|' + l.validade;
@@ -525,9 +547,36 @@
         h('strong', null, label), tags, h('span', { className: 'sc9g-chev', 'aria-hidden': true }, open[key] ? '▴' : '▾')),
       open[key] && h('div', { className: 'sc9g-lote-body' }, body));
 
+    const setFisico = (lote, value) => patch(previous => ({ f: { ...(previous.f || {}), [lote]: value } }));
+    const planApplied = c => c.plano.length > 0 && c.plano.every(p => state.t[moveKey(p)] && Number(state.t[moveKey(p)].q) === p.qtd);
+    const togglePlan = c => patch(previous => {
+      const next = { ...previous.t };
+      if (planApplied(c)) c.plano.forEach(p => { delete next[moveKey(p)]; });
+      else c.plano.forEach(p => { next[moveKey(p)] = { arm: p.arm, lote: p.lote, q: p.qtd, o: 'Achado na gaveta, saldo estava no ' + Core.armLabel(p.arm) }; });
+      return { t: next };
+    });
+    // Quantas peças o operador achou do lote na gaveta; compara com o saldo do armazém da gaveta e, se sobrou, de onde vem o resto.
+    const countBlock = lote => {
+      const c = contagemDe(item, state, lote), value = (state.f || {})[lote];
+      const message = !c ? null
+        : c.status === 'confere' ? '✓ Confere: achou ' + num(c.fisico) + ' e o sistema tem ' + num(c.saldo) + ' no ' + home + '.'
+        : c.status === 'abaixo' ? 'Achou ' + num(c.fisico) + ', mas o sistema tem ' + num(c.saldo) + ' no ' + home + ': faltam ' + num(-c.dif) + ' no físico.'
+        : 'Achou ' + num(c.fisico) + '; o ' + home + ' tem ' + num(c.saldo) + ' no sistema. ' + (c.plano.length ? num(c.dif - c.restante) + ' un. encontrada(s) em outro armazém: ' + c.plano.map(p => num(p.qtd) + ' do ' + Core.armLabel(p.arm)).join(', ') + '.' : '')
+          + (c.restante ? ' ' + num(c.restante) + ' sem saldo em nenhum armazém (peça a mais, sem registro).' : '');
+      return h('div', { key: 'count', className: 'sc9g-count' },
+        h('label', null, h('span', null, 'Quantas peças achou na gaveta?'),
+          h('input', { className: 'sc9g-input', type: 'number', inputMode: 'decimal', min: 0, step: 'any', value: value === undefined ? '' : value, onChange: event => setFisico(lote, event.target.value === '' ? '' : Number(event.target.value)), 'aria-label': 'Quantidade encontrada do lote ' + lote })),
+        c && h('p', { className: 'sc9g-count-msg sc9g-count-' + c.status, role: 'status' }, message),
+        c && c.plano.length > 0 && h(Button, { kind: planApplied(c) ? 'primary' : 'ghost', onClick: () => togglePlan(c) },
+          planApplied(c) ? '✓ Transferência marcada (toque p/ desfazer)' : 'Trazer ' + c.plano.map(p => num(p.qtd) + ' do ' + Core.armLabel(p.arm)).join(' · ') + ' p/ ' + home));
+    };
+    const countTag = lote => { const c = contagemDe(item, state, lote); return c && h('span', { key: 'c', className: 'sc9g-tag' + (c.status === 'confere' ? ' sc9g-tag-ok' : ' sc9g-tag-warn') }, contagemTag(c)); };
+
     const otherBody = (l, showArm) => {
       const move = state.t[moveKey(l)];
+      const countHere = !showArm && !item.lotes.some(x => x.lote === l.lote) && item.outros.indexOf(l) === item.outros.findIndex(x => x.lote === l.lote);
       return h('div', { className: 'sc9g-where-row' },
+        countHere && countBlock(l.lote),
         h('div', { className: 'sc9g-lote-val' },
           showArm && h(Chip, { tone: Core.armRank(l.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(l.arm)),
           h('span', { className: 'sc9g-saldo' }, 'saldo ' + num(l.saldo) + unit + (l.empenho ? ' · emp. ' + num(l.empenho) : '')),
@@ -552,6 +601,7 @@
         h('label', { key: 'ok', className: 'sc9g-confirm' + (analyzed ? ' is-on' : '') },
           h('input', { type: 'checkbox', checked: analyzed, onChange: event => { const checked = event.target.checked; patch(previous => ({ a: { ...(previous.a || {}), [key]: checked } })); } }),
           h('span', null, 'Lote analisado', h('small', null, 'Confirmo que conferi este lote e a validade'))),
+        item.lotes.findIndex(x => x.lote === l.lote) === item.lotes.indexOf(l) && countBlock(l.lote),
         h('div', { key: 'where', className: 'sc9g-where' },
           h('h5', null, 'Onde está este lote'),
           elsewhere.length
@@ -566,7 +616,7 @@
     const known = groups.filter(group => Core.armRank(group.arm) < Core.ARM_PRIORITY.length), rest = groups.filter(group => Core.armRank(group.arm) >= Core.ARM_PRIORITY.length);
     const armGroup = group => h('div', { key: group.arm, className: 'sc9g-armgroup' },
       h('h5', null, h(Chip, { tone: Core.armRank(group.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(group.arm)), h('span', null, group.rows.length + (group.rows.length === 1 ? ' lote' : ' lotes') + ' · saldo ' + num(group.rows.reduce((sum, l) => sum + l.saldo, 0)) + unit)),
-      group.rows.map(l => loteRow('o|' + moveKey(l), l.lote, state.t[moveKey(l)] && h('span', { className: 'sc9g-tag' }, 'transferir'), otherBody(l, false))));
+      group.rows.map(l => loteRow('o|' + moveKey(l), l.lote, [!item.lotes.some(x => x.lote === l.lote) && item.outros.indexOf(l) === item.outros.findIndex(x => x.lote === l.lote) && countTag(l.lote), state.t[moveKey(l)] && h('span', { key: 't', className: 'sc9g-tag' }, 'transferir')], otherBody(l, false))));
 
     return h('section', { id: 'sc9g-item-' + item.produto, className: 'sc9g-card sc9g-product' + (flash ? ' is-flash' : '') },
       h('header', null, h('strong', null, item.descricao || 'Sem descrição no SB1'), h('small', null, item.produto + (item.ean ? ' · ' + item.ean : '') + (item.unidade ? ' · ' + item.unidade : ''))),
@@ -579,7 +629,7 @@
         item.lotes.map(l => {
           const key = loteKey(l), edited = state.v[key] && state.v[key] !== l.validade, analyzed = Boolean((state.a || {})[key]);
           const moving = item.outros.some(other => other.lote === l.lote && state.t[moveKey(other)]);
-          return loteRow('h|' + moveKey(l), l.lote, [edited && h('span', { key: 'v', className: 'sc9g-tag' }, 'validade corrigida'), moving && h('span', { key: 't', className: 'sc9g-tag' }, 'transferir'), analyzed && h('span', { key: 'a', className: 'sc9g-tag sc9g-tag-ok' }, '✓ analisado')], homeBody(l));
+          return loteRow('h|' + moveKey(l), l.lote, [edited && h('span', { key: 'v', className: 'sc9g-tag' }, 'validade corrigida'), item.lotes.findIndex(x => x.lote === l.lote) === item.lotes.indexOf(l) && countTag(l.lote), moving && h('span', { key: 't', className: 'sc9g-tag' }, 'transferir'), analyzed && h('span', { key: 'a', className: 'sc9g-tag sc9g-tag-ok' }, '✓ analisado')], homeBody(l));
         })),
       item.outros.length > 0 && h('div', { className: 'sc9g-block sc9g-other' },
         h('button', { type: 'button', className: 'sc9g-others-head', 'aria-expanded': othersOpen, onClick: () => setOthersOpen(value => !value) },

@@ -217,3 +217,12 @@ textarea.sc9g-input { min-height: 80px; resize: vertical; }
   .sc9g-body > .sc9g-scan, .sc9g-body > .sc9g-seg, .sc9g-body > .sc9g-found, .sc9g-body > .sc9g-error, .sc9g-body > .sc9g-empty, .sc9g-body > section.sc9g-card:last-child { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) { .sc9g-progress span { transition: none; } }
+
+/* Contagem física do lote */
+.sc9g-tag-warn { background: #fde8e6; color: #8a1c13; }
+.sc9g-count { display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: #f1f5fb; border: 1px solid #d3deef; }
+.sc9g-count > label, .sc9g-count > span { display: grid; gap: 6px; font-weight: 700; font-size: 14px; }
+.sc9g-count-msg { margin: 0; padding: 9px 11px; border-radius: 10px; font-weight: 700; font-size: 15px; line-height: 1.35; }
+.sc9g-count-confere { background: #eef8f2; color: #0b6b49; }
+.sc9g-count-outro-armazem { background: #fff3d6; color: #8a4b00; }
+.sc9g-count-abaixo, .sc9g-count-sobra { background: #fde8e6; color: #8a1c13; }

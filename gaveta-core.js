@@ -416,6 +416,40 @@
   // ---------- análise gravada ----------
   const clip = (value, size) => text(value).slice(0, size);
 
+  // Contagem física de um lote: o que o operador achou na gaveta contra o saldo do armazém da gaveta.
+  // Se achou mais, o excedente é pedido, em ordem de prioridade, aos outros armazéns que têm saldo desse lote
+  // (plano de transferência). O que nenhum armazém cobre é sobra sem saldo no sistema.
+  const round3 = n => Math.round(n * 1000) / 1000;
+  const CONTAGEM = { confere: 'Confere', 'outro-armazem': 'Achado em outro armazém', sobra: 'Sobra sem saldo no sistema', abaixo: 'Falta no físico', 'fora-cadastro': 'Fora do cadastro' };
+  function reconcile(fisico, saldoAqui, outros) {
+    if (fisico === '' || fisico == null) return null;
+    const achou = Number(fisico);
+    if (!Number.isFinite(achou) || achou < 0) return null;
+    const aqui = Math.max(0, Number(saldoAqui) || 0);
+    const base = { fisico: round3(achou), saldo: round3(aqui), dif: round3(achou - aqui), plano: [], restante: 0 };
+    if (achou === aqui) return { ...base, status: 'confere' };
+    if (achou < aqui) return { ...base, status: 'abaixo' };
+    let falta = round3(achou - aqui);
+    const plano = [];
+    for (const row of [...(outros || [])].sort((a, b) => armRank(a.arm) - armRank(b.arm))) {
+      if (falta <= 0) break;
+      const saldo = Number(row.saldo) || 0;
+      if (saldo <= 0) continue;
+      const qtd = round3(Math.min(falta, saldo));
+      plano.push({ arm: row.arm, lote: row.lote, validade: row.validade, qtd });
+      falta = round3(falta - qtd);
+    }
+    return { ...base, plano, restante: falta, status: falta > 0 ? 'sobra' : 'outro-armazem' };
+  }
+
+  function cleanContagem(c) {
+    if (!c || c.fisico === '' || c.fisico == null) return null;
+    const fisico = Number(c.fisico);
+    if (!Number.isFinite(fisico) || fisico < 0) return null;
+    const status = ['confere', 'outro-armazem', 'sobra', 'abaixo'].includes(c.status) ? c.status : 'confere';
+    return { fisico: round3(fisico), saldo: round3(Math.max(0, Number(c.saldo) || 0)), status, restante: round3(Math.max(0, Number(c.restante) || 0)) };
+  }
+
   function cleanAnalysis(body, gaveta) {
     if (!body || !Array.isArray(body.itens) || !body.itens.length || body.itens.length > 600) throw Error('A análise precisa ter itens.');
     const known = new Set(gaveta.itens.keys());
@@ -424,37 +458,44 @@
       if (!known.has(prod)) throw Error('Produto ' + prod + ' não pertence a esta gaveta.');
       const lotes = (Array.isArray(item.lotes) ? item.lotes : []).slice(0, 100).map(lote => ({
         lote: upper(lote.lote).slice(0, 60), saldo: Number(lote.saldo) || 0,
-        validadeSistema: isoDate(lote.validadeSistema), validadeNova: isoDate(lote.validadeNova), analisado: lote.analisado === true
+        validadeSistema: isoDate(lote.validadeSistema), validadeNova: isoDate(lote.validadeNova), analisado: lote.analisado === true,
+        contagem: cleanContagem(lote.contagem)
       }));
+      // Lote achado na gaveta que o SB8 só tem em outros armazéns (não está na lista do armazém da gaveta).
+      const achados = (Array.isArray(item.achados) ? item.achados : []).slice(0, 100).map(a => ({ lote: upper(a && a.lote).slice(0, 60), contagem: cleanContagem(a && a.contagem) })).filter(a => a.lote && a.contagem);
       const transferir = (Array.isArray(item.transferir) ? item.transferir : []).slice(0, 100).map(move => {
         const qtd = Number(move.qtd);
         if (!Number.isFinite(qtd) || qtd <= 0) throw Error('A quantidade a transferir precisa ser positiva.');
         return { arm: place(move.arm), lote: upper(move.lote).slice(0, 60), qtd, obs: clip(move.obs, 300) };
       });
-      return { produto: prod, conferido: item.conferido === true, semSaldo: item.semSaldo === true, obs: clip(item.obs, 500), lotes, transferir };
+      return { produto: prod, conferido: item.conferido === true, semSaldo: item.semSaldo === true, obs: clip(item.obs, 500), lotes, achados, transferir };
     });
     if (itens.length !== known.size || new Set(itens.map(item => item.produto)).size !== known.size) throw Error('Faltam produtos da gaveta na análise.');
     if (itens.some(item => !item.conferido)) throw Error('Marque todos os produtos como conferidos antes de finalizar.');
     const extras = (Array.isArray(body.extras) ? body.extras : []).slice(0, 100).map(extra => ({
-      lote: upper(extra.lote).slice(0, 60), produto: product(extra.produto).slice(0, 60), obs: clip(extra.obs, 500)
+      lote: upper(extra.lote).slice(0, 60), produto: product(extra.produto).slice(0, 60), obs: clip(extra.obs, 500),
+      fisico: extra.fisico === '' || extra.fisico == null || !Number.isFinite(Number(extra.fisico)) || Number(extra.fisico) < 0 ? null : round3(Number(extra.fisico)),
+      sistema: (Array.isArray(extra.sistema) ? extra.sistema : []).slice(0, 30).map(row => ({ arm: place(row.arm), saldo: round3(Number(row.saldo) || 0) }))
     })).filter(extra => extra.lote);
     return { itens, extras, obs: clip(body.obs, 1000) };
   }
 
   function summarize(itens, today) {
-    let validadesAlteradas = 0, vencidos = 0, transferencias = 0, semSaldo = 0, lotes = 0, lotesAnalisados = 0;
+    let validadesAlteradas = 0, vencidos = 0, transferencias = 0, semSaldo = 0, lotes = 0, lotesAnalisados = 0, lotesContados = 0, divergencias = 0;
     for (const item of itens) {
       if (item.semSaldo) semSaldo++;
       transferencias += item.transferir.length;
+      for (const achado of item.achados || []) { lotesContados++; if (achado.contagem.status !== 'confere') divergencias++; }
       for (const lote of item.lotes) {
         lotes++;
+        if (lote.contagem) { lotesContados++; if (lote.contagem.status !== 'confere') divergencias++; }
         if (lote.analisado) lotesAnalisados++;
         const date = lote.validadeNova || lote.validadeSistema;
         if (lote.validadeNova && lote.validadeNova !== lote.validadeSistema) validadesAlteradas++;
         if (date && validity(date, today).days < 0) vencidos++;
       }
     }
-    return { produtos: itens.length, semSaldo, validadesAlteradas, vencidos, transferencias, lotes, lotesAnalisados };
+    return { produtos: itens.length, semSaldo, validadesAlteradas, vencidos, transferencias, lotes, lotesAnalisados, lotesContados, divergencias };
   }
 
   // ---------- exportação ----------
@@ -463,26 +504,32 @@
   // produto sem saldo, lote a transferir e lote fora do cadastro).
   function exportRows(registros, fmtTime) {
     const time = fmtTime || (iso => String(iso || '').slice(11, 16));
-    const lotes = [['Data', 'Hora', 'Usuário', 'Gaveta', 'Armário', 'Armazém', 'Tipo', 'Produto', 'Descrição', 'Lote', 'Saldo', 'Validade (SB8)', 'Validade informada', 'Situação da validade', 'Analisado', 'Qtd a transferir', 'Observação']];
-    const gavetas = [['Data', 'Hora', 'Usuário', 'Gaveta', 'Armário', 'Armazém', 'Produtos', 'Lotes', 'Lotes analisados', 'Sem saldo', 'Validades alteradas', 'Vencidos', 'Transferências marcadas', 'Duração (min)', 'Observação']];
+    const lotes = [['Data', 'Hora', 'Usuário', 'Gaveta', 'Armário', 'Armazém', 'Tipo', 'Produto', 'Descrição', 'Lote', 'Saldo', 'Validade (SB8)', 'Validade informada', 'Situação da validade', 'Analisado', 'Qtd física', 'Diferença (físico − saldo)', 'Contagem', 'Qtd a transferir', 'Observação']];
+    const gavetas = [['Data', 'Hora', 'Usuário', 'Gaveta', 'Armário', 'Armazém', 'Produtos', 'Lotes', 'Lotes analisados', 'Sem saldo', 'Validades alteradas', 'Vencidos', 'Lotes contados', 'Divergências na contagem', 'Transferências marcadas', 'Duração (min)', 'Observação']];
     const transferir = [['Data', 'Gaveta', 'Produto', 'Descrição', 'Lote', 'Armazém de origem', 'Destino', 'Quantidade', 'Observação']];
     for (const r of registros) {
       const when = brDate(r.dia), hour = time(r.em), home = armLabel(r.gaveta.arm), base = [when, hour, r.por, r.gaveta.codigo, r.gaveta.armario || '', home];
       const resumo = r.resumo || {};
-      gavetas.push([when, hour, r.por, r.gaveta.codigo, r.gaveta.armario || '', home, resumo.produtos, resumo.lotes ?? '', resumo.lotesAnalisados ?? '', resumo.semSaldo, resumo.validadesAlteradas, resumo.vencidos, resumo.transferencias, Math.round((r.duracaoSeg || 0) / 6) / 10, r.obs || '']);
+      gavetas.push([when, hour, r.por, r.gaveta.codigo, r.gaveta.armario || '', home, resumo.produtos, resumo.lotes ?? '', resumo.lotesAnalisados ?? '', resumo.semSaldo, resumo.validadesAlteradas, resumo.vencidos, resumo.lotesContados ?? '', resumo.divergencias ?? '', resumo.transferencias, Math.round((r.duracaoSeg || 0) / 6) / 10, r.obs || '']);
+      const linha = (arm, tipo, item, lote, saldo, vSb8, vInf, situacao, analisado, contagem, qtd, obs) => [base[0], base[1], base[2], base[3], base[4], arm, tipo, item.produto, item.descricao, lote, saldo, vSb8, vInf, situacao, analisado,
+        contagem ? contagem.fisico : '', contagem ? contagem.fisico - contagem.saldo : '', contagem ? CONTAGEM[contagem.status] + (contagem.restante ? ' (' + contagem.restante + ' sem saldo)' : '') : '', qtd, obs];
       for (const item of r.itens) {
-        if (!item.lotes.length) lotes.push([...base, item.semSaldo ? 'Sem saldo no armazém' : 'Sem lote', item.produto, item.descricao, '', '', '', '', '', '', '', item.obs]);
+        if (!item.lotes.length) lotes.push(linha(home, item.semSaldo ? 'Sem saldo no armazém' : 'Sem lote', item, '', '', '', '', '', '', null, '', item.obs));
         for (const lote of item.lotes) {
           const final = lote.validadeNova || lote.validadeSistema;
-          lotes.push([...base, 'Lote da gaveta', item.produto, item.descricao, lote.lote, lote.saldo, brDate(lote.validadeSistema), lote.validadeNova && lote.validadeNova !== lote.validadeSistema ? brDate(lote.validadeNova) : '',
-            final ? validity(final, r.dia).label : 'Sem validade', lote.analisado ? 'Sim' : 'Não', '', item.obs]);
+          lotes.push(linha(home, 'Lote da gaveta', item, lote.lote, lote.saldo, brDate(lote.validadeSistema), lote.validadeNova && lote.validadeNova !== lote.validadeSistema ? brDate(lote.validadeNova) : '',
+            final ? validity(final, r.dia).label : 'Sem validade', lote.analisado ? 'Sim' : 'Não', lote.contagem, '', item.obs));
         }
+        for (const achado of item.achados || []) lotes.push(linha(home, 'Lote achado (saldo só em outro armazém)', item, achado.lote, 0, '', '', '', '', achado.contagem, '', item.obs));
         for (const move of item.transferir) {
-          lotes.push([base[0], base[1], base[2], base[3], base[4], armLabel(move.arm), 'Transferir p/ ' + home, item.produto, item.descricao, move.lote, '', '', '', '', '', move.qtd, move.obs || item.obs]);
+          lotes.push(linha(armLabel(move.arm), 'Transferir p/ ' + home, item, move.lote, '', '', '', '', '', null, move.qtd, move.obs || item.obs));
           transferir.push([when, r.gaveta.codigo, item.produto, item.descricao, move.lote, armLabel(move.arm), home, move.qtd, move.obs]);
         }
       }
-      for (const extra of r.extras || []) lotes.push([...base, 'Lote fora do cadastro', extra.produto, '', extra.lote, '', '', '', '', '', '', extra.obs]);
+      for (const extra of r.extras || []) {
+        const sistema = (extra.sistema || []).map(row => 'arm. ' + armLabel(row.arm) + ' saldo ' + row.saldo).join('; ');
+        lotes.push([...base, 'Lote fora do cadastro', extra.produto, '', extra.lote, '', '', '', '', '', extra.fisico ?? '', '', 'Fora do cadastro', '', [extra.obs, sistema && 'Sistema: ' + sistema].filter(Boolean).join(' · ')]);
+      }
     }
     return { lotes, gavetas, transferir };
   }
@@ -526,7 +573,7 @@
 
   const api = {
     BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, isArmario, ARM_PRIORITY, armRank, matchGaveta, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
-    cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, cleanAnalysis, summarize,
+    cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, cleanAnalysis, summarize, reconcile, CONTAGEM,
     dashboard, baseState, exportRows
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
