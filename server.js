@@ -398,6 +398,8 @@ SERVABLE.add("operational-documents-ui.js");
 SERVABLE.add("export-workbook.js");
 SERVABLE.add("gaveta-core.js");
 SERVABLE.add("gaveta-ui.js");
+SERVABLE.add("consolidado.js");
+SERVABLE.add("consolidado-ui.js");
 SERVABLE.add("vendor-zxing.js");
 SERVABLE.add("gaveta.css");
 SERVABLE.add("indicador-i09.js");

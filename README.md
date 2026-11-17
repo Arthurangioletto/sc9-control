@@ -270,6 +270,17 @@ Validação da revisão de exportações: botão Excel de atrasados executado a 
 
 As planilhas geradas a partir de listas de pedidos (atrasados, em aberto, enviados, pedidos críticos, atraso de faturamento, faturados sem despacho e demais listas do recorte) ganharam a coluna **Transportadora**, logo depois do Cliente. O nome vem do SC5 (código → Brasil, São Paulo, Retira 01–04, Emergência; códigos ainda sem nome aparecem como "Código N"), com a coluna do próprio SC9 como alternativa; sem informação, aparece "Não informada". As exportações de Saída, Recebimento e Coleta por transportadora já traziam essa informação.
 
+## Consolidado semanal ou mensal (Cambuci + filiais)
+
+No cabeçalho do painel, o botão **Consolidado** abre uma caixinha para escolher **Semana** (segunda a domingo) ou **Mês** e baixa o Excel `Consolidado_Cambuci_09a13Nov2026.xlsx` (ou `…Novembro2026.xlsx`). O padrão é o último período fechado; o que ainda está em andamento aparece como "(parcial)". Usa só o que já está carregado no painel (SC9, SC5, Entrega e nomes dos itens), sem subir nada novo. Cálculo em `consolidado.js`, botão em `consolidado-ui.js`.
+
+- **Abas:** Dashboard (totais, status, por armazém, tendência diária e, no mês, por semana), Base de Dados (um pedido por linha, com NF, status, separador, conferente e transportadora, com filtro), Ranking Itens por Armazém (top 10 em peças, com o nome do item) e Por Transportadora. O Excel gerado no navegador não leva cores nem gráficos, só as tabelas com largura e formato de data e percentual.
+- **Regras (as mesmas dos consolidados feitos antes fora do sistema):** armazéns Cambuci, BH, CE, DF e RJ; Tamboré e pedidos com Implacil no nome do cliente (transferência interna) ficam de fora; as regras de bloqueio e itens "IP" já vêm do painel. Cambuci = Enviado se o pedido está na Entrega; sem Entrega mas separado e conferido = Pendente; senão Atrasado. Filiais = Enviado só precisa de NF; sem NF e liberado antes do corte (último dia do período) = Atrasado.
+- **Pedido liberado em partes:** conta em cada período só com as linhas liberadas naquele período, igual aos consolidados anteriores. Por isso o total do mês pode diferir da soma das semanas.
+- **Transportadora:** vem do SC5 (código sem zeros à esquerda → nome); `10085` aparece como TCS (é o que a aba Entrega registra para esses pedidos); códigos sem nome seguem como "Código N" e sem informação como "(não definida)".
+- **Datas numéricas:** exportações do Protheus trazem Dt Fim Pick / Dt Fim Conf como número (serial do Excel) nas linhas mais recentes. O painel passou a ler esses números como data; antes essas linhas apareciam como "não separadas".
+- **Validação:** o consolidado de 09 a 13/11/2026 gerado no navegador com a base de 17/11 bate coluna a coluna com o que foi feito à mão (1.165 pedidos, 33.494 peças, 1.154 enviados, 4 atrasados, 7 pendentes). Testes em `tests/consolidado.test.cjs`.
+
 ## Transferência (aba por perfil)
 
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
