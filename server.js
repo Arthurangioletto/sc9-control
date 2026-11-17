@@ -398,6 +398,7 @@ SERVABLE.add("operational-documents-ui.js");
 SERVABLE.add("export-workbook.js");
 SERVABLE.add("gaveta-core.js");
 SERVABLE.add("gaveta-ui.js");
+SERVABLE.add("vendor-jsqr.js");
 SERVABLE.add("gaveta.css");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");

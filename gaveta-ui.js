@@ -39,6 +39,79 @@
   }
   const Button = ({ kind = 'ghost', ...props }) => h('button', { type: 'button', ...props, className: 'sc9g-btn sc9g-btn-' + kind + (props.className ? ' ' + props.className : '') });
 
+  // ---------- ícones e leitura de QR pela câmera ----------
+  const icon = (...children) => h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, focusable: 'false' }, ...children);
+  const IconSearch = () => icon(h('circle', { cx: 11, cy: 11, r: 7 }), h('path', { d: 'M20 20l-3.6-3.6' }));
+  const IconQr = () => icon(h('rect', { x: 3, y: 3, width: 7, height: 7, rx: 1 }), h('rect', { x: 14, y: 3, width: 7, height: 7, rx: 1 }), h('rect', { x: 3, y: 14, width: 7, height: 7, rx: 1 }), h('path', { d: 'M14 14h3v3m4 0v4h-4m0-3h-3v3' }));
+
+  let jsQrPromise = null;
+  const loadJsQr = () => jsQrPromise || (jsQrPromise = new Promise((resolve, reject) => {
+    if (root.jsQR) return resolve(root.jsQR);
+    const script = document.createElement('script');
+    script.src = '/vendor-jsqr.js';
+    script.onload = () => root.jsQR ? resolve(root.jsQR) : reject(Error('Leitor de QR indisponível.'));
+    script.onerror = () => { jsQrPromise = null; reject(Error('Não consegui carregar o leitor de QR. Digite o código.')); };
+    document.head.appendChild(script);
+  }));
+  const cameraError = e => e && (e.name === 'NotAllowedError' || e.name === 'SecurityError') ? 'A câmera está bloqueada. Permita o acesso à câmera para este site nas configurações do navegador e tente de novo.'
+    : e && e.name === 'NotFoundError' ? 'Não encontrei câmera neste aparelho. Digite o código.'
+    : (e && e.message) || 'Não consegui abrir a câmera. Digite o código.';
+
+  // Tela cheia com a câmera traseira; devolve o texto do primeiro QR lido.
+  function Scanner({ title, onResult, onClose }) {
+    const video = useRef(null);
+    const callback = useRef(onResult);
+    callback.current = onResult;
+    const [error, setError] = useState('');
+    useEffect(() => {
+      let stopped = false, stream = null, timer = 0;
+      (async () => {
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Error('Este navegador não abre a câmera (precisa de conexão segura). Digite o código.');
+          stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+          if (stopped) { stream.getTracks().forEach(track => track.stop()); return; }
+          const element = video.current;
+          element.srcObject = stream;
+          element.setAttribute('playsinline', ''); element.muted = true;
+          await element.play();
+          let detector = null;
+          if (root.BarcodeDetector) { try { detector = new root.BarcodeDetector({ formats: ['qr_code'] }); } catch { detector = null; } }
+          const decode = detector ? null : await loadJsQr();
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d', { willReadFrequently: true });
+          const tick = async () => {
+            if (stopped) return;
+            let text = '';
+            if (element.readyState >= 2 && element.videoWidth) {
+              try {
+                if (detector) text = (await detector.detect(element))[0]?.rawValue || '';
+                else {
+                  const scale = Math.min(1, 720 / element.videoWidth);
+                  canvas.width = Math.round(element.videoWidth * scale); canvas.height = Math.round(element.videoHeight * scale);
+                  context.drawImage(element, 0, 0, canvas.width, canvas.height);
+                  const image = context.getImageData(0, 0, canvas.width, canvas.height);
+                  const code = decode(image.data, image.width, image.height, { inversionAttempts: 'attemptBoth' });
+                  text = code ? code.data : '';
+                }
+              } catch { text = ''; }
+            }
+            if (text && !stopped) { stopped = true; try { navigator.vibrate?.(60); } catch { /* sem vibração */ } callback.current(text.trim()); return; }
+            timer = setTimeout(tick, 140);
+          };
+          tick();
+        } catch (e) { if (!stopped) setError(cameraError(e)); }
+      })();
+      return () => { stopped = true; clearTimeout(timer); if (stream) stream.getTracks().forEach(track => track.stop()); };
+    }, []);
+    return h('div', { className: 'sc9g-scanner', role: 'dialog', 'aria-modal': true, 'aria-label': title },
+      h('video', { ref: video, className: 'sc9g-scanner-video', playsInline: true, muted: true, autoPlay: true }),
+      h('div', { className: 'sc9g-scanner-top' }, h('strong', null, title), h('button', { type: 'button', className: 'sc9g-scanner-close', onClick: onClose, 'aria-label': 'Fechar câmera' }, '✕')),
+      !error && h('div', { className: 'sc9g-scanner-frame', 'aria-hidden': true }),
+      h('div', { className: 'sc9g-scanner-bottom' },
+        error ? h('p', { className: 'sc9g-scanner-error', role: 'alert' }, error) : h('p', null, 'Aponte a câmera para o QR code'),
+        h(Button, { kind: 'light', onClick: onClose }, 'Digitar o código')));
+  }
+
   // ---------- topo e avisos ----------
   function BaseBanner({ data, isAdmin, goBases }) {
     const sb8 = data.bases.sb8;
@@ -59,6 +132,8 @@
     const [filter, setFilter] = useState('faltam');
     const [kind, setKind] = useState('gaveta');
     const [limit, setLimit] = useState(60);
+    const [scanning, setScanning] = useState(false);
+    const [scanMsg, setScanMsg] = useState('');
     // Armários (ZARM…) têm dezenas de produtos: ficam separados das gavetas.
     const scope = useMemo(() => data.gavetas.filter(item => kind === 'todos' || (kind === 'armario') === Core.isArmario(item.codigo)), [data, kind]);
     const kindCounts = useMemo(() => ({
@@ -78,8 +153,21 @@
     }, [scope, query, filter]);
     useEffect(() => setLimit(60), [query, filter, kind]);
     const blocked = !data.bases.sb8.presente;
+    const fromQr = text => {
+      setScanning(false);
+      const code = Core.matchGaveta(text, data.gavetas.map(item => item.codigo));
+      if (!code) { setScanMsg('QR lido (' + text.slice(0, 40) + ') não é de uma gaveta cadastrada.'); return; }
+      const matches = data.gavetas.filter(item => item.codigo === code);
+      const item = matches.find(entry => !entry.ultima) || matches[0];
+      if (blocked) { setScanMsg('Gaveta ' + code + ' reconhecida, mas o SB8 de hoje não está carregado.'); return; }
+      setScanMsg(''); onOpen(item);
+    };
     return h('div', { className: 'sc9g-stack' },
+      scanning && h(Scanner, { title: 'QR da gaveta', onResult: fromQr, onClose: () => setScanning(false) }),
+      scanMsg && h('p', { className: 'sc9g-warn', role: 'alert', onClick: () => setScanMsg('') }, scanMsg),
+      h('div', { className: 'sc9g-searchrow' },
       h('input', { className: 'sc9g-input sc9g-search', type: 'search', inputMode: 'search', autoCapitalize: 'characters', placeholder: 'Buscar gaveta ou armário', value: query, onChange: event => setQuery(event.target.value), 'aria-label': 'Buscar gaveta' }),
+        h('button', { type: 'button', className: 'sc9g-iconbtn', onClick: () => { setScanMsg(''); setScanning(true); }, 'aria-label': 'Ler o QR code da gaveta', disabled: !data.gavetas.length }, h(IconQr), h('span', null, 'QR'))),
       kindCounts.armario > 0 && h('div', { className: 'sc9g-seg', role: 'tablist', 'aria-label': 'Tipo de endereço' }, [['gaveta', 'Gavetas'], ['armario', 'Armários'], ['todos', 'Ambos']].map(([id, label]) =>
         h('button', { key: id, type: 'button', role: 'tab', 'aria-selected': kind === id, className: kind === id ? 'is-on' : '', onClick: () => setKind(id) }, label, h('span', null, num(kindCounts[id]))))),
       h('div', { className: 'sc9g-seg', role: 'tablist' }, [['faltam', 'Faltam'], ['feitas', 'Analisadas'], ['todas', 'Todas']].map(([id, label]) =>
@@ -231,6 +319,8 @@
     const [scan, setScan] = useState('');
     const [found, setFound] = useState(null);
     const [flash, setFlash] = useState('');
+    const [focus, setFocus] = useState(null);
+    const [camera, setCamera] = useState(false);
     const [confirm, setConfirm] = useState(false);
     const [obs, setObs] = useState('');
     const [saving, setSaving] = useState(false);
@@ -258,15 +348,14 @@
     const checked = detail ? detail.itens.filter(item => itemState(item.produto).c).length : 0;
     const visible = detail ? detail.itens.filter(item => showAll || !itemState(item.produto).c) : [];
 
-    const search = async event => {
-      event.preventDefault();
-      const q = Core.upper(scan);
+    const runSearch = async value => {
+      const q = Core.upper(value);
       if (!q || !detail) return;
-      const local = detail.itens.find(item => item.produto === q || item.ean.toUpperCase() === q || item.lotes.some(l => l.lote === q) || item.outros.some(l => l.lote === q));
       setScan('');
+      const local = detail.itens.find(item => item.produto === q || item.ean.toUpperCase() === q || item.lotes.some(l => l.lote === q) || item.outros.some(l => l.lote === q));
       if (local) {
-        setFound(null); setShowAll(true); setFlash(local.produto);
-        setTimeout(() => document.getElementById('sc9g-item-' + local.produto)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+        setFound(null); setShowAll(true); setFlash(local.produto); setFocus({ produto: local.produto, lote: q, n: Date.now() });
+        setTimeout(() => document.getElementById('sc9g-item-' + local.produto)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 120);
         setTimeout(() => setFlash(''), 2500);
         return;
       }
@@ -275,6 +364,7 @@
         showFound({ q, rows: result.resultados });
       } catch (e) { showFound({ q, rows: [], error: e.message }); }
     };
+    const search = event => { event.preventDefault(); runSearch(scan); };
     const addExtra = (lote, produto, note) => {
       setDraft(previous => ({ ...previous, extras: [...previous.extras.filter(extra => extra.lote !== lote), { lote, produto: produto || '', obs: note }] }));
       setFound(null);
@@ -335,15 +425,17 @@
       h('div', { className: 'sc9g-progress sc9g-progress-top', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': total, 'aria-valuenow': checked }, h('span', { style: { width: (total ? checked / total * 100 : 0) + '%' } })),
       h('div', { className: 'sc9g-body', ref: bodyRef },
         h('form', { className: 'sc9g-scan', onSubmit: search },
-          h('input', { className: 'sc9g-input', value: scan, onChange: event => setScan(event.target.value), placeholder: 'Bipe ou digite o lote / código', autoCapitalize: 'characters', autoCorrect: 'off', autoComplete: 'off', enterKeyHint: 'search', 'aria-label': 'Buscar lote' }),
-          h(Button, { kind: 'primary', type: 'submit' }, 'Buscar')),
+          h('input', { className: 'sc9g-input', value: scan, onChange: event => setScan(event.target.value), placeholder: 'Bipe ou digite o lote / código', autoCapitalize: 'characters', autoCorrect: 'off', autoComplete: 'off', spellCheck: false, enterKeyHint: 'search', 'aria-label': 'Buscar lote' }),
+          h('button', { type: 'button', className: 'sc9g-iconbtn', onClick: () => setCamera(true), 'aria-label': 'Ler código pela câmera' }, h(IconQr)),
+          h('button', { type: 'submit', className: 'sc9g-iconbtn sc9g-iconbtn-dark', 'aria-label': 'Pesquisar o lote em todos os armazéns' }, h(IconSearch))),
+        camera && h(Scanner, { title: 'Ler lote ou código', onResult: text => { setCamera(false); setScan(text); runSearch(text); }, onClose: () => setCamera(false) }),
         error && h('p', { className: 'sc9g-error', role: 'alert' }, error),
         found && h(FoundPanel, { found, today, arm: summary.arm, onAdd: addExtra, onClose: () => setFound(null) }),
         !detail && !error && h('p', { className: 'sc9g-empty' }, 'Carregando gaveta…'),
         detail && h('div', { className: 'sc9g-seg sc9g-seg-2' }, [[false, 'Pendentes', total - checked], [true, 'Todos', total]].map(([all, label, count]) =>
           h('button', { key: label, type: 'button', className: showAll === all ? 'is-on' : '', onClick: () => setShowAll(all) }, label, h('span', null, count)))),
         detail && !visible.length && h('p', { className: 'sc9g-empty' }, 'Tudo conferido. Revise e finalize a gaveta.'),
-        visible.map(item => h(ProductCard, { key: item.produto, item, state: itemState(item.produto), patch: change => patch(item.produto, change), today, arm: detail.arm, flash: flash === item.produto })),
+        visible.map(item => h(ProductCard, { key: item.produto, item, state: itemState(item.produto), patch: change => patch(item.produto, change), today, arm: detail.arm, flash: flash === item.produto, focus })),
         draft.extras.length > 0 && h('section', { className: 'sc9g-card' }, h('h3', null, 'Lotes encontrados fora do cadastro'),
           h('ul', { className: 'sc9g-plain' }, draft.extras.map(extra => h('li', { key: extra.lote }, h('span', null, extra.lote), h('small', null, extra.obs || 'sem observação'),
             h(Button, { kind: 'ghost', onClick: () => setDraft(previous => ({ ...previous, extras: previous.extras.filter(x => x.lote !== extra.lote) })) }, 'Remover')))))),
@@ -370,56 +462,119 @@
   function FoundPanel({ found, today, arm, onAdd, onClose }) {
     const [note, setNote] = useState('');
     const first = found.rows[0];
+    const arms = new Set(found.rows.map(row => row.arm)).size;
     return h('section', { className: 'sc9g-card sc9g-found', role: 'status' },
-      h('div', { className: 'sc9g-found-head' }, h('h3', null, 'Lote ' + found.q + ' não está nesta gaveta'), h(Button, { kind: 'ghost', onClick: onClose, 'aria-label': 'Fechar' }, '✕')),
+      h('div', { className: 'sc9g-found-head' },
+        h('h3', null, found.rows.length ? 'Lote ' + found.q + ' · saldo em ' + arms + (arms === 1 ? ' armazém' : ' armazéns') : 'Lote ' + found.q + ' · sem saldo em nenhum armazém'),
+        h(Button, { kind: 'ghost', onClick: onClose, 'aria-label': 'Fechar' }, '✕')),
       found.error && h('p', { className: 'sc9g-error' }, found.error),
       found.rows.length
         ? h('ul', { className: 'sc9g-plain' }, found.rows.map((row, index) => h('li', { key: index },
-            h('span', null, h('strong', null, 'Arm. ' + Core.armLabel(row.arm)), ' · ', row.descricao || row.produto, ' · saldo ', num(row.saldo)),
+            h('span', null, h(Chip, { tone: Core.armRank(row.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(row.arm)), ' ', h('strong', null, 'saldo ' + num(row.saldo)), ' · ', row.descricao || row.produto),
             h(ValidityChip, { iso: row.validade, today }),
             row.enderecos.length > 0 && h('small', null, 'Endereços: ' + row.enderecos.map(item => Core.armLabel(item.arm) + ' ' + item.endereco).join(' · ')))))
-        : !found.error && h('p', { className: 'sc9g-muted' }, 'Nada com saldo no SB8 para esse código.'),
+        : !found.error && h('p', { className: 'sc9g-muted' }, 'O SB8 carregado não tem saldo desse lote em nenhum armazém. Se ele está fisicamente aqui, anote abaixo.'),
+      found.rows.length > 0 && h('p', { className: 'sc9g-muted' }, 'Esse lote não está cadastrado nesta gaveta.'),
       h('input', { className: 'sc9g-input', value: note, onChange: event => setNote(event.target.value), placeholder: 'Observação (ex.: lote físico sem cadastro)', maxLength: 500, 'aria-label': 'Observação do lote' }),
       h(Button, { kind: 'primary', onClick: () => onAdd(found.q, first?.produto, note) }, 'Anotar como encontrado nesta gaveta'));
   }
 
-  function ProductCard({ item, state, patch, today, arm, flash }) {
+  const moveKey = l => l.arm + '|' + l.lote + '|' + l.validade;
+
+  function ProductCard({ item, state, patch, today, arm, flash, focus }) {
     const [obsOpen, setObsOpen] = useState(Boolean(state.o));
+    const [open, setOpen] = useState({});
+    const [othersOpen, setOthersOpen] = useState(item.semSaldo && item.outros.length > 0);
     const home = Core.armLabel(arm);
+    const unit = item.unidade ? ' ' + item.unidade : '';
+    const toggle = key => setOpen(previous => ({ ...previous, [key]: !previous[key] }));
+    // Ao bipar um lote que está neste produto, o lote abre sozinho com todos os armazéns dele.
+    useEffect(() => {
+      if (!focus || focus.produto !== item.produto) return;
+      const next = {};
+      item.lotes.forEach(l => { if (l.lote === focus.lote) next['h|' + moveKey(l)] = true; });
+      const elsewhere = item.outros.filter(l => l.lote === focus.lote);
+      elsewhere.forEach(l => { next['o|' + moveKey(l)] = true; });
+      if (elsewhere.length) setOthersOpen(true);
+      setOpen(previous => ({ ...previous, ...next }));
+    }, [focus && focus.n]);
+
     if (state.c) {
       return h('section', { id: 'sc9g-item-' + item.produto, className: 'sc9g-card sc9g-product is-done' + (flash ? ' is-flash' : '') },
         h('div', { className: 'sc9g-p-done' }, h('span', { className: 'sc9g-tick', 'aria-hidden': true }, '✓'),
           h('div', null, h('strong', null, item.descricao || item.produto), h('small', null, item.produto)),
           h(Button, { kind: 'ghost', onClick: () => patch(() => ({ c: false })) }, 'Reabrir')));
     }
+
+    const toggleMove = l => patch(previous => { const next = { ...previous.t }, key = moveKey(l); if (next[key]) delete next[key]; else next[key] = { arm: l.arm, lote: l.lote, q: l.saldo, o: '' }; return { t: next }; });
+    const setMove = (l, field, value) => patch(previous => ({ t: { ...previous.t, [moveKey(l)]: { ...previous.t[moveKey(l)], [field]: value } } }));
+
+    // Lote fechado mostra só o número; saldo, validade e armazéns aparecem ao tocar.
+    // (Funções que devolvem elementos, e não componentes: assim os campos não perdem o foco ao digitar.)
+    const loteRow = (key, label, tags, body) => h('div', { key, className: 'sc9g-lote' + (open[key] ? ' is-open' : '') },
+      h('button', { type: 'button', className: 'sc9g-lote-head', 'aria-expanded': Boolean(open[key]), onClick: () => toggle(key) },
+        h('strong', null, label), tags, h('span', { className: 'sc9g-chev', 'aria-hidden': true }, open[key] ? '▴' : '▾')),
+      open[key] && h('div', { className: 'sc9g-lote-body' }, body));
+
+    const otherBody = (l, showArm) => {
+      const move = state.t[moveKey(l)];
+      return h('div', { className: 'sc9g-where-row' },
+        h('div', { className: 'sc9g-lote-val' },
+          showArm && h(Chip, { tone: Core.armRank(l.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(l.arm)),
+          h('span', { className: 'sc9g-saldo' }, 'saldo ' + num(l.saldo) + unit + (l.empenho ? ' · emp. ' + num(l.empenho) : '')),
+          h(ValidityChip, { iso: l.validade, today })),
+        h(Button, { kind: move ? 'primary' : 'ghost', onClick: () => toggleMove(l) }, move ? '✓ Transferir p/ ' + home : 'Transferir p/ ' + home),
+        move && h('div', { className: 'sc9g-move' },
+          h('label', null, h('span', null, 'Quantidade'), h('input', { className: 'sc9g-input', type: 'number', inputMode: 'decimal', min: 0, step: 'any', value: move.q, onChange: event => setMove(l, 'q', event.target.value === '' ? '' : Number(event.target.value)) })),
+          h('label', null, h('span', null, 'Observação'), h('input', { className: 'sc9g-input', value: move.o, maxLength: 300, placeholder: 'Ex.: trazer do ' + Core.armLabel(l.arm), onChange: event => setMove(l, 'o', event.target.value) }))));
+    };
+
+    const homeBody = l => {
+      const key = moveKey(l), edited = state.v[key], date = edited || l.validade;
+      const elsewhere = item.outros.filter(other => other.lote === l.lote);
+      return [
+        h('div', { key: 'info', className: 'sc9g-lote-val' },
+          h(Chip, { tone: 'dark' }, 'Arm. ' + home),
+          h('span', { className: 'sc9g-saldo' }, 'saldo ' + num(l.saldo) + unit + (l.empenho ? ' · emp. ' + num(l.empenho) : '')),
+          h(ValidityChip, { iso: date, today }),
+          edited && edited !== l.validade && h('small', null, 'SB8: ' + fmtDate(l.validade))),
+        h('label', { key: 'date', className: 'sc9g-date' }, h('span', null, 'Validade correta'),
+          h('input', { type: 'date', className: 'sc9g-input', value: date || '', onChange: event => { const value = event.target.value; patch(previous => ({ v: { ...previous.v, [key]: value } })); }, 'aria-label': 'Validade do lote ' + l.lote })),
+        h('div', { key: 'where', className: 'sc9g-where' },
+          h('h5', null, 'Onde está este lote'),
+          elsewhere.length
+            ? elsewhere.map((other, index) => h('div', { key: index }, otherBody(other, true)))
+            : h('p', { className: 'sc9g-muted' }, 'Só existe saldo no armazém ' + home + '.'))
+      ];
+    };
+
+    const groups = [];
+    item.outros.forEach(l => { let group = groups[groups.length - 1]; if (!group || group.arm !== l.arm) { group = { arm: l.arm, rows: [] }; groups.push(group); } group.rows.push(l); });
+    const known = groups.filter(group => Core.armRank(group.arm) < Core.ARM_PRIORITY.length), rest = groups.filter(group => Core.armRank(group.arm) >= Core.ARM_PRIORITY.length);
+    const armGroup = group => h('div', { key: group.arm, className: 'sc9g-armgroup' },
+      h('h5', null, h(Chip, { tone: Core.armRank(group.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(group.arm)), h('span', null, group.rows.length + (group.rows.length === 1 ? ' lote' : ' lotes') + ' · saldo ' + num(group.rows.reduce((sum, l) => sum + l.saldo, 0)) + unit)),
+      group.rows.map(l => loteRow('o|' + moveKey(l), l.lote, state.t[moveKey(l)] && h('span', { className: 'sc9g-tag' }, 'transferir'), otherBody(l, false))));
+
     return h('section', { id: 'sc9g-item-' + item.produto, className: 'sc9g-card sc9g-product' + (flash ? ' is-flash' : '') },
       h('header', null, h('strong', null, item.descricao || 'Sem descrição no SB1'), h('small', null, item.produto + (item.ean ? ' · ' + item.ean : '') + (item.unidade ? ' · ' + item.unidade : ''))),
       h('div', { className: 'sc9g-chips' }, item.enderecos.map((place, index) => h(Chip, { key: index, tone: place.aqui ? 'dark' : 'muted' }, (place.aqui ? 'Aqui: ' : '') + Core.armLabel(place.arm) + ' · ' + place.endereco + (place.armario ? ' (arm. ' + place.armario + ')' : '')))),
-      item.semSaldo && h('p', { className: 'sc9g-warn', role: 'alert' }, 'Sem saldo no armazém ' + home + ' (SB8). Veja abaixo se está em outro armazém.'),
+      item.semSaldo && h('p', { className: 'sc9g-warn', role: 'alert' }, 'Sem saldo no armazém ' + home + ' (SB8).' + (item.outros.length ? ' Veja em quais outros armazéns existe, logo abaixo.' : ' Também não há saldo em nenhum outro armazém.')),
       item.lotes.length > 0 && h('div', { className: 'sc9g-block' },
-        h('h4', null, 'Armazém ' + home + ' · saldo e validade'),
+        h('h4', null, 'Armazém ' + home + ' · ' + item.lotes.length + (item.lotes.length === 1 ? ' lote' : ' lotes')),
+        h('p', { className: 'sc9g-hint' }, 'Toque no lote para ver saldo, validade e onde ele está.'),
         item.lotes.map(l => {
-          const key = l.lote + '|' + l.validade, edited = state.v[key], date = edited || l.validade;
-          return h('div', { key, className: 'sc9g-lote' },
-            h('div', { className: 'sc9g-lote-top' }, h('strong', null, l.lote), h('span', null, 'saldo ' + num(l.saldo) + (item.unidade ? ' ' + item.unidade : '') + (l.empenho ? ' · emp. ' + num(l.empenho) : ''))),
-            h('div', { className: 'sc9g-lote-val' },
-              h(ValidityChip, { iso: date, today }),
-              edited && edited !== l.validade && h('small', null, 'SB8: ' + fmtDate(l.validade)),
-              h('label', { className: 'sc9g-date' }, h('span', null, 'Validade correta'),
-                h('input', { type: 'date', className: 'sc9g-input', value: date || '', onChange: event => { const value = event.target.value; patch(previous => ({ v: { ...previous.v, [key]: value } })); }, 'aria-label': 'Validade do lote ' + l.lote }))));
+          const key = moveKey(l), edited = state.v[key] && state.v[key] !== l.validade;
+          const moving = item.outros.some(other => other.lote === l.lote && state.t[moveKey(other)]);
+          return loteRow('h|' + key, l.lote, [edited && h('span', { key: 'v', className: 'sc9g-tag' }, 'validade corrigida'), moving && h('span', { key: 't', className: 'sc9g-tag' }, 'transferir')], homeBody(l));
         })),
       item.outros.length > 0 && h('div', { className: 'sc9g-block sc9g-other' },
-        h('h4', null, 'Saldo em outros armazéns'),
-        item.outros.map(l => {
-          const key = l.arm + '|' + l.lote + '|' + l.validade, move = state.t[key];
-          return h('div', { key, className: 'sc9g-lote' },
-            h('div', { className: 'sc9g-lote-top' }, h('span', null, h(Chip, { tone: 'dark' }, 'Arm. ' + Core.armLabel(l.arm)), ' ', h('strong', null, l.lote)), h('span', null, 'saldo ' + num(l.saldo) + (l.empenho ? ' · emp. ' + num(l.empenho) : ''))),
-            h('div', { className: 'sc9g-lote-val' }, h(ValidityChip, { iso: l.validade, today }),
-              h(Button, { kind: move ? 'primary' : 'ghost', onClick: () => patch(previous => { const next = { ...previous.t }; if (next[key]) delete next[key]; else next[key] = { arm: l.arm, lote: l.lote, q: l.saldo, o: '' }; return { t: next }; }) }, move ? '✓ Transferir p/ ' + home : 'Transferir p/ ' + home)),
-            move && h('div', { className: 'sc9g-move' },
-              h('label', null, h('span', null, 'Quantidade'), h('input', { className: 'sc9g-input', type: 'number', inputMode: 'decimal', min: 0, step: 'any', value: move.q, onChange: event => { const value = event.target.value; patch(previous => ({ t: { ...previous.t, [key]: { ...previous.t[key], q: value === '' ? '' : Number(value) } } })); } })),
-              h('label', null, h('span', null, 'Observação'), h('input', { className: 'sc9g-input', value: move.o, maxLength: 300, placeholder: 'Ex.: trazer do ' + Core.armLabel(l.arm), onChange: event => { const value = event.target.value; patch(previous => ({ t: { ...previous.t, [key]: { ...previous.t[key], o: value } } })); } }))));
-        })),
+        h('button', { type: 'button', className: 'sc9g-others-head', 'aria-expanded': othersOpen, onClick: () => setOthersOpen(value => !value) },
+          h('span', { className: 'sc9g-others-title' }, h('h4', null, 'Também em outros armazéns'),
+            !othersOpen && h('span', { className: 'sc9g-chips' }, groups.map(group => h(Chip, { key: group.arm, tone: Core.armRank(group.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, Core.armLabel(group.arm) + ' · ' + group.rows.length)))),
+          h('span', { className: 'sc9g-chev', 'aria-hidden': true }, othersOpen ? '▴' : '▾')),
+        othersOpen && known.map(armGroup),
+        othersOpen && rest.length > 0 && h('h4', { className: 'sc9g-rest' }, 'Demais armazéns'),
+        othersOpen && rest.map(armGroup)),
       obsOpen
         ? h('textarea', { className: 'sc9g-input', rows: 2, maxLength: 500, placeholder: 'Observação do produto', value: state.o, onChange: event => { const value = event.target.value; patch(() => ({ o: value })); } })
         : h(Button, { kind: 'ghost', onClick: () => setObsOpen(true) }, '+ Observação'),
