@@ -323,7 +323,7 @@
   const armsOf = plano => plano.map(p => Core.armLabel(p.arm)).filter((arm, index, all) => all.indexOf(arm) === index).join(', ');
   const contagemTag = c => c && (c.status === 'confere' ? '✓ físico ' + num(c.fisico)
     : c.status === 'abaixo' ? 'físico ' + num(c.fisico) + ' (faltam ' + num(-c.dif) + ')'
-    : num(c.dif - c.restante) + ' un. de outro armazém' + (c.plano.length ? ' (' + armsOf(c.plano) + ')' : '') + (c.restante ? ' · ' + num(c.restante) + ' sem saldo' : ''));
+    : [c.plano.length ? num(c.dif - c.restante) + ' un. de outro armazém (' + armsOf(c.plano) + ')' : '', c.restante ? num(c.restante) + ' a mais, sem saldo no sistema' : ''].filter(Boolean).join(' · '));
 
   function GavetaView({ summary, data, onClose, onDone }) {
     const draftKey = 'sc9g:' + summary.id + ':' + (data.bases.sb8.updatedAt || '');
