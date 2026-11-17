@@ -109,3 +109,70 @@ test('o painel conta gavetas analisadas e as que faltam, sem nunca esquecer o hi
   assert.deepEqual(panel.porUsuarioHoje.map(u => u.usuario).sort(), ['ana', 'bia']);
   assert.equal(panel.duracaoMediaSeg, 120);
 });
+
+// ---------- planilha gigante: leitura em fluxo (zip + XML do Protheus/openpyxl) ----------
+const zlib = require('node:zlib');
+function crc32(buf) {
+  let c, crc = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) { c = (crc ^ buf[i]) & 0xFF; for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1; crc = (crc >>> 8) ^ c; }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files) {
+  const locals = [], centrals = [];
+  let offset = 0;
+  for (const [name, content, method] of files) {
+    const raw = Buffer.from(content), data = method === 0 ? raw : zlib.deflateRawSync(raw), nm = Buffer.from(name);
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(crc32(raw), 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(raw.length, 22); local.writeUInt16LE(nm.length, 26);
+    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(crc32(raw), 16); central.writeUInt32LE(data.length, 20); central.writeUInt32LE(raw.length, 24); central.writeUInt16LE(nm.length, 28); central.writeUInt32LE(offset, 42);
+    locals.push(local, nm, data); centrals.push(central, nm);
+    offset += 30 + nm.length + data.length;
+  }
+  const dir = Buffer.concat(centrals), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+  return new Uint8Array(Buffer.concat([...locals, dir, end]));
+}
+const inline = (ref, value) => `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${value}</t></is></c>`;
+const num = (ref, value) => `<c r="${ref}" t="n"><v>${value}</v></c>`;
+const sheetXml = rows => `<worksheet><sheetData>${rows.join('')}</sheetData></worksheet>`;
+
+test('leitura em fluxo acha o SB8 numa aba grande, ignora colunas extras e linhas sem saldo', async () => {
+  const cols = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const rows = [`<row r="1">${['B8_FILIAL', 'B8_PRODUTO', 'B8_LOCAL', 'data validade', 'saldo', 'lote'].map((v, i) => inline(cols[i] + 1, v)).join('')}</row>`];
+  for (let i = 0; i < 3000; i++) {
+    const n = i + 2;
+    rows.push(`<row r="${n}">${num('A' + n, 1)}${inline('B' + n, 'P' + (i % 50) + '&amp;X')}${num('C' + n, i % 2 ? 1 : 59)}${num('D' + n, 20270105)}${num('E' + n, i % 3 ? 4 : 0)}${i % 7 ? num('F' + n, 1000 + i) : inline('F' + n, 'ab' + i)}</row>`);
+    if (i === 10) rows.push('<row r="9999"/>');
+  }
+  const zip = makeZip([
+    ['xl/worksheets/sheet1.xml', sheetXml(rows), 8],
+    ['xl/worksheets/sheet2.xml', sheetXml([`<row r="1">${inline('A1', 'Outro')}${inline('B1', 'Qualquer')}</row>`, `<row r="2">${inline('A2', 'x')}</row>`]), 0]
+  ]);
+  const progress = [];
+  const found = await G.readWorkbookStream(zip, fraction => progress.push(fraction));
+  assert.deepEqual(Object.keys(found), ['sb8']);
+  assert.equal(found.sb8.stats.lidas, 3000);
+  const valid = Array.from({ length: 3000 }, (_, i) => i).filter(i => i % 3);
+  assert.equal(found.sb8.rows.length, valid.length);
+  const first = found.sb8.rows[0];           // i = 1 → saldo 4, armazém 1
+  assert.deepEqual(first, ['1', 'P1&X', '1', '1001', 4, 0, '2027-01-05']);
+  assert.deepEqual(found.sb8.rows.find(row => row[3] === 'AB7'), ['1', 'P7&X', '1', 'AB7', 4, 0, '2027-01-05']);   // texto inline vira maiúsculo e &amp; é decodificado
+  assert.equal(found.sb8.rows.find(row => row[3] === 'AB0'), undefined);      // i=0 tem saldo 0
+  assert.ok(progress.length > 0 && progress.every(f => f >= 0 && f <= 1));
+});
+
+test('leitura em fluxo lê ZZ2 e SB1 com textos compartilhados', async () => {
+  const shared = '<sst><si><t>Endereco</t></si><si><t>Produto</t></si><si><t>AB1</t></si><si><t>P1</t></si><si><t>Codigo</t></si><si><t>Descricao</t></si><si><r><t>IMPLANTE </t></r><r><t>A</t></r></si></sst>';
+  const s = (ref, i) => `<c r="${ref}" t="s"><v>${i}</v></c>`;
+  const zz2 = sheetXml([`<row r="1">${s('A1', 0)}${s('B1', 1)}</row>`, `<row r="2">${s('A2', 2)}${s('B2', 3)}</row>`]);
+  const sb1 = sheetXml([`<row r="1">${s('A1', 4)}${s('B1', 5)}</row>`, `<row r="2">${s('A2', 3)}${s('B2', 6)}</row>`]);
+  const zip = makeZip([['xl/sharedStrings.xml', shared, 8], ['xl/worksheets/sheet1.xml', zz2, 8], ['xl/worksheets/sheet2.xml', sb1, 8]]);
+  const found = await G.readWorkbookStream(zip);
+  assert.deepEqual(found.zz2.rows, [['', '', 'AB1', 'P1', '', '']]);
+  assert.deepEqual(found.sb1.rows, [['P1', 'IMPLANTE A', '', '']]);
+});
+
+test('leitura em fluxo recusa arquivo que não é xlsx', async () => {
+  await assert.rejects(() => G.readWorkbookStream(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24])), /xlsx/);
+});

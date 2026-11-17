@@ -157,8 +157,20 @@
         for (const file of files) {
           setStatus('Lendo ' + file.name + '…');
           await new Promise(resolve => setTimeout(resolve, 30));
-          const book = xlsx.read(await file.arrayBuffer(), { type: 'array', dense: true, raw: true });
-          const result = Core.readWorkbook(book, xlsx);
+          const buffer = await file.arrayBuffer();
+          let result = {}, incomplete = false;
+          try {
+            const book = xlsx.read(buffer, { type: 'array', dense: true, raw: true });
+            result = Core.readWorkbook(book, xlsx);
+            incomplete = book.SheetNames.some(sheet => !book.Sheets[sheet]);
+          } catch (e) { incomplete = true; }
+          // Planilha gigante (SB8 completo): o leitor comum descarta a aba grande; lemos o arquivo aos pedaços.
+          if (incomplete || !Object.keys(result).length) {
+            try {
+              const streamed = await Core.readWorkbookStream(buffer, fraction => setStatus('Lendo ' + file.name + ' (planilha grande) ' + Math.round(fraction * 100) + '%…'));
+              for (const kind of Object.keys(streamed)) if (!result[kind]) result[kind] = streamed[kind];
+            } catch (e) { if (!Object.keys(result).length) throw e; }
+          }
           const kinds = Object.keys(result);
           if (!kinds.length) throw Error(file.name + ': não achei SB8, ZZ2 ou SB1 (confira os cabeçalhos).');
           kinds.forEach(kind => found.push({ kind, nome: file.name, rows: result[kind].rows, stats: result[kind].stats }));

@@ -92,33 +92,39 @@
   };
   const deleted = value => text(value) === '*';
 
-  function parseSheet(detected, rows) {
-    const { kind, columns, start } = detected;
+  // Lê as linhas de dados uma a uma (serve tanto para a aba inteira quanto para a leitura em fluxo).
+  function sheetParser(detected) {
+    const { kind, columns } = detected;
     const cell = (row, field) => field in columns ? row[columns[field]] : '';
     const out = [];
     const stats = { lidas: 0, ignoradas: 0 };
-    for (let i = start; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row || row.every(value => !text(value))) continue;
+    const push = row => {
+      if (!row || row.every(value => !text(value))) return;
       stats.lidas++;
-      if (deleted(cell(row, 'excluido'))) { stats.ignoradas++; continue; }
+      if (deleted(cell(row, 'excluido'))) { stats.ignoradas++; return; }
       if (kind === 'sb8') {
         const saldo = number(cell(row, 'saldo')), empenho = number(cell(row, 'empenho'));
         const prod = product(cell(row, 'produto')), lote = upper(cell(row, 'lote')), arm = place(cell(row, 'arm'));
         // Só interessa quem tem saldo positivo e identifica produto, lote e armazém.
-        if (!prod || !lote || !arm || !Number.isFinite(saldo) || saldo <= 0) { stats.ignoradas++; continue; }
+        if (!prod || !lote || !arm || !Number.isFinite(saldo) || saldo <= 0) { stats.ignoradas++; return; }
         out.push([place(cell(row, 'filial')), prod, arm, lote, saldo, Number.isFinite(empenho) && empenho > 0 ? empenho : 0, isoDate(cell(row, 'validade'))]);
       } else if (kind === 'zz2') {
         const prod = product(cell(row, 'produto')), endereco = upper(cell(row, 'endereco'));
-        if (!prod || !endereco) { stats.ignoradas++; continue; }
+        if (!prod || !endereco) { stats.ignoradas++; return; }
         out.push([place(cell(row, 'filial')), place(cell(row, 'arm')), endereco, prod, upper(cell(row, 'lote')), upper(cell(row, 'armario'))]);
       } else {
         const code = product(cell(row, 'codigo'));
-        if (!code) { stats.ignoradas++; continue; }
+        if (!code) { stats.ignoradas++; return; }
         out.push([code, text(cell(row, 'descricao')), text(cell(row, 'unidade')), text(cell(row, 'ean'))]);
       }
-    }
-    return { kind, rows: out, stats };
+    };
+    return { push, result: () => ({ kind, rows: out, stats }) };
+  }
+
+  function parseSheet(detected, rows) {
+    const parser = sheetParser(detected);
+    for (let i = detected.start; i < rows.length; i++) parser.push(rows[i]);
+    return parser.result();
   }
 
   // Lê um workbook do SheetJS e devolve o que encontrou: { sb8?, zz2?, sb1? }.
@@ -127,10 +133,153 @@
     for (const name of book.SheetNames) {
       const sheet = book.Sheets[name];
       if (!sheet) continue;
+      // Primeiro só o topo da aba (cabeçalho): evita converter 400 mil linhas de abas que não interessam.
+      const head = xlsx.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '', range: { s: { r: 0, c: 0 }, e: { r: 24, c: 60 } } });
+      const peek = detectSheet(head);
+      if (!peek || found[peek.kind]) continue;
       const rows = xlsx.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
-      const detected = detectSheet(rows);
-      if (!detected || found[detected.kind]) continue;
+      const detected = detectSheet(rows) || peek;
       found[detected.kind] = parseSheet(detected, rows);
+    }
+    return found;
+  }
+
+  // ---------- planilhas gigantes (leitura em fluxo) ----------
+  // O SB8 completo do Protheus (~400 mil linhas × 38 colunas) vira um XML de ~850 MB dentro do .xlsx de ~65 MB,
+  // maior que o limite de texto do navegador: o SheetJS descarta essa aba sem avisar. Aqui o .xlsx é aberto
+  // como zip, a aba é descompactada aos pedaços e só as colunas necessárias são lidas, linha a linha.
+  const XML_ENTITIES = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+  const unescapeXml = value => value.includes('&')
+    ? value.replace(/&#x([0-9a-f]+);|&#(\d+);|&(lt|gt|amp|quot|apos);/gi, (all, hex, dec, name) =>
+      name ? XML_ENTITIES[name.toLowerCase()] : String.fromCodePoint(hex ? parseInt(hex, 16) : Number(dec)))
+    : value;
+  const columnIndex = letters => { let n = 0; for (let i = 0; i < letters.length; i++) n = n * 26 + letters.charCodeAt(i) - 64; return n - 1; };
+
+  function zipEntries(bytes) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let end = -1;
+    for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) if (view.getUint32(i, true) === 0x06054b50) { end = i; break; }
+    if (end < 0) throw Error('Arquivo .xlsx inválido (não é um zip).');
+    const count = view.getUint16(end + 10, true);
+    const decoder = new TextDecoder();
+    const entries = {};
+    let at = view.getUint32(end + 16, true);
+    for (let i = 0; i < count && view.getUint32(at, true) === 0x02014b50; i++) {
+      const nameLength = view.getUint16(at + 28, true), extra = view.getUint16(at + 30, true), comment = view.getUint16(at + 32, true);
+      const name = decoder.decode(bytes.subarray(at + 46, at + 46 + nameLength));
+      entries[name] = { method: view.getUint16(at + 10, true), size: view.getUint32(at + 20, true), total: view.getUint32(at + 24, true), offset: view.getUint32(at + 42, true) };
+      at += 46 + nameLength + extra + comment;
+    }
+    return entries;
+  }
+
+  function entryText(bytes, entry) {
+    if (entry.size === 0xFFFFFFFF || entry.offset === 0xFFFFFFFF) throw Error('Arquivo .xlsx grande demais (zip64).');
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const start = entry.offset + 30 + view.getUint16(entry.offset + 26, true) + view.getUint16(entry.offset + 28, true);
+    let stream = new Blob([bytes.subarray(start, start + entry.size)]).stream();
+    if (entry.method === 8) {
+      if (typeof DecompressionStream === 'undefined') throw Error('Este navegador não consegue abrir planilha tão grande. Use um Chrome atualizado no computador.');
+      stream = stream.pipeThrough(new DecompressionStream('deflate-raw'));
+    } else if (entry.method !== 0) throw Error('Compressão do .xlsx não suportada.');
+    return stream.pipeThrough(new TextDecoderStream());
+  }
+
+  // Quebra o XML da aba em <row>…</row> e entrega cada linha como vetor (só as colunas pedidas, se "wanted" existir).
+  async function streamRows(textStream, shared, onRow, onProgress) {
+    const reader = textStream.getReader();
+    const cellPattern = /<c r="([A-Z]+)\d+"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    const rowToArray = (xml, wanted) => {
+      const row = [];
+      cellPattern.lastIndex = 0;
+      let match;
+      while ((match = cellPattern.exec(xml))) {
+        const column = columnIndex(match[1]);
+        if (wanted && !wanted.has(column)) continue;
+        const body = match[3];
+        if (body === undefined) continue;
+        const type = /\bt="(\w+)"/.exec(match[2]);
+        const kind = type ? type[1] : 'n';
+        let value;
+        if (kind === 'inlineStr') { value = ''; body.replace(/<t[^>]*>([\s\S]*?)<\/t>/g, (all, part) => { value += unescapeXml(part); return all; }); }
+        else {
+          const raw = /<v>([\s\S]*?)<\/v>/.exec(body);
+          if (!raw) continue;
+          value = kind === 's' ? (shared[Number(raw[1])] ?? '') : kind === 'n' ? Number(raw[1]) : kind === 'b' ? raw[1] === '1' : unescapeXml(raw[1]);
+        }
+        row[column] = value;
+      }
+      return row;
+    };
+    let buffer = '', read = 0, stop = false;
+    const wantedBox = { set: null };
+    while (!stop) {
+      const { value, done } = await reader.read();
+      if (value) { buffer += value; read += value.length; }
+      let from = 0;
+      for (;;) {
+        const open = buffer.indexOf('<row ', from);
+        if (open < 0) break;
+        const close = buffer.indexOf('>', open);
+        if (close < 0) break;
+        if (buffer.charCodeAt(close - 1) === 47) { from = close + 1; continue; }   // <row … /> (linha vazia)
+        const end = buffer.indexOf('</row>', close);
+        if (end < 0) break;
+        const result = onRow(xml => rowToArray(xml, wantedBox.set), buffer.slice(close + 1, end), wantedBox);
+        from = end + 6;
+        if (result === false) { stop = true; break; }
+      }
+      buffer = from ? buffer.slice(from) : buffer;
+      if (!stop && buffer.length > 64 && buffer.indexOf('<row ') < 0) buffer = buffer.slice(-8);
+      if (onProgress) onProgress(read);
+      if (done) break;
+    }
+    if (stop) await reader.cancel().catch(() => {});
+  }
+
+  async function sharedStringsFrom(bytes, entries) {
+    const entry = entries['xl/sharedStrings.xml'];
+    if (!entry) return [];
+    const reader = entryText(bytes, entry).getReader();
+    let xml = '';
+    for (;;) { const { value, done } = await reader.read(); if (value) xml += value; if (done) break; }
+    const list = [];
+    xml.replace(/<si>([\s\S]*?)<\/si>/g, (all, body) => {
+      let value = '';
+      body.replace(/<t[^>]*>([\s\S]*?)<\/t>/g, (inner, part) => { value += unescapeXml(part); return inner; });
+      list.push(value);
+      return all;
+    });
+    return list;
+  }
+
+  // Lê um .xlsx aos pedaços e devolve { sb8?, zz2?, sb1? } como o readWorkbook. onProgress(0..1) opcional.
+  async function readWorkbookStream(buffer, onProgress) {
+    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+    const entries = zipEntries(bytes);
+    const names = Object.keys(entries).filter(name => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
+      .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
+    if (!names.length) throw Error('Arquivo .xlsx sem abas.');
+    const shared = await sharedStringsFrom(bytes, entries);
+    const found = {};
+    for (const name of names) {
+      const entry = entries[name];
+      const head = [];
+      let parser = null;
+      await streamRows(entryText(bytes, entry), shared, (parse, xml, box) => {
+        if (parser) { parser.push(parse(xml)); return true; }
+        head.push(parse(xml));
+        const detected = detectSheet(head.map(row => Array.from(row, value => value ?? '')));
+        if (detected) {
+          if (found[detected.kind]) return false;
+          box.set = new Set(Object.values(detected.columns));
+          parser = sheetParser(detected);
+          for (let i = detected.start; i < head.length; i++) parser.push(head[i]);
+          return true;
+        }
+        return head.length < 25;
+      }, onProgress && (chars => onProgress(Math.min(1, chars / Math.max(1, entry.total)))));
+      if (parser) { const result = parser.result(); found[result.kind] = result; }
     }
     return found;
   }
@@ -322,7 +471,7 @@
   }
 
   const api = {
-    BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, readWorkbook, detectSheet, parseSheet,
+    BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
     cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, cleanAnalysis, summarize,
     dashboard, baseState
   };
