@@ -424,7 +424,7 @@
       if (!known.has(prod)) throw Error('Produto ' + prod + ' não pertence a esta gaveta.');
       const lotes = (Array.isArray(item.lotes) ? item.lotes : []).slice(0, 100).map(lote => ({
         lote: upper(lote.lote).slice(0, 60), saldo: Number(lote.saldo) || 0,
-        validadeSistema: isoDate(lote.validadeSistema), validadeNova: isoDate(lote.validadeNova)
+        validadeSistema: isoDate(lote.validadeSistema), validadeNova: isoDate(lote.validadeNova), analisado: lote.analisado === true
       }));
       const transferir = (Array.isArray(item.transferir) ? item.transferir : []).slice(0, 100).map(move => {
         const qtd = Number(move.qtd);
@@ -442,17 +442,49 @@
   }
 
   function summarize(itens, today) {
-    let validadesAlteradas = 0, vencidos = 0, transferencias = 0, semSaldo = 0;
+    let validadesAlteradas = 0, vencidos = 0, transferencias = 0, semSaldo = 0, lotes = 0, lotesAnalisados = 0;
     for (const item of itens) {
       if (item.semSaldo) semSaldo++;
       transferencias += item.transferir.length;
       for (const lote of item.lotes) {
+        lotes++;
+        if (lote.analisado) lotesAnalisados++;
         const date = lote.validadeNova || lote.validadeSistema;
         if (lote.validadeNova && lote.validadeNova !== lote.validadeSistema) validadesAlteradas++;
         if (date && validity(date, today).days < 0) vencidos++;
       }
     }
-    return { produtos: itens.length, semSaldo, validadesAlteradas, vencidos, transferencias };
+    return { produtos: itens.length, semSaldo, validadesAlteradas, vencidos, transferencias, lotes, lotesAnalisados };
+  }
+
+  // ---------- exportação ----------
+  const brDate = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4) : '';
+  // Linhas das planilhas de exportação. A aba "Lotes" traz o lote em todas as linhas (lote da gaveta,
+  // produto sem saldo, lote a transferir e lote fora do cadastro).
+  function exportRows(registros, fmtTime) {
+    const time = fmtTime || (iso => String(iso || '').slice(11, 16));
+    const lotes = [['Data', 'Hora', 'Usuário', 'Gaveta', 'Armário', 'Armazém', 'Tipo', 'Produto', 'Descrição', 'Lote', 'Saldo', 'Validade (SB8)', 'Validade informada', 'Situação da validade', 'Analisado', 'Qtd a transferir', 'Observação']];
+    const gavetas = [['Data', 'Hora', 'Usuário', 'Gaveta', 'Armário', 'Armazém', 'Produtos', 'Lotes', 'Lotes analisados', 'Sem saldo', 'Validades alteradas', 'Vencidos', 'Transferências marcadas', 'Duração (min)', 'Observação']];
+    const transferir = [['Data', 'Gaveta', 'Produto', 'Descrição', 'Lote', 'Armazém de origem', 'Destino', 'Quantidade', 'Observação']];
+    for (const r of registros) {
+      const when = brDate(r.dia), hour = time(r.em), home = armLabel(r.gaveta.arm), base = [when, hour, r.por, r.gaveta.codigo, r.gaveta.armario || '', home];
+      const resumo = r.resumo || {};
+      gavetas.push([when, hour, r.por, r.gaveta.codigo, r.gaveta.armario || '', home, resumo.produtos, resumo.lotes ?? '', resumo.lotesAnalisados ?? '', resumo.semSaldo, resumo.validadesAlteradas, resumo.vencidos, resumo.transferencias, Math.round((r.duracaoSeg || 0) / 6) / 10, r.obs || '']);
+      for (const item of r.itens) {
+        if (!item.lotes.length) lotes.push([...base, item.semSaldo ? 'Sem saldo no armazém' : 'Sem lote', item.produto, item.descricao, '', '', '', '', '', '', '', item.obs]);
+        for (const lote of item.lotes) {
+          const final = lote.validadeNova || lote.validadeSistema;
+          lotes.push([...base, 'Lote da gaveta', item.produto, item.descricao, lote.lote, lote.saldo, brDate(lote.validadeSistema), lote.validadeNova && lote.validadeNova !== lote.validadeSistema ? brDate(lote.validadeNova) : '',
+            final ? validity(final, r.dia).label : 'Sem validade', lote.analisado ? 'Sim' : 'Não', '', item.obs]);
+        }
+        for (const move of item.transferir) {
+          lotes.push([base[0], base[1], base[2], base[3], base[4], armLabel(move.arm), 'Transferir p/ ' + home, item.produto, item.descricao, move.lote, '', '', '', '', '', move.qtd, move.obs || item.obs]);
+          transferir.push([when, r.gaveta.codigo, item.produto, item.descricao, move.lote, armLabel(move.arm), home, move.qtd, move.obs]);
+        }
+      }
+      for (const extra of r.extras || []) lotes.push([...base, 'Lote fora do cadastro', extra.produto, '', extra.lote, '', '', '', '', '', '', extra.obs]);
+    }
+    return { lotes, gavetas, transferir };
   }
 
   // ---------- painel ----------
@@ -495,7 +527,7 @@
   const api = {
     BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, isArmario, ARM_PRIORITY, armRank, matchGaveta, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
     cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, cleanAnalysis, summarize,
-    dashboard, baseState
+    dashboard, baseState, exportRows
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.SC9GavetaCore = api;

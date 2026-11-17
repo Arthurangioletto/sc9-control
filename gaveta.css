@@ -163,6 +163,13 @@ textarea.sc9g-input { min-height: 80px; resize: vertical; }
 .sc9g-tag { flex: none; padding: 3px 8px; border-radius: 999px; background: #ffedd5; color: #b54708; font-size: 12px; font-weight: 800; }
 .sc9g-lote-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 2px 2px 14px; }
 .sc9g-saldo { font-weight: 700; }
+.sc9g-tag-ok { background: #dcf3e8; color: #0b6b49; }
+.sc9g-confirm { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 10px 14px; border: 2px solid #bdb6a5; border-radius: 14px; background: #fff; font-weight: 800; }
+.sc9g-confirm small { display: block; color: var(--g-muted); font-weight: 600; font-size: 13px; }
+.sc9g-confirm input { flex: none; width: 32px; height: 32px; margin: 0; border: 2px solid #8a8472; border-radius: 8px; background: #fff; display: grid; place-content: center; }
+.sc9g-confirm input:checked { background: var(--g-green); border-color: var(--g-green); }
+.sc9g-confirm input:checked::after { content: '✓'; color: #fff; font-size: 22px; font-weight: 800; line-height: 1; }
+.sc9g-confirm.is-on { border-color: var(--g-green); background: #eef8f2; }
 .sc9g-where { display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: #f7f4ec; }
 .sc9g-where-row { display: grid; gap: 8px; padding: 8px 0; border-top: 1px dashed #d8d0bd; }
 .sc9g-where h5 + div .sc9g-where-row, .sc9g-where > div:first-of-type .sc9g-where-row { border-top: 0; }

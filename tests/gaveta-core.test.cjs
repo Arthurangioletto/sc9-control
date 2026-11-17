@@ -88,9 +88,12 @@ test('a análise só fecha com todos os produtos conferidos e valida os dados', 
   assert.throws(() => G.cleanAnalysis({ itens: [item('P1'), item('P2', { conferido: false })] }, gaveta), /conferidos/);
   assert.throws(() => G.cleanAnalysis({ itens: [item('P1'), item('OUTRO')] }, gaveta), /não pertence/);
   assert.throws(() => G.cleanAnalysis({ itens: [item('P1', { transferir: [{ arm: '59', lote: 'L1', qtd: 0 }] }), item('P2')] }, gaveta), /positiva/);
-  const ok = G.cleanAnalysis({ itens: [item('P1', { lotes: [{ lote: 'l1', saldo: 10, validadeSistema: '2027-05-01', validadeNova: '2027-06-01' }], transferir: [{ arm: '59', lote: 'l1', qtd: 7, obs: 'trazer' }] }), item('P2', { semSaldo: true })], extras: [{ lote: 'zz9', obs: 'sem cadastro' }] }, gaveta);
+  const ok = G.cleanAnalysis({ itens: [item('P1', { lotes: [{ lote: 'l1', saldo: 10, validadeSistema: '2027-05-01', validadeNova: '2027-06-01', analisado: true }], transferir: [{ arm: '59', lote: 'l1', qtd: 7, obs: 'trazer' }] }), item('P2', { semSaldo: true })], extras: [{ lote: 'zz9', obs: 'sem cadastro' }] }, gaveta);
   const resumo = G.summarize(ok.itens, '2026-11-17');
-  assert.deepEqual(resumo, { produtos: 2, semSaldo: 1, validadesAlteradas: 1, vencidos: 0, transferencias: 1 });
+  assert.deepEqual(resumo, { produtos: 2, semSaldo: 1, validadesAlteradas: 1, vencidos: 0, transferencias: 1, lotes: 1, lotesAnalisados: 1 });
+  assert.equal(ok.itens[0].lotes[0].analisado, true);
+  const semMarca = G.cleanAnalysis({ itens: [item('P1', { lotes: [{ lote: 'l1', saldo: 10, validadeSistema: '2027-05-01' }] }), item('P2', { semSaldo: true })] }, gaveta);
+  assert.equal(semMarca.itens[0].lotes[0].analisado, false);
   assert.equal(ok.extras[0].lote, 'ZZ9');
 });
 
@@ -212,4 +215,31 @@ test('código de barras/QR da gaveta: aceita o código puro, com prefixo, dentro
   assert.equal(G.matchGaveta('AA01A', ['AA01', 'A01A']), '');     // ambíguo: não chuta
   assert.equal(G.matchGaveta('XYZ', codes), '');
   assert.equal(G.matchGaveta('', codes), '');
+});
+
+test('exportação traz o lote em todas as linhas da aba Lotes e se foi analisado', () => {
+  const registro = {
+    dia: '2026-11-17', em: '2026-11-17T12:30:00Z', por: 'ana', duracaoSeg: 120, obs: '',
+    gaveta: { id: '1|1|AB1', codigo: 'AB1', arm: '1', armario: '' },
+    resumo: { produtos: 3, lotes: 2, lotesAnalisados: 1, semSaldo: 1, validadesAlteradas: 1, vencidos: 0, transferencias: 1 },
+    itens: [
+      { produto: 'P1', descricao: 'IMPLANTE A', semSaldo: false, obs: '', transferir: [{ arm: '59', lote: 'L9', qtd: 4, obs: 'trazer' }],
+        lotes: [{ lote: 'L1', saldo: 10, validadeSistema: '2027-05-01', validadeNova: '2027-06-01', analisado: true }, { lote: 'L2', saldo: 3, validadeSistema: '2026-11-01', validadeNova: '', analisado: false }] },
+      { produto: 'P2', descricao: 'PARAFUSO', semSaldo: true, obs: 'sem saldo', transferir: [], lotes: [] }
+    ],
+    extras: [{ produto: 'P7', lote: 'ZZ9', obs: 'sem cadastro' }]
+  };
+  const { lotes, gavetas, transferir } = G.exportRows([registro], iso => '09:30');
+  const head = lotes[0], col = name => head.indexOf(name);
+  assert.ok(col('Lote') >= 0 && col('Analisado') >= 0);
+  const byType = type => lotes.slice(1).filter(row => row[col('Tipo')] === type);
+  assert.deepEqual(byType('Lote da gaveta').map(row => [row[col('Lote')], row[col('Analisado')], row[col('Validade informada')], row[col('Saldo')]]), [['L1', 'Sim', '01/06/2027', 10], ['L2', 'Não', '', 3]]);
+  assert.match(byType('Lote da gaveta')[1][col('Situação da validade')], /Vencido há 16d/);
+  assert.deepEqual(byType('Transferir p/ 01').map(row => [row[col('Lote')], row[col('Armazém')], row[col('Qtd a transferir')]]), [['L9', '59', 4]]);
+  assert.deepEqual(byType('Lote fora do cadastro').map(row => row[col('Lote')]), ['ZZ9']);
+  assert.equal(byType('Sem saldo no armazém').length, 1);
+  assert.equal(gavetas[1][gavetas[0].indexOf('Lotes analisados')], 1);
+  assert.equal(gavetas[1][gavetas[0].indexOf('Hora')], '09:30');
+  assert.deepEqual(transferir[1].slice(4, 8), ['L9', '59', '01', 4]);
+  assert.ok(lotes.slice(1).every(row => row.length === head.length));
 });
