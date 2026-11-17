@@ -133,7 +133,7 @@ Em hospedagem com disco efêmero, use armazenamento persistente para conservar o
 
 ## Acessos e dados
 
-O sistema possui administrador e usuários com combinações dos perfis `geral`, `controle0201`, `saida`, `alteracoes`, `cadastro`, `recebimento`, `despacho` e `transferencia`. A autorização é aplicada no servidor; a navegação acompanha o acesso permitido.
+O sistema possui administrador e usuários com combinações dos perfis `geral`, `controle0201`, `saida`, `alteracoes`, `cadastro`, `recebimento`, `despacho`, `transferencia` e `gaveta`. A autorização é aplicada no servidor; a navegação acompanha o acesso permitido.
 
 - As credenciais de serviço do Supabase devem permanecer no ambiente do servidor.
 - Planilhas reais, arquivos de `data/`, backups e credenciais devem ficar fora dos commits.
@@ -283,3 +283,20 @@ Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transfere
 - Em cada aba, o comparativo do administrador usa um arquivo SD3 com filial e reúne os documentos finalizados na data selecionada. Mantém as referências dos documentos SC9 para cada lote e rota.
 - Em **Visualizar documentos**, somente o administrador pode exportar dois ou mais documentos finalizados num Excel consolidado. A aba **Transferência múltipla** soma por produto, lote e armazém de origem. O **Resumo** identifica o documento original de cada lançamento.
 - No Retem, **Retornos do Retem** usa o SB8 com data de fabricação para listar os lotes com saldo no 26 que já completaram dois anos ou completam nos próximos 90 dias. A aba ZZ2 do mesmo arquivo fornece o endereço no 01. O painel filtra e exporta pelo mês previsto de retorno, e a última importação fica salva no navegador.
+
+## Análise de gaveta (celular e tablet)
+
+Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê). A tela ocupa o aparelho todo e foi feita para o dedo: botões grandes, campos de 16px, barra de ação fixa embaixo e dois níveis de layout (celular e tablet).
+
+**Carga (administrador, aba Bases):** escolha o SB8, o ZZ2 e o SB1 do Protheus (um por vez ou juntos; o sistema reconhece cada aba pelos cabeçalhos). O SB8 é lido no navegador e só vão para o servidor as linhas com saldo maior que zero e não excluídas.
+
+- **SB8 vale 24 horas.** Passou disso sem ser atualizado, o servidor apaga o SB8 e quem analisa deixa de ver a base (a lista de gavetas e o painel continuam).
+- **ZZ2 e SB1** (endereços e descrições) ficam até serem trocados. Cada endereço do ZZ2 num armazém/filial é uma **gaveta**.
+- **As análises feitas nunca são apagadas** (`gaveta-analises.json`). O painel conta gavetas analisadas por dia, quantas faltam, média por dia, tempo médio por gaveta e quem analisou hoje; o administrador exporta tudo em Excel.
+
+**Análise:** a pessoa escolhe a gaveta e vê, por produto, todos os endereços cadastrados no ZZ2, os lotes com saldo e a validade no armazém da gaveta (colorida: vencido, até 30 dias, até 90 dias, válido) e o saldo em outros armazéns (59, ES, 20…). Pode:
+
+- bipar/digitar um **lote** no topo: se está na gaveta, vai até o produto; se não está, mostra onde o saldo está e permite anotar "encontrado nesta gaveta";
+- **corrigir a validade** do lote (a correção fica gravada na análise, o SB8 não é alterado);
+- marcar um lote de outro armazém como **transferir para o armazém da gaveta**, com quantidade e observação;
+- deixar observação e tocar em **Conferido**. A gaveta só fecha com todos os produtos conferidos; o rascunho fica salvo no aparelho e reenvio não duplica.

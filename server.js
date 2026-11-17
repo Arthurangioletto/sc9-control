@@ -2,6 +2,8 @@
 // no Render e mais fácil de eu testar aqui antes de te entregar.
 const Inventory = require("./inventory-integrity.js");
 const Stock = require("./stock-position.js");
+// carregado só quando a rota da gaveta é usada (os outros testes copiam só alguns arquivos do servidor)
+const Gaveta = new Proxy({}, { get: (_, nome) => require("./gaveta-core.js")[nome] });
 const http = require("http");
 const zlib = require("zlib");
 const fs = require("fs");
@@ -165,7 +167,7 @@ if (!process.env.SESSION_SECRET) {
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho", "transferencia"];
+const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho", "transferencia", "gaveta"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -394,6 +396,9 @@ SERVABLE.add("transferencia-inventory.js");
 SERVABLE.add("transferencia-document-storage.js");
 SERVABLE.add("operational-documents-ui.js");
 SERVABLE.add("export-workbook.js");
+SERVABLE.add("gaveta-core.js");
+SERVABLE.add("gaveta-ui.js");
+SERVABLE.add("gaveta.css");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");
 
@@ -515,6 +520,37 @@ async function cadastroAchadosCarregar() {
   return cadastroAchadosLoading;
 }
 async function cadastroAchadosSalvar(dados) { await objSave(CADASTRO_ACHADOS_OBJ, dados); cadastroAchadosCache = dados; }
+// ---------------------------------------------------------------------------
+// ANÁLISE DE GAVETA — o administrador carrega SB8, SB1 e ZZ2; quem tem o perfil
+// "gaveta" confere cada gaveta (endereço do ZZ2) no celular ou tablet.
+//  - o SB8 do dia vale 24h: passou disso sem atualizar, ele é apagado e some;
+//  - ZZ2 e SB1 (endereços e descrições) ficam até serem substituídos;
+//  - as análises feitas NUNCA são apagadas: é o histórico do que já foi conferido.
+// ---------------------------------------------------------------------------
+const GAVETA_OBJ = { sb8: "gaveta-sb8.json", zz2: "gaveta-zz2.json", sb1: "gaveta-sb1.json", analises: "gaveta-analises.json" };
+const gavetaCache = { sb8: undefined, zz2: undefined, sb1: undefined, analises: undefined, ctx: null, ctxKey: "" };
+async function gavetaObj(kind) {
+  if (gavetaCache[kind] === undefined) gavetaCache[kind] = (await objLoad(GAVETA_OBJ[kind])) || null;
+  return gavetaCache[kind];
+}
+async function gavetaSb8() {
+  const base = await gavetaObj("sb8");
+  if (base && Gaveta.baseState(base).expirada) {
+    try { await objDelete(GAVETA_OBJ.sb8); gavetaCache.sb8 = null; } catch (e) { console.error("Falha ao apagar o SB8 vencido da gaveta:", e); }
+    return null;
+  }
+  return base;
+}
+async function gavetaContexto() {
+  const [sb8, zz2, sb1] = [await gavetaSb8(), await gavetaObj("zz2"), await gavetaObj("sb1")];
+  const key = [sb8?.updatedAt, zz2?.updatedAt, sb1?.updatedAt].join("|");
+  if (!gavetaCache.ctx || gavetaCache.ctxKey !== key) {
+    gavetaCache.ctx = Gaveta.makeContext(zz2?.rows || [], sb1?.map || {}, sb8?.rows || []);
+    gavetaCache.ctxKey = key;
+  }
+  return { ctx: gavetaCache.ctx, sb8, zz2, sb1 };
+}
+const gavetaMeta = (obj, extra = {}) => obj ? { updatedAt: obj.updatedAt, nome: obj.nome || "", por: obj.por || "", ...extra } : null;
 const VALOR_GERAL_OBJ = "valor-faturado-geral.json"; // valor faturado do mês, TODOS os armazéns (não só Cambuci)
 // armazéns reconhecidos pra essa conta geral — o mesmo conjunto que o painel
 // já usa (ES nunca entra em lugar nenhum, nem chega a existir como opção).
@@ -2107,6 +2143,103 @@ async function handleApi(req, res, pathname) {
       if (resultado.erro) return sendJson(res, resultado.erro, { error: resultado.msg });
       return sendJson(res, 200, resultado);
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao atualizar a alteração")); }
+  }
+
+  // ---- Análise de gaveta ----
+  if (pathname.startsWith("/api/gaveta/")) {
+    res.setHeader("Cache-Control", "private, no-store");
+    const rota = pathname.slice("/api/gaveta/".length);
+    const params = new URL(req.url, "http://localhost").searchParams;
+    try {
+      if (rota === "carga" && method === "POST") {
+        const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+        let body;
+        try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const tipo = String(body.tipo || "");
+        if (!["sb8", "zz2", "sb1"].includes(tipo)) return sendJson(res, 400, { error: "tipo inválido (use sb8, zz2 ou sb1)" });
+        const guardado = { updatedAt: new Date().toISOString(), nome: String(body.nome || tipo.toUpperCase()).slice(0, 200), por: sess.usuario };
+        try {
+          if (tipo === "sb8") guardado.rows = Gaveta.cleanSb8(body.rows);
+          else if (tipo === "zz2") guardado.rows = Gaveta.cleanZz2(body.rows);
+          else guardado.map = Gaveta.cleanSb1(body.rows);
+        } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        await comFila("gaveta", async () => { await objSave(GAVETA_OBJ[tipo], guardado); gavetaCache[tipo] = guardado; });
+        const { ctx } = await gavetaContexto();
+        return sendJson(res, 200, { ok: true, tipo, updatedAt: guardado.updatedAt, linhas: (guardado.rows || Object.keys(guardado.map)).length, gavetas: ctx.gavetas.size });
+      }
+
+      const sess = await exigir(req, res, ["admin", "operador"], "gaveta"); if (!sess) return;
+
+      if (rota === "resumo" && method === "GET") {
+        const { ctx, sb8, zz2, sb1 } = await gavetaContexto();
+        const registros = (await gavetaObj("analises"))?.registros || [];
+        const gavetas = [...ctx.gavetas.values()];
+        const painel = Gaveta.dashboard(gavetas, registros, diaSP());
+        const { ultimas, ...painelPublico } = painel;
+        const lista = gavetas.map((g) => ({ id: g.id, codigo: g.codigo, arm: g.arm, filial: g.filial, armario: g.armario, itens: g.itens.size, ultima: ultimas[g.id] || null }))
+          .sort((a, b) => a.codigo.localeCompare(b.codigo, "pt-BR", { numeric: true }));
+        return sendJson(res, 200, {
+          hoje: diaSP(), agora: new Date().toISOString(), baseValidaHoras: Gaveta.BASE_VALID_HOURS,
+          bases: {
+            sb8: { ...Gaveta.baseState(sb8), ...gavetaMeta(sb8, { linhas: sb8?.rows.length || 0 }) },
+            zz2: gavetaMeta(zz2, { linhas: zz2?.rows.length || 0, gavetas: gavetas.length }),
+            sb1: gavetaMeta(sb1, { linhas: sb1 ? Object.keys(sb1.map).length : 0 })
+          },
+          painel: painelPublico, gavetas: lista
+        });
+      }
+
+      if (rota === "detalhe" && method === "GET") {
+        const { ctx, sb8 } = await gavetaContexto();
+        if (!sb8) return sendJson(res, 409, { error: "O SB8 de hoje não está carregado. Peça ao administrador para carregar o SB8." });
+        const detalhe = Gaveta.detail(ctx, String(params.get("id") || ""));
+        if (!detalhe) return sendJson(res, 404, { error: "Gaveta não encontrada no ZZ2 atual." });
+        return sendJson(res, 200, { detalhe, sb8AtualizadoEm: sb8.updatedAt });
+      }
+
+      if (rota === "lote" && method === "GET") {
+        const { ctx, sb8 } = await gavetaContexto();
+        if (!sb8) return sendJson(res, 409, { error: "O SB8 de hoje não está carregado." });
+        return sendJson(res, 200, { resultados: Gaveta.findLote(ctx, params.get("q") || "") });
+      }
+
+      if (rota === "analises" && method === "GET") {
+        if (sess.role !== "admin") return sendJson(res, 403, { error: "seu acesso não permite isso" });
+        return sendJson(res, 200, { registros: (await gavetaObj("analises"))?.registros || [] });
+      }
+
+      if (rota === "analise" && method === "POST") {
+        let body;
+        try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const { ctx, sb8 } = await gavetaContexto();
+        if (!sb8) return sendJson(res, 409, { error: "O SB8 de hoje não está carregado. A análise não foi salva." });
+        const gaveta = ctx.gavetas.get(String(body.id || ""));
+        if (!gaveta) return sendJson(res, 404, { error: "Gaveta não encontrada no ZZ2 atual." });
+        let limpa;
+        try { limpa = Gaveta.cleanAnalysis(body, gaveta); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const clientId = /^[a-f0-9-]{8,64}$/i.test(String(body.clientId || "")) ? String(body.clientId) : "";
+        const agora = new Date(), inicio = Date.parse(body.inicio);
+        const resultado = await comFila("gaveta-analises", async () => {
+          const atual = (await objLoad(GAVETA_OBJ.analises, { fresh: true })) || { registros: [] };
+          if (!Array.isArray(atual.registros)) throw new Error("Histórico de gavetas inválido");
+          const repetido = clientId && atual.registros.find((r) => r.clientId === clientId);
+          if (repetido) return { ok: true, id: repetido.id, repetido: true };
+          const itens = limpa.itens.map((item) => ({ ...item, descricao: (ctx.sb1[item.produto] || [])[0] || "" }));
+          const registro = {
+            id: crypto.randomUUID(), clientId, gaveta: { id: gaveta.id, codigo: gaveta.codigo, filial: gaveta.filial, arm: gaveta.arm, armario: gaveta.armario },
+            em: agora.toISOString(), dia: diaSP(agora), por: sess.usuario, nome: sess.nome || sess.usuario,
+            duracaoSeg: Number.isFinite(Number(body.duracaoSeg)) ? Math.min(6 * 3600, Math.max(0, Math.round(Number(body.duracaoSeg)))) : Number.isFinite(inicio) ? Math.min(6 * 3600, Math.max(0, Math.round((agora.getTime() - inicio) / 1000))) : 0,
+            resumo: Gaveta.summarize(itens, diaSP(agora)), itens, extras: limpa.extras, obs: limpa.obs, sb8AtualizadoEm: sb8.updatedAt
+          };
+          const novo = { registros: [...atual.registros, registro] };
+          await objSave(GAVETA_OBJ.analises, novo);
+          gavetaCache.analises = novo;
+          return { ok: true, id: registro.id, resumo: registro.resumo };
+        });
+        return sendJson(res, 200, resultado);
+      }
+      return sendJson(res, 404, { error: "rota não encontrada" });
+    } catch (e) { return sendJson(res, 400, erroPublico(e, "Erro na análise de gaveta.")); }
   }
 
   // Lembretes do Cadastro de Lotes (SB8) — anotação curta por achado
