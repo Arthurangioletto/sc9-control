@@ -212,21 +212,9 @@
       setBusy(true); setError('');
       try {
         const { registros } = await api('/api/gaveta/analises');
-        const gavetas = [['Data', 'Hora', 'Usuário', 'Gaveta', 'Armário', 'Armazém', 'Produtos', 'Sem saldo', 'Validades alteradas', 'Vencidos', 'Transferências marcadas', 'Duração (min)', 'Observação']];
-        const itens = [['Data', 'Gaveta', 'Produto', 'Descrição', 'Lote', 'Saldo', 'Validade (SB8)', 'Validade informada', 'Sem saldo no armazém', 'Observação do produto']];
-        const transf = [['Data', 'Gaveta', 'Produto', 'Descrição', 'Lote', 'Armazém de origem', 'Destino', 'Quantidade', 'Observação']];
-        for (const r of registros) {
-          const when = fmtDate(r.dia);
-          gavetas.push([when, fmtTime(r.em), r.por, r.gaveta.codigo, r.gaveta.armario, Core.armLabel(r.gaveta.arm), r.resumo.produtos, r.resumo.semSaldo, r.resumo.validadesAlteradas, r.resumo.vencidos, r.resumo.transferencias, Math.round(r.duracaoSeg / 6) / 10, r.obs]);
-          for (const item of r.itens) {
-            if (!item.lotes.length) itens.push([when, r.gaveta.codigo, item.produto, item.descricao, '', '', '', '', item.semSaldo ? 'Sim' : '', item.obs]);
-            for (const lote of item.lotes) itens.push([when, r.gaveta.codigo, item.produto, item.descricao, lote.lote, lote.saldo, fmtDate(lote.validadeSistema), lote.validadeNova ? fmtDate(lote.validadeNova) : '', item.semSaldo ? 'Sim' : '', item.obs]);
-            for (const move of item.transferir) transf.push([when, r.gaveta.codigo, item.produto, item.descricao, move.lote, Core.armLabel(move.arm), Core.armLabel(r.gaveta.arm), move.qtd, move.obs]);
-          }
-          for (const extra of r.extras) itens.push([when, r.gaveta.codigo, extra.produto, '', extra.lote, '', '', '', 'Lote fora do cadastro', extra.obs]);
-        }
+        const rows = Core.exportRows(registros, fmtTime);
         const book = xlsx.utils.book_new();
-        [['Gavetas', gavetas], ['Itens', itens], ['Transferir p-01', transf]].forEach(([name, rows]) => xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(rows), name));
+        [['Lotes', rows.lotes], ['Gavetas', rows.gavetas], ['Transferir p-01', rows.transferir]].forEach(([name, list]) => xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(list), name));
         const bytes = xlsx.write(book, { type: 'array', bookType: 'xlsx' });
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
         const link = document.createElement('a');
@@ -251,7 +239,7 @@
         h('ul', { className: 'sc9g-plain' }, p.porUsuarioHoje.map(item => h('li', { key: item.usuario }, h('span', null, item.usuario), h('strong', null, num(item.quantidade)))))),
       p.foraDoZz2 > 0 && h('p', { className: 'sc9g-muted' }, num(p.foraDoZz2) + ' gaveta(s) analisada(s) não constam mais no ZZ2 atual; o histórico delas foi mantido.'),
       isAdmin && h('section', { className: 'sc9g-card' }, h('h3', null, 'Exportar histórico'),
-        h('p', { className: 'sc9g-muted' }, 'Excel com todas as análises, validades informadas e transferências marcadas para o 01.'),
+        h('p', { className: 'sc9g-muted' }, 'Excel com todas as análises: uma linha por lote (com saldo, validade, se foi analisado), resumo por gaveta e transferências marcadas para o 01.'),
         h(Button, { kind: 'primary', onClick: exportar, disabled: busy }, busy ? 'Gerando…' : 'Exportar análises'),
         error && h('p', { className: 'sc9g-error', role: 'alert' }, error)));
   }
@@ -323,7 +311,9 @@
   }
 
   // ---------- análise de uma gaveta ----------
-  const emptyItem = () => ({ c: false, o: '', v: {}, t: {} });
+  const emptyItem = () => ({ c: false, o: '', v: {}, t: {}, a: {} });
+  // Chave do lote no rascunho (validade corrigida e "analisado"): lote + validade do SB8.
+  const loteKey = l => l.lote + '|' + l.validade;
 
   function GavetaView({ summary, data, onClose, onDone }) {
     const draftKey = 'sc9g:' + summary.id + ':' + (data.bases.sb8.updatedAt || '');
@@ -396,7 +386,7 @@
             const state = itemState(item.produto);
             return {
               produto: item.produto, conferido: state.c, semSaldo: item.semSaldo, obs: state.o,
-              lotes: item.lotes.map(l => ({ lote: l.lote, saldo: l.saldo, validadeSistema: l.validade, validadeNova: state.v[l.lote + '|' + l.validade] && state.v[l.lote + '|' + l.validade] !== l.validade ? state.v[l.lote + '|' + l.validade] : '' })),
+              lotes: item.lotes.map(l => ({ lote: l.lote, saldo: l.saldo, validadeSistema: l.validade, validadeNova: state.v[loteKey(l)] && state.v[loteKey(l)] !== l.validade ? state.v[loteKey(l)] : '', analisado: Boolean((state.a || {})[loteKey(l)]) })),
               transferir: Object.values(state.t).map(move => ({ arm: move.arm, lote: move.lote, qtd: move.q, obs: move.o || '' }))
             };
           })
@@ -409,19 +399,21 @@
 
     const summaryLines = useMemo(() => {
       if (!detail) return null;
-      let validades = 0, transfer = 0, vencidos = 0, semSaldo = 0;
+      let validades = 0, transfer = 0, vencidos = 0, semSaldo = 0, lotes = 0, analisados = 0;
       for (const item of detail.itens) {
         const state = itemState(item.produto);
         if (item.semSaldo) semSaldo++;
         transfer += Object.keys(state.t).length;
         for (const l of item.lotes) {
-          const edited = state.v[l.lote + '|' + l.validade];
+          lotes++;
+          if ((state.a || {})[loteKey(l)]) analisados++;
+          const edited = state.v[loteKey(l)];
           if (edited && edited !== l.validade) validades++;
           const date = edited || l.validade;
           if (date && Core.validity(date, today).days < 0) vencidos++;
         }
       }
-      return { validades, transfer, vencidos, semSaldo };
+      return { validades, transfer, vencidos, semSaldo, lotes, analisados };
     }, [detail, draft, today]);
 
     if (done) {
@@ -463,6 +455,7 @@
           h('h3', null, 'Finalizar gaveta ' + summary.codigo + '?'),
           h('ul', { className: 'sc9g-plain' },
             h('li', null, h('span', null, 'Produtos conferidos'), h('strong', null, total)),
+            h('li', null, h('span', null, 'Lotes analisados'), h('strong', null, summaryLines.analisados + ' de ' + summaryLines.lotes)),
             h('li', null, h('span', null, 'Sem saldo no armazém'), h('strong', null, summaryLines.semSaldo)),
             h('li', null, h('span', null, 'Validades alteradas'), h('strong', null, summaryLines.validades)),
             h('li', null, h('span', null, 'Lotes vencidos'), h('strong', null, summaryLines.vencidos)),
@@ -546,7 +539,7 @@
     };
 
     const homeBody = l => {
-      const key = moveKey(l), edited = state.v[key], date = edited || l.validade;
+      const key = loteKey(l), edited = state.v[key], date = edited || l.validade, analyzed = Boolean((state.a || {})[key]);
       const elsewhere = item.outros.filter(other => other.lote === l.lote);
       return [
         h('div', { key: 'info', className: 'sc9g-lote-val' },
@@ -556,6 +549,9 @@
           edited && edited !== l.validade && h('small', null, 'SB8: ' + fmtDate(l.validade))),
         h('label', { key: 'date', className: 'sc9g-date' }, h('span', null, 'Validade correta'),
           h('input', { type: 'date', className: 'sc9g-input', value: date || '', onChange: event => { const value = event.target.value; patch(previous => ({ v: { ...previous.v, [key]: value } })); }, 'aria-label': 'Validade do lote ' + l.lote })),
+        h('label', { key: 'ok', className: 'sc9g-confirm' + (analyzed ? ' is-on' : '') },
+          h('input', { type: 'checkbox', checked: analyzed, onChange: event => { const checked = event.target.checked; patch(previous => ({ a: { ...(previous.a || {}), [key]: checked } })); } }),
+          h('span', null, 'Lote analisado', h('small', null, 'Confirmo que conferi este lote e a validade'))),
         h('div', { key: 'where', className: 'sc9g-where' },
           h('h5', null, 'Onde está este lote'),
           elsewhere.length
@@ -564,6 +560,7 @@
       ];
     };
 
+    const pendingLotes = item.lotes.filter(l => !(state.a || {})[loteKey(l)]);
     const groups = [];
     item.outros.forEach(l => { let group = groups[groups.length - 1]; if (!group || group.arm !== l.arm) { group = { arm: l.arm, rows: [] }; groups.push(group); } group.rows.push(l); });
     const known = groups.filter(group => Core.armRank(group.arm) < Core.ARM_PRIORITY.length), rest = groups.filter(group => Core.armRank(group.arm) >= Core.ARM_PRIORITY.length);
@@ -578,10 +575,11 @@
       item.lotes.length > 0 && h('div', { className: 'sc9g-block' },
         h('h4', null, 'Armazém ' + home + ' · ' + item.lotes.length + (item.lotes.length === 1 ? ' lote' : ' lotes')),
         h('p', { className: 'sc9g-hint' }, 'Toque no lote para ver saldo, validade e onde ele está.'),
+        pendingLotes.length > 1 && h(Button, { kind: 'ghost', onClick: () => patch(previous => ({ a: { ...(previous.a || {}), ...Object.fromEntries(item.lotes.map(l => [loteKey(l), true])) } })) }, 'Marcar todos os ' + item.lotes.length + ' lotes como analisados'),
         item.lotes.map(l => {
-          const key = moveKey(l), edited = state.v[key] && state.v[key] !== l.validade;
+          const key = loteKey(l), edited = state.v[key] && state.v[key] !== l.validade, analyzed = Boolean((state.a || {})[key]);
           const moving = item.outros.some(other => other.lote === l.lote && state.t[moveKey(other)]);
-          return loteRow('h|' + key, l.lote, [edited && h('span', { key: 'v', className: 'sc9g-tag' }, 'validade corrigida'), moving && h('span', { key: 't', className: 'sc9g-tag' }, 'transferir')], homeBody(l));
+          return loteRow('h|' + moveKey(l), l.lote, [edited && h('span', { key: 'v', className: 'sc9g-tag' }, 'validade corrigida'), moving && h('span', { key: 't', className: 'sc9g-tag' }, 'transferir'), analyzed && h('span', { key: 'a', className: 'sc9g-tag sc9g-tag-ok' }, '✓ analisado')], homeBody(l));
         })),
       item.outros.length > 0 && h('div', { className: 'sc9g-block sc9g-other' },
         h('button', { type: 'button', className: 'sc9g-others-head', 'aria-expanded': othersOpen, onClick: () => setOthersOpen(value => !value) },
@@ -594,7 +592,8 @@
       obsOpen
         ? h('textarea', { className: 'sc9g-input', rows: 2, maxLength: 500, placeholder: 'Observação do produto', value: state.o, onChange: event => { const value = event.target.value; patch(() => ({ o: value })); } })
         : h(Button, { kind: 'ghost', onClick: () => setObsOpen(true) }, '+ Observação'),
-      h(Button, { kind: 'ok', className: 'sc9g-check', onClick: () => patch(previous => ({ c: Object.values(previous.t).every(move => Number(move.q) > 0) })), disabled: Object.values(state.t).some(move => !(Number(move.q) > 0)) }, '✓ Conferido'));
+      pendingLotes.length > 0 && h('p', { className: 'sc9g-hint', role: 'status' }, 'Falta marcar ' + (pendingLotes.length === 1 ? '1 lote' : pendingLotes.length + ' lotes') + ' como analisado' + (pendingLotes.length === 1 ? '' : 's') + ' (toque no lote).'),
+      h(Button, { kind: 'ok', className: 'sc9g-check', onClick: () => patch(previous => ({ c: Object.values(previous.t).every(move => Number(move.q) > 0) })), disabled: pendingLotes.length > 0 || Object.values(state.t).some(move => !(Number(move.q) > 0)) }, '✓ Conferido'));
   }
 
   // ---------- tela principal ----------
