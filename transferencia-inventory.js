@@ -268,23 +268,32 @@
   }
 
   function compareDaily(documents, movements, day) {
+    return compareDocumentGroups(documents, movements.filter(row => row.dt === day));
+  }
+
+  function compareSelectedDocuments(documents, movements, numbers) {
+    const selected = new Set(numbers.map(scope).filter(Boolean));
+    if (!selected.size) throw Error('Informe o número do movimento no Protheus.');
+    return compareDocumentGroups(documents, movements.filter(row => selected.has(scope(row.doc))));
+  }
+
+  function compareDocumentGroups(documents, movements) {
     const byBranch = new Map();
     for (const document of documents) {
       const branch = scope(document.filial);
       if (!byBranch.has(branch)) byBranch.set(branch, []);
       byBranch.get(branch).push(document);
     }
-    const dailyMovements = movements.filter(row => row.dt === day);
     return [...byBranch].flatMap(([filial, docs]) => {
       const identity = row => key(code(row.produto), scope(row.lote), scope(row.origem), scope(row.destino));
       const references = new Map();
       const lines = docs.flatMap(doc => doc.lines.map(row => {
         const id = identity(row);
         if (!references.has(id)) references.set(id, new Set());
-        references.get(id).add(doc.id);
+          if (doc.id) references.get(id).add(doc.id);
         return row;
       }));
-      return compareTransfer(lines, dailyMovements, { filial }).map(row => ({
+      return compareTransfer(lines, movements, { filial }).map(row => ({
         ...row, filial: docs[0].filial, documentos: [...references.get(identity(row))]
       }));
     });
@@ -339,6 +348,6 @@
     return xlsx.CFB.write(zip,{type:'array',fileType:'zip',compression:true});
   }
 
-  root.SC9TransferenciaInventory = { read, isSource, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, compareDaily, expiryStatus, highlightExpiredWorkbook };
+  root.SC9TransferenciaInventory = { read, isSource, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, compareDaily, compareSelectedDocuments, expiryStatus, highlightExpiredWorkbook };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9TransferenciaInventory;
 })(typeof window === 'object' ? window : globalThis);
