@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const inventory = require('../transferencia-inventory');
-const { read, findInventoryScan, records, readPartial, savePartial } = inventory;
+const { read, findInventoryScan, records, readPartial, savePartial, compareSelectedDocuments } = inventory;
 
 const xlsx = { utils: { sheet_to_json: rows => rows } };
 const book = sheets => ({ SheetNames: Object.keys(sheets), Sheets: sheets });
@@ -124,4 +124,27 @@ test('comparativo diário soma documentos sem reaproveitar entradas do SD3 entre
   assert.deepEqual(result[0].documentos,['TRF-000001','TRF-000002']);
   assert(inventory.compareDaily(docs,movements.map(row=>row.tp===499?{...row,qt:5}:row),day)
     .filter(row=>row.filial==='01').every(row=>row.situacao==='divergente'));
+});
+
+test('comparativo selecionado soma os documentos da mesma filial e limita o SD3 aos movimentos escolhidos', () => {
+  const line={produto:'P1',lote:'L1',origem:'59',destino:'01',qtd:3};
+  const docs=[
+    {id:'TRF-000001',filial:'01',lines:[line]},
+    {id:'TRF-000002',filial:'01',lines:[{...line,qtd:5}]},
+    {id:'TRF-000003',filial:'02',lines:[line]}
+  ];
+  const pair=(doc,filial,qt,estornado=false)=>[999,499].map(tp=>({
+    ...line,doc,filial,qt,tp,dt:'2026-11-16',armazem:tp===999?'59':'01',estornado
+  }));
+  const sd3=[
+    ...pair('001','01',3),...pair('ZB2','01',5),...pair('ZB2','02',2),
+    ...pair('OUTRO','01',100),...pair('ZB2','01',100,true)
+  ];
+  const results=compareSelectedDocuments(docs,sd3,['1','zb2']);
+  assert.deepEqual(results.map(row=>[row.filial,row.qtdDocumento,row.saidaSd3,row.entradaSd3,row.situacao,row.documentos]),[
+    ['01',8,8,8,'confere',['TRF-000001','TRF-000002']],
+    ['02',3,2,2,'divergente',['TRF-000003']]
+  ]);
+  assert.equal(compareSelectedDocuments(docs,sd3,['SEM-MOVIMENTO'])[0].situacao,'nao_encontrado');
+  assert.throws(()=>compareSelectedDocuments(docs,sd3,[]),/Informe o número/);
 });
