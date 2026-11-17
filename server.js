@@ -2203,7 +2203,7 @@ async function handleApi(req, res, pathname) {
       if (rota === "lote" && method === "GET") {
         const { ctx, sb8 } = await gavetaContexto();
         if (!sb8) return sendJson(res, 409, { error: "O SB8 de hoje não está carregado." });
-        return sendJson(res, 200, { resultados: Gaveta.findLote(ctx, params.get("q") || "") });
+        return sendJson(res, 200, { resultados: Gaveta.findLote(ctx, params.get("q") || ""), produtos: Gaveta.findProdutos(ctx, params.get("q") || "") });
       }
 
       if (rota === "analises" && method === "GET") {

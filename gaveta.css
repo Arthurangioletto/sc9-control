@@ -229,3 +229,9 @@ textarea.sc9g-input { min-height: 80px; resize: vertical; }
 .sc9g-count-confere { background: #eef8f2; color: #0b6b49; }
 .sc9g-count-outro-armazem { background: #fff3d6; color: #8a4b00; }
 .sc9g-count-abaixo, .sc9g-count-sobra { background: #fde8e6; color: #8a1c13; }
+
+/* Localização do produto na lupa */
+.sc9g-loc { display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: #fff; border: 1px solid var(--g-line); }
+.sc9g-loc > small { color: var(--g-muted); }
+.sc9g-take { display: grid; gap: 6px; font-weight: 700; font-size: 14px; }
+.sc9g-take.is-on .sc9g-input { border-color: var(--g-green); }
