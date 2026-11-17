@@ -544,7 +544,7 @@
     // (Funções que devolvem elementos, e não componentes: assim os campos não perdem o foco ao digitar.)
     const loteRow = (key, label, tags, body) => h('div', { key, className: 'sc9g-lote' + (open[key] ? ' is-open' : '') },
       h('button', { type: 'button', className: 'sc9g-lote-head', 'aria-expanded': Boolean(open[key]), onClick: () => toggle(key) },
-        h('strong', null, label), tags, h('span', { className: 'sc9g-chev', 'aria-hidden': true }, open[key] ? '▴' : '▾')),
+        h('strong', null, label), h('span', { className: 'sc9g-chev', 'aria-hidden': true }, open[key] ? '▴' : '▾'), h('span', { className: 'sc9g-tags' }, tags)),
       open[key] && h('div', { className: 'sc9g-lote-body' }, body));
 
     const setFisico = (lote, value) => patch(previous => ({ f: { ...(previous.f || {}), [lote]: value } }));

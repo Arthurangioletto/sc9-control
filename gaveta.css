@@ -156,11 +156,14 @@ textarea.sc9g-input { min-height: 80px; resize: vertical; }
 .sc9g-date input::-webkit-calendar-picker-indicator { opacity: .6; }
 .sc9g-move { display: grid; grid-template-columns: minmax(0, 110px) minmax(0, 1fr); gap: 8px; }
 .sc9g-hint { font-size: 13px; color: var(--g-muted); }
-.sc9g-lote-head { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 56px; padding: 8px 2px; border: 0; background: transparent; color: inherit; text-align: left; }
-.sc9g-lote-head strong { flex: 1; min-width: 0; font: 700 18px 'IBM Plex Mono', ui-monospace, monospace; overflow-wrap: anywhere; }
+.sc9g-lote-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; width: 100%; min-height: 56px; padding: 8px 2px; border: 0; background: transparent; color: inherit; text-align: left; }
+.sc9g-lote-head strong { min-width: 0; font: 700 18px 'IBM Plex Mono', ui-monospace, monospace; overflow-wrap: anywhere; }
+/* Etiquetas (físico, transferir, analisado…) ficam numa linha própria abaixo do número do lote e quebram se não couberem. */
+.sc9g-tags { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.sc9g-tags:empty { display: none; }
 .sc9g-chev { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #ece8de; color: var(--g-muted); font-size: 14px; }
 .sc9g-lote.is-open > .sc9g-lote-head .sc9g-chev { background: var(--g-dark); color: #fffaf0; }
-.sc9g-tag { flex: none; padding: 3px 8px; border-radius: 999px; background: #ffedd5; color: #b54708; font-size: 12px; font-weight: 800; }
+.sc9g-tag { flex: 0 1 auto; max-width: 100%; white-space: normal; padding: 3px 8px; border-radius: 999px; background: #ffedd5; color: #b54708; font-size: 12px; font-weight: 800; }
 .sc9g-lote-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 2px 2px 14px; }
 .sc9g-saldo { font-weight: 700; }
 .sc9g-tag-ok { background: #dcf3e8; color: #0b6b49; }
