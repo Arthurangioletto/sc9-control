@@ -413,6 +413,28 @@
     }));
   }
 
+  // Onde o produto mora (gavetas do ZZ2). Busca por código, EAN, lote (os produtos que têm esse lote no SB8) ou
+  // palavras da descrição, para quem está com a peça na gaveta errada descobrir a certa.
+  function findProdutos(ctx, query, limit = 8) {
+    const q = upper(query);
+    if (!q) return [];
+    const codes = new Set();
+    if (ctx.enderecos.has(q) || ctx.sb1[q]) codes.add(q);
+    for (const [code, info] of Object.entries(ctx.sb1)) if (upper(info[2]) === q) codes.add(code);
+    for (const row of ctx.sb8.byLote.get(q) || []) codes.add(row[1]);
+    if (!codes.size && q.length >= 4) {
+      const words = q.split(/\s+/).filter(Boolean);
+      for (const [code, info] of Object.entries(ctx.sb1)) if (words.every(word => upper(info[0]).includes(word))) { codes.add(code); if (codes.size >= limit) break; }
+    }
+    return [...codes].slice(0, limit).map(code => {
+      const info = ctx.sb1[code] || [];
+      const enderecos = (ctx.enderecos.get(code) || []).map(item => ({
+        id: gavetaId(item.filial, item.arm, item.endereco), filial: item.filial, arm: item.arm, endereco: item.endereco, armario: item.armario || ''
+      })).sort((a, b) => armRank(a.arm) - armRank(b.arm) || a.endereco.localeCompare(b.endereco, 'pt-BR', { numeric: true }));
+      return { produto: code, descricao: info[0] || '', ean: info[2] || '', enderecos };
+    });
+  }
+
   // ---------- análise gravada ----------
   const clip = (value, size) => text(value).slice(0, size);
 
@@ -462,7 +484,8 @@
         contagem: cleanContagem(lote.contagem)
       }));
       // Lote achado na gaveta que o SB8 só tem em outros armazéns (não está na lista do armazém da gaveta).
-      const achados = (Array.isArray(item.achados) ? item.achados : []).slice(0, 100).map(a => ({ lote: upper(a && a.lote).slice(0, 60), contagem: cleanContagem(a && a.contagem) })).filter(a => a.lote && a.contagem);
+      const achados = (Array.isArray(item.achados) ? item.achados : []).slice(0, 100).map(a => ({ lote: upper(a && a.lote).slice(0, 60), contagem: cleanContagem(a && a.contagem),
+        origem: (Array.isArray(a && a.origem) ? a.origem : []).slice(0, 30).map(row => ({ arm: place(row.arm), saldo: round3(Number(row.saldo) || 0) })) })).filter(a => a.lote && a.contagem);
       const transferir = (Array.isArray(item.transferir) ? item.transferir : []).slice(0, 100).map(move => {
         const qtd = Number(move.qtd);
         if (!Number.isFinite(qtd) || qtd <= 0) throw Error('A quantidade a transferir precisa ser positiva.');
@@ -520,7 +543,11 @@
           lotes.push(linha(home, 'Lote da gaveta', item, lote.lote, lote.saldo, brDate(lote.validadeSistema), lote.validadeNova && lote.validadeNova !== lote.validadeSistema ? brDate(lote.validadeNova) : '',
             final ? validity(final, r.dia).label : 'Sem validade', lote.analisado ? 'Sim' : 'Não', lote.contagem, '', item.obs));
         }
-        for (const achado of item.achados || []) lotes.push(linha(home, 'Lote achado (saldo só em outro armazém)', item, achado.lote, 0, '', '', '', '', achado.contagem, '', item.obs));
+        for (const achado of item.achados || []) {
+          const origem = achado.origem || [], onde = [...new Set(origem.map(row => armLabel(row.arm)))].join(', ');
+          lotes.push(linha(onde || home, 'Lote achado (saldo só em outro armazém)', item, achado.lote, 0, '', '', '', '', achado.contagem, '',
+            [origem.length ? 'Saldo no sistema: ' + origem.map(row => 'arm. ' + armLabel(row.arm) + ' (' + row.saldo + ')').join(', ') : '', item.obs].filter(Boolean).join(' · ')));
+        }
         for (const move of item.transferir) {
           lotes.push(linha(armLabel(move.arm), 'Transferir p/ ' + home, item, move.lote, '', '', '', '', '', null, move.qtd, move.obs || item.obs));
           transferir.push([when, r.gaveta.codigo, item.produto, item.descricao, move.lote, armLabel(move.arm), home, move.qtd, move.obs]);
@@ -528,7 +555,7 @@
       }
       for (const extra of r.extras || []) {
         const sistema = (extra.sistema || []).map(row => 'arm. ' + armLabel(row.arm) + ' saldo ' + row.saldo).join('; ');
-        lotes.push([...base, 'Lote fora do cadastro', extra.produto, '', extra.lote, '', '', '', '', '', extra.fisico ?? '', '', 'Fora do cadastro', '', [extra.obs, sistema && 'Sistema: ' + sistema].filter(Boolean).join(' · ')]);
+        lotes.push([base[0], base[1], base[2], base[3], base[4], [...new Set((extra.sistema || []).map(row => armLabel(row.arm)))].join(', ') || home, 'Lote fora do cadastro', extra.produto, '', extra.lote, '', '', '', '', '', extra.fisico ?? '', '', 'Fora do cadastro', '', [extra.obs, sistema && 'Sistema: ' + sistema].filter(Boolean).join(' · ')]);
       }
     }
     return { lotes, gavetas, transferir };
@@ -573,7 +600,7 @@
 
   const api = {
     BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, isArmario, ARM_PRIORITY, armRank, matchGaveta, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
-    cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, cleanAnalysis, summarize, reconcile, CONTAGEM,
+    cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, findProdutos, cleanAnalysis, summarize, reconcile, CONTAGEM,
     dashboard, baseState, exportRows
   };
   if (typeof module === 'object' && module.exports) module.exports = api;

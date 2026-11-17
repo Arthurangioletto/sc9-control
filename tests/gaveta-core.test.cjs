@@ -298,3 +298,41 @@ test('a análise guarda a contagem por lote, os lotes achados só em outro armaz
   assert.ok(lotes.slice(1).every(row => row.length === head.length));
   assert.equal(gavetas[1][gavetas[0].indexOf('Divergências na contagem')], 2);
 });
+
+test('a lupa localiza o produto pelo código, EAN, lote ou descrição e mostra as gavetas certas', () => {
+  const lojas = {
+    SB8: [['B8_FILIAL', 'B8_PRODUTO', 'B8_LOCAL', 'data validade', 'saldo', 'B8_EMPENHO', 'lote', 'D_E_L_E_T_'], ['01', 'P3', '59', '', 4, 0, 'Q1', '']],
+    ZZ2: [['Filial', 'Armazem', 'Endereco', 'Produto', 'Lote'], ['01', '01', 'AB9', 'P3', ''], ['01', '59', 'Z1', 'P3', ''], ['01', '01', 'AB1', 'P1', '']],
+    SB1: [['Codigo', 'Descricao', 'Unidade', 'EAN'], ['P3', 'CONE MORSE 3.5', 'UN', '789'], ['P1', 'IMPLANTE A', 'UN', '']]
+  };
+  const f = G.readWorkbook({ SheetNames: Object.keys(lojas), Sheets: lojas }, xlsx);
+  const ctx = G.makeContext(f.zz2.rows, G.cleanSb1(f.sb1.rows), f.sb8.rows);
+  for (const consulta of ['p3', '789', 'Q1', 'cone morse']) {
+    const r = G.findProdutos(ctx, consulta);
+    assert.equal(r.length, 1, consulta);
+    assert.equal(r[0].produto, 'P3');
+    assert.deepEqual(r[0].enderecos.map(e => [G.armLabel(e.arm), e.endereco]), [['01', 'AB9'], ['59', 'Z1']]);
+  }
+  assert.equal(r0(G.findProdutos(ctx, 'P1')).enderecos[0].id, '1|1|AB1');
+  assert.deepEqual(G.findProdutos(ctx, 'XX'), []);
+  assert.deepEqual(G.findProdutos(ctx, ''), []);
+  function r0(list) { return list[0]; }
+});
+
+test('lote achado só em outro armazém sai na exportação com o armazém onde o sistema tem o saldo', () => {
+  const contagem = { fisico: 2, saldo: 0, status: 'outro-armazem', restante: 0 };
+  const g = G.cleanAnalysis; // valida a limpeza de origem
+  const found = G.readWorkbook(book, xlsx);
+  const ctx = G.makeContext(found.zz2.rows, G.cleanSb1(found.sb1.rows), found.sb8.rows);
+  const gaveta = ctx.gavetas.get('1|1|AB1');
+  const item = (produto, extra = {}) => ({ produto, conferido: true, lotes: [], transferir: [], ...extra });
+  const ok = g({ itens: [item('P1', { achados: [{ lote: 'lx', contagem, origem: [{ arm: '59', saldo: 3 }, { arm: 'ES', saldo: 1 }] }] }), item('P2')], extras: [{ lote: 'ZZ9', fisico: 1, sistema: [{ arm: '30', saldo: 2 }] }] }, gaveta);
+  assert.deepEqual(ok.itens[0].achados[0].origem, [{ arm: '59', saldo: 3 }, { arm: 'ES', saldo: 1 }]);
+  const { lotes } = G.exportRows([{ dia: '2026-11-17', em: '2026-11-17T12:30:00.000Z', por: 'ana', duracaoSeg: 60, obs: '', gaveta: { codigo: 'AB1', arm: '01', armario: '' }, resumo: G.summarize(ok.itens, '2026-11-17'),
+    itens: ok.itens.map(i => ({ ...i, descricao: 'D' })), extras: ok.extras }], () => '09:30');
+  const col = name => lotes[0].indexOf(name);
+  const achado = lotes.slice(1).find(r => r[col('Tipo')] === 'Lote achado (saldo só em outro armazém)');
+  assert.equal(achado[col('Armazém')], '59, ES');
+  assert.match(achado[col('Observação')], /Saldo no sistema: arm\. 59 \(3\), arm\. ES \(1\)/);
+  assert.equal(lotes.slice(1).find(r => r[col('Lote')] === 'ZZ9')[col('Armazém')], '30');
+});

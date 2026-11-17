@@ -377,10 +377,15 @@
       }
       try {
         const result = await api('/api/gaveta/lote?q=' + encodeURIComponent(q));
-        showFound({ q, rows: result.resultados });
+        showFound({ q, rows: result.resultados, produtos: result.produtos || [] });
       } catch (e) { showFound({ q, rows: [], error: e.message }); }
     };
     const search = event => { event.preventDefault(); runSearch(scan); };
+    const goToProduct = produto => {
+      setFound(null); setShowAll(true); setFlash(produto);
+      setTimeout(() => document.getElementById('sc9g-item-' + produto)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 120);
+      setTimeout(() => setFlash(''), 2500);
+    };
     const addExtra = (lote, produto, note, fisico, sistema) => {
       setDraft(previous => ({ ...previous, extras: [...previous.extras.filter(extra => extra.lote !== lote), { lote, produto: produto || '', obs: note, fisico: fisico === '' ? null : fisico, sistema: sistema || [] }] }));
       setFound(null);
@@ -398,7 +403,7 @@
               produto: item.produto, conferido: state.c, semSaldo: item.semSaldo, obs: state.o,
               lotes: item.lotes.map((l, index) => ({ lote: l.lote, saldo: l.saldo, validadeSistema: l.validade, validadeNova: state.v[loteKey(l)] && state.v[loteKey(l)] !== l.validade ? state.v[loteKey(l)] : '', analisado: Boolean((state.a || {})[loteKey(l)]),
                 contagem: item.lotes.findIndex(x => x.lote === l.lote) === index ? contagemDe(item, state, l.lote) : null })),
-              achados: [...new Set(item.outros.map(l => l.lote))].filter(lote => !item.lotes.some(l => l.lote === lote)).map(lote => ({ lote, contagem: contagemDe(item, state, lote) })).filter(a => a.contagem),
+              achados: [...new Set(item.outros.map(l => l.lote))].filter(lote => !item.lotes.some(l => l.lote === lote)).map(lote => ({ lote, contagem: contagemDe(item, state, lote), origem: item.outros.filter(l => l.lote === lote).map(l => ({ arm: l.arm, saldo: l.saldo })) })).filter(a => a.contagem),
               transferir: Object.values(state.t).map(move => ({ arm: move.arm, lote: move.lote, qtd: move.q, obs: move.o || '' }))
             };
           })
@@ -451,7 +456,7 @@
           h('button', { type: 'submit', className: 'sc9g-iconbtn sc9g-iconbtn-dark', 'aria-label': 'Pesquisar o lote em todos os armazéns' }, h(IconSearch))),
         camera && h(Scanner, { title: 'Ler lote ou código', onResult: text => { setCamera(false); setScan(text); runSearch(text); }, onClose: () => setCamera(false) }),
         error && h('p', { className: 'sc9g-error', role: 'alert' }, error),
-        found && h(FoundPanel, { found, today, arm: summary.arm, onAdd: addExtra, onClose: () => setFound(null) }),
+        found && h(FoundPanel, { found, today, arm: summary.arm, codigo: summary.codigo, hasProduct: produto => Boolean(detail && detail.itens.some(item => item.produto === produto)), onGoto: goToProduct, onAdd: addExtra, onClose: () => setFound(null) }),
         !detail && !error && h('p', { className: 'sc9g-empty' }, 'Carregando gaveta…'),
         detail && h('div', { className: 'sc9g-seg sc9g-seg-2' }, [[false, 'Pendentes', total - checked], [true, 'Todos', total]].map(([all, label, count]) =>
           h('button', { key: label, type: 'button', className: showAll === all ? 'is-on' : '', onClick: () => setShowAll(all) }, label, h('span', null, count)))),
@@ -482,24 +487,38 @@
             h(Button, { kind: 'primary', onClick: finish, disabled: saving }, saving ? 'Salvando…' : 'Confirmar')))));
   }
 
-  function FoundPanel({ found, today, arm, onAdd, onClose }) {
+  function FoundPanel({ found, today, arm, codigo, hasProduct, onGoto, onAdd, onClose }) {
     const [note, setNote] = useState('');
     const [fisico, setFisico] = useState('');
     const first = found.rows[0];
     const arms = new Set(found.rows.map(row => row.arm)).size;
     const sistema = found.rows.map(row => ({ arm: row.arm, saldo: row.saldo }));
     const c = Core.reconcile(fisico, 0, found.rows.map(row => ({ arm: row.arm, saldo: row.saldo, lote: found.q })));
+    const produtos = found.produtos || [];
+    const isHere = place => place.arm === arm && place.endereco === codigo;
     return h('section', { className: 'sc9g-card sc9g-found', role: 'status' },
       h('div', { className: 'sc9g-found-head' },
-        h('h3', null, found.rows.length ? 'Lote ' + found.q + ' · saldo em ' + arms + (arms === 1 ? ' armazém' : ' armazéns') : 'Lote ' + found.q + ' · sem saldo em nenhum armazém'),
+        h('h3', null, found.rows.length ? found.q + ' · saldo em ' + arms + (arms === 1 ? ' armazém' : ' armazéns') : produtos.length ? found.q + ' · localização' : 'Lote ' + found.q + ' · sem saldo em nenhum armazém'),
         h(Button, { kind: 'ghost', onClick: onClose, 'aria-label': 'Fechar' }, '✕')),
       found.error && h('p', { className: 'sc9g-error' }, found.error),
+      // Onde o produto mora (ZZ2): serve para descobrir a gaveta certa quando a peça está na gaveta errada.
+      produtos.map(prod => {
+        const aqui = prod.enderecos.some(isHere);
+        return h('div', { key: prod.produto, className: 'sc9g-loc' },
+          h('strong', null, prod.descricao || prod.produto), h('small', null, prod.produto + (prod.ean ? ' · ' + prod.ean : '')),
+          prod.enderecos.length
+            ? h('div', { className: 'sc9g-chips' }, prod.enderecos.map(place => h(Chip, { key: place.id, tone: isHere(place) ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(place.arm) + ' · ' + place.endereco + (place.armario ? ' (arm. ' + place.armario + ')' : ''))))
+            : h('p', { className: 'sc9g-muted' }, 'Sem endereço cadastrado no ZZ2.'),
+          prod.enderecos.length > 0 && h('p', { className: 'sc9g-count-msg ' + (aqui ? 'sc9g-count-confere' : 'sc9g-count-abaixo'), role: 'status' },
+            aqui ? '✓ Este produto é desta gaveta.' : 'Não é desta gaveta. Gaveta certa: ' + prod.enderecos.map(place => 'Arm. ' + Core.armLabel(place.arm) + ' · ' + place.endereco).join(' ou ') + '.'),
+          aqui && hasProduct(prod.produto) && h(Button, { kind: 'primary', onClick: () => onGoto(prod.produto) }, 'Ir para o produto nesta gaveta'));
+      }),
       found.rows.length
         ? h('ul', { className: 'sc9g-plain' }, found.rows.map((row, index) => h('li', { key: index },
             h('span', null, h(Chip, { tone: Core.armRank(row.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(row.arm)), ' ', h('strong', null, 'saldo ' + num(row.saldo)), ' · ', row.descricao || row.produto),
             h(ValidityChip, { iso: row.validade, today }),
             row.enderecos.length > 0 && h('small', null, 'Endereços: ' + row.enderecos.map(item => Core.armLabel(item.arm) + ' ' + item.endereco).join(' · ')))))
-        : !found.error && h('p', { className: 'sc9g-muted' }, 'O SB8 carregado não tem saldo desse lote em nenhum armazém. Se ele está fisicamente aqui, anote abaixo.'),
+        : !found.error && h('p', { className: 'sc9g-muted' }, produtos.length ? 'O SB8 carregado não tem saldo em nenhum armazém.' : 'O SB8 carregado não tem saldo desse lote em nenhum armazém. Se ele está fisicamente aqui, anote abaixo.'),
       found.rows.length > 0 && h('p', { className: 'sc9g-muted' }, 'Esse lote não está cadastrado nesta gaveta.'),
       h('label', { className: 'sc9g-count' }, h('span', null, 'Quantas peças achou nesta gaveta?'),
         h('input', { className: 'sc9g-input', type: 'number', inputMode: 'decimal', min: 0, step: 'any', value: fisico, onChange: event => setFisico(event.target.value === '' ? '' : Number(event.target.value)), 'aria-label': 'Quantidade encontrada do lote ' + found.q })),
@@ -538,6 +557,12 @@
     }
 
     const toggleMove = l => patch(previous => { const next = { ...previous.t }, key = moveKey(l); if (next[key]) delete next[key]; else next[key] = { arm: l.arm, lote: l.lote, q: l.saldo, o: '' }; return { t: next }; });
+    // Quantas peças o operador tirou deste armazém: digitar marca a transferência para o armazém da gaveta; vazio ou 0 desmarca.
+    const setTake = (l, value) => patch(previous => {
+      const next = { ...previous.t }, key = moveKey(l), qty = Number(value);
+      if (value === '' || !(qty > 0)) delete next[key]; else next[key] = { arm: l.arm, lote: l.lote, q: qty, o: (next[key] && next[key].o) || '' };
+      return { t: next };
+    });
     const setMove = (l, field, value) => patch(previous => ({ t: { ...previous.t, [moveKey(l)]: { ...previous.t[moveKey(l)], [field]: value } } }));
 
     // Lote fechado mostra só o número; saldo, validade e armazéns aparecem ao tocar.
@@ -581,9 +606,12 @@
           showArm && h(Chip, { tone: Core.armRank(l.arm) < Core.ARM_PRIORITY.length ? 'dark' : 'muted' }, 'Arm. ' + Core.armLabel(l.arm)),
           h('span', { className: 'sc9g-saldo' }, 'saldo ' + num(l.saldo) + unit + (l.empenho ? ' · emp. ' + num(l.empenho) : '')),
           h(ValidityChip, { iso: l.validade, today })),
-        h(Button, { kind: move ? 'primary' : 'ghost', onClick: () => toggleMove(l) }, move ? '✓ Transferir p/ ' + home : 'Transferir p/ ' + home),
+        h('label', { className: 'sc9g-take' + (move ? ' is-on' : '') }, h('span', null, 'Quantas tirou do arm. ' + Core.armLabel(l.arm) + '?'),
+          h('input', { className: 'sc9g-input', type: 'number', inputMode: 'decimal', min: 0, step: 'any', placeholder: '0', value: move ? move.q : '', onChange: event => setTake(l, event.target.value), 'aria-label': 'Quantidade tirada do armazém ' + Core.armLabel(l.arm) + ' do lote ' + l.lote })),
+        move && Number(move.q) > l.saldo && h('p', { className: 'sc9g-count-msg sc9g-count-abaixo', role: 'status' }, 'O sistema só tem ' + num(l.saldo) + unit + ' neste armazém; o que passar disso fica sem saldo.'),
+        move && h('p', { className: 'sc9g-count-msg sc9g-count-outro-armazem', role: 'status' }, '✓ Vai transferir ' + num(move.q) + unit + ' do ' + Core.armLabel(l.arm) + ' p/ ' + home + '.'),
+        h(Button, { kind: move ? 'primary' : 'ghost', onClick: () => toggleMove(l) }, move ? '✓ Transferir p/ ' + home + ' (toque p/ desmarcar)' : 'Tirar tudo (' + num(l.saldo) + unit + ') p/ ' + home),
         move && h('div', { className: 'sc9g-move' },
-          h('label', null, h('span', null, 'Quantidade'), h('input', { className: 'sc9g-input', type: 'number', inputMode: 'decimal', min: 0, step: 'any', value: move.q, onChange: event => setMove(l, 'q', event.target.value === '' ? '' : Number(event.target.value)) })),
           h('label', null, h('span', null, 'Observação'), h('input', { className: 'sc9g-input', value: move.o, maxLength: 300, placeholder: 'Ex.: trazer do ' + Core.armLabel(l.arm), onChange: event => setMove(l, 'o', event.target.value) }))));
     };
 
