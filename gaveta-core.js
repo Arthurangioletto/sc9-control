@@ -312,6 +312,23 @@
   }
 
   // ---------- cruzamentos ----------
+  // No ZZ2 os armários vêm como endereços ZARM01, ZARM02…; o resto são gavetas.
+  const isArmario = codigo => /^ZARM/.test(upper(codigo));
+  // O QR da gaveta traz o número dela (AA01); aceita também texto com prefixo, URL ou espaços.
+  function matchGaveta(content, codes) {
+    const known = new Map();
+    for (const code of codes) known.set(upper(code), code);
+    const raw = upper(content);
+    if (!raw) return '';
+    if (known.has(raw)) return known.get(raw);
+    const tokens = raw.split(/[^A-Z0-9]+/).filter(Boolean);
+    for (let i = tokens.length - 1; i >= 0; i--) if (known.has(tokens[i])) return known.get(tokens[i]);
+    const joined = tokens.join('');
+    if (known.has(joined)) return known.get(joined);
+    // Código de barras com 1 caractere a mais (dígito verificador do Code 39, "*" etc.): só vale se der um único candidato.
+    const near = [...known].filter(([key]) => joined.length - key.length === 1 && (joined.startsWith(key) || joined.endsWith(key)));
+    return near.length === 1 ? near[0][1] : '';
+  }
   const gavetaId = (filial, arm, codigo) => [place(filial), place(arm), upper(codigo)].join('|');
 
   // Uma gaveta = um endereço do ZZ2 num armazém e filial.
@@ -339,6 +356,11 @@
     return { byProduct, byLote };
   }
 
+  // Ordem de consulta quando o produto não tem (ou além do) saldo no armazém da gaveta:
+  // 01 é o principal, 02 o secundário, depois 59/30/20/25 e as filiais; o resto vem por último.
+  const ARM_PRIORITY = ['1', '2', '59', '30', '20', '25', 'ES', 'BH', 'DF', 'RJ', 'CE', 'ET', 'BT', 'RT', 'CT', 'DT'];
+  const armRank = arm => { const index = ARM_PRIORITY.indexOf(place(arm)); return index < 0 ? ARM_PRIORITY.length : index; };
+  const byArm = (a, b) => armRank(a[2]) - armRank(b[2]) || a[2].localeCompare(b[2], 'pt-BR', { numeric: true });
   const byValidity = (a, b) => (a[6] || '9999') < (b[6] || '9999') ? -1 : (a[6] || '9999') > (b[6] || '9999') ? 1 : a[3].localeCompare(b[3], 'pt-BR', { numeric: true });
   const stockRow = row => ({ filial: row[0], arm: row[2], lote: row[3], saldo: row[4], empenho: row[5], validade: row[6] });
 
@@ -351,7 +373,7 @@
       const info = ctx.sb1[prod] || [];
       const rows = (ctx.sb8.byProduct.get(prod) || []).filter(row => !gaveta.filial || !row[0] || row[0] === gaveta.filial);
       const aqui = rows.filter(row => row[2] === gaveta.arm && (!restritos.size || restritos.has(row[3]))).sort(byValidity);
-      const outros = rows.filter(row => row[2] !== gaveta.arm).sort((a, b) => a[2].localeCompare(b[2], 'pt-BR', { numeric: true }) || byValidity(a, b));
+      const outros = rows.filter(row => row[2] !== gaveta.arm).sort((a, b) => byArm(a, b) || byValidity(a, b));
       const enderecos = (ctx.enderecos.get(prod) || [])
         .filter(item => !gaveta.filial || !item.filial || item.filial === gaveta.filial)
         .map(item => ({ arm: item.arm, endereco: item.endereco, armario: item.armario, aqui: item.arm === gaveta.arm && item.endereco === gaveta.codigo }));
@@ -385,7 +407,7 @@
       const products = new Set([q, ...eanProducts]);
       rows = [...products].flatMap(code => ctx.sb8.byProduct.get(code) || []);
     }
-    return rows.slice(0, limit).map(row => ({
+    return [...rows].sort((a, b) => byArm(a, b) || byValidity(a, b)).slice(0, limit).map(row => ({
       ...stockRow(row), produto: row[1], descricao: (ctx.sb1[row[1]] || [])[0] || '',
       enderecos: (ctx.enderecos.get(row[1]) || []).map(item => ({ arm: item.arm, endereco: item.endereco }))
     }));
@@ -471,7 +493,7 @@
   }
 
   const api = {
-    BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
+    BASE_VALID_HOURS, isoDate, validity, armLabel, place, product, upper, isArmario, ARM_PRIORITY, armRank, matchGaveta, readWorkbook, readWorkbookStream, detectSheet, parseSheet,
     cleanSb8, cleanZz2, cleanSb1, gavetaId, gavetasFrom, makeContext, detail, findLote, cleanAnalysis, summarize,
     dashboard, baseState
   };

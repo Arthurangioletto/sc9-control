@@ -176,3 +176,40 @@ test('leitura em fluxo lê ZZ2 e SB1 com textos compartilhados', async () => {
 test('leitura em fluxo recusa arquivo que não é xlsx', async () => {
   await assert.rejects(() => G.readWorkbookStream(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24])), /xlsx/);
 });
+
+test('endereços ZARM são armários, o resto é gaveta', () => {
+  assert.equal(G.isArmario('ZARM03'), true);
+  assert.equal(G.isArmario(' zarm11 '), true);
+  assert.equal(G.isArmario('AA06'), false);
+  assert.equal(G.isArmario('ZA01'), false);
+});
+
+test('armazéns de consulta seguem a ordem 01, 02, 59, 30, 20, 25, ES, BH, DF, RJ, CE, ET, BT, RT, CT, DT; o resto vai depois', () => {
+  assert.deepEqual(G.ARM_PRIORITY, ['1', '2', '59', '30', '20', '25', 'ES', 'BH', 'DF', 'RJ', 'CE', 'ET', 'BT', 'RT', 'CT', 'DT']);
+  assert.ok(G.armRank('01') < G.armRank('02') && G.armRank('02') < G.armRank('59') && G.armRank('25') < G.armRank('es'));
+  assert.ok(G.armRank('DT') < G.armRank('26'));
+  const zz2 = [['1', '1', 'AA01', 'P1', '', '']];
+  const sb8 = [
+    ['1', 'P1', '26', 'L1', 5, 0, '2030-01-01'], ['1', 'P1', 'DT', 'L1', 5, 0, '2030-01-01'], ['1', 'P1', 'ES', 'L1', 5, 0, '2030-01-01'],
+    ['1', 'P1', '2', 'L1', 5, 0, '2030-01-01'], ['1', 'P1', '59', 'L1', 5, 0, '2030-01-01'], ['1', 'P1', '1', 'L1', 5, 0, '2030-01-01']
+  ];
+  const ctx = G.makeContext(zz2, {}, sb8);
+  const detail = G.detail(ctx, '1|1|AA01');
+  assert.deepEqual(detail.itens[0].lotes.map(l => l.arm), ['1']);
+  assert.deepEqual(detail.itens[0].outros.map(l => l.arm), ['2', '59', 'ES', 'DT', '26']);
+  assert.deepEqual(G.findLote(ctx, 'L1').map(row => row.arm), ['1', '2', '59', 'ES', 'DT', '26']);
+  assert.deepEqual(G.findLote(ctx, 'NAOEXISTE'), []);
+});
+
+test('código de barras/QR da gaveta: aceita o código puro, com prefixo, dentro de uma URL ou com 1 caractere extra', () => {
+  const codes = ['AA01', 'AA02', 'ZARM03'];
+  assert.equal(G.matchGaveta('aa01', codes), 'AA01');
+  assert.equal(G.matchGaveta(' AA02\n', codes), 'AA02');
+  assert.equal(G.matchGaveta('GAVETA: ZARM03', codes), 'ZARM03');
+  assert.equal(G.matchGaveta('https://sc9-control.onrender.com/g/aa01?x=1', codes), 'AA01');
+  assert.equal(G.matchGaveta('AA-01', codes), 'AA01');
+  assert.equal(G.matchGaveta('AA03N', ['AA03', 'AA02']), 'AA03');   // dígito verificador do Code 39
+  assert.equal(G.matchGaveta('AA01A', ['AA01', 'A01A']), '');     // ambíguo: não chuta
+  assert.equal(G.matchGaveta('XYZ', codes), '');
+  assert.equal(G.matchGaveta('', codes), '');
+});

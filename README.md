@@ -290,6 +290,13 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 
 **Carga (administrador, aba Bases):** escolha o SB8, o ZZ2 e o SB1 do Protheus (um por vez ou juntos; o sistema reconhece cada aba pelos cabeçalhos). O SB8 é lido no navegador e só vão para o servidor as linhas com saldo maior que zero e não excluídas. O SB8 completo (~65 MB, ~418 mil linhas) vira um XML de ~850 MB dentro do .xlsx e o leitor comum de Excel do navegador o descarta sem avisar; por isso, quando isso acontece, o arquivo é aberto aos pedaços (leitura em fluxo, só as colunas necessárias, ~15 s) e sobem cerca de 46 mil linhas. Exige navegador atual (Chrome/Edge/Safari 16.4+/Firefox 113+) no computador do administrador.
 
+**Na tela do celular/iPhone:**
+- Cada produto mostra primeiro o armazém da gaveta (01). Os lotes aparecem **fechados** (só o número); ao tocar abrem saldo, validade, o campo de validade correta e **onde o lote está** nos outros armazéns, com o botão de transferir.
+- Se o produto não tem saldo no 01, "Também em outros armazéns" já abre sozinho. A ordem de consulta é 01, 02, 59, 30, 20, 25, ES, BH, DF, RJ, CE, ET, BT, RT, CT, DT; qualquer outro armazém aparece depois, em "Demais armazéns".
+- A **lupa** (ou Enter) pesquisa o lote em todos os armazéns do SB8: se está nesta gaveta, o lote abre; se está em outro lugar, lista os armazéns e endereços; se não existe saldo, avisa claramente (dá para anotar como encontrado).
+- O botão de **código de barras** (na lista de gavetas e no campo do lote) abre a câmera traseira e lê o código de barras da gaveta (Code 128, Code 39, EAN, QR etc.; aceita só o número, texto com prefixo, URL ou 1 caractere extra de verificação). Usa o leitor do navegador quando existe e, no iPhone, o ZXing (arquivo `vendor-zxing.js`, MIT, só carregado ao abrir a câmera). Precisa de conexão segura (https) e da permissão da câmera.
+- Na lista, **Gavetas / Armários** separa os endereços `ZARM…` (armários, com dezenas de produtos) das gavetas.
+
 - **SB8 vale 24 horas.** Passou disso sem ser atualizado, o servidor apaga o SB8 e quem analisa deixa de ver a base (a lista de gavetas e o painel continuam).
 - **ZZ2 e SB1** (endereços e descrições) ficam até serem trocados. Cada endereço do ZZ2 num armazém/filial é uma **gaveta**.
 - **As análises feitas nunca são apagadas** (`gaveta-analises.json`). O painel conta gavetas analisadas por dia, quantas faltam, média por dia, tempo médio por gaveta e quem analisou hoje; o administrador exporta tudo em Excel.
