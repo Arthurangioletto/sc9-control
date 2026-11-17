@@ -324,7 +324,10 @@
     const tokens = raw.split(/[^A-Z0-9]+/).filter(Boolean);
     for (let i = tokens.length - 1; i >= 0; i--) if (known.has(tokens[i])) return known.get(tokens[i]);
     const joined = tokens.join('');
-    return known.has(joined) ? known.get(joined) : '';
+    if (known.has(joined)) return known.get(joined);
+    // Código de barras com 1 caractere a mais (dígito verificador do Code 39, "*" etc.): só vale se der um único candidato.
+    const near = [...known].filter(([key]) => joined.length - key.length === 1 && (joined.startsWith(key) || joined.endsWith(key)));
+    return near.length === 1 ? near[0][1] : '';
   }
   const gavetaId = (filial, arm, codigo) => [place(filial), place(arm), upper(codigo)].join('|');
 

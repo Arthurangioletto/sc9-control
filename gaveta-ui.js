@@ -39,25 +39,26 @@
   }
   const Button = ({ kind = 'ghost', ...props }) => h('button', { type: 'button', ...props, className: 'sc9g-btn sc9g-btn-' + kind + (props.className ? ' ' + props.className : '') });
 
-  // ---------- ícones e leitura de QR pela câmera ----------
+  // ---------- ícones e leitura de código de barras pela câmera ----------
   const icon = (...children) => h('svg', { viewBox: '0 0 24 24', width: 24, height: 24, fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, focusable: 'false' }, ...children);
   const IconSearch = () => icon(h('circle', { cx: 11, cy: 11, r: 7 }), h('path', { d: 'M20 20l-3.6-3.6' }));
-  const IconQr = () => icon(h('rect', { x: 3, y: 3, width: 7, height: 7, rx: 1 }), h('rect', { x: 14, y: 3, width: 7, height: 7, rx: 1 }), h('rect', { x: 3, y: 14, width: 7, height: 7, rx: 1 }), h('path', { d: 'M14 14h3v3m4 0v4h-4m0-3h-3v3' }));
+  const IconBarcode = () => icon(h('path', { d: 'M4 5v14', strokeWidth: 2 }), h('path', { d: 'M8 5v14', strokeWidth: 3.4 }), h('path', { d: 'M12.5 5v14', strokeWidth: 1.6 }), h('path', { d: 'M16 5v14', strokeWidth: 3.2 }), h('path', { d: 'M20 5v14', strokeWidth: 2 }));
 
-  let jsQrPromise = null;
-  const loadJsQr = () => jsQrPromise || (jsQrPromise = new Promise((resolve, reject) => {
-    if (root.jsQR) return resolve(root.jsQR);
+  let zxingPromise = null;
+  const loadZxing = () => zxingPromise || (zxingPromise = new Promise((resolve, reject) => {
+    if (root.ZXing) return resolve(root.ZXing);
     const script = document.createElement('script');
-    script.src = '/vendor-jsqr.js';
-    script.onload = () => root.jsQR ? resolve(root.jsQR) : reject(Error('Leitor de QR indisponível.'));
-    script.onerror = () => { jsQrPromise = null; reject(Error('Não consegui carregar o leitor de QR. Digite o código.')); };
+    script.src = '/vendor-zxing.js';
+    script.onload = () => root.ZXing ? resolve(root.ZXing) : reject(Error('Leitor de código de barras indisponível.'));
+    script.onerror = () => { zxingPromise = null; reject(Error('Não consegui carregar o leitor de código de barras. Digite o código.')); };
     document.head.appendChild(script);
   }));
+  const BARCODE_FORMATS = ['code_128', 'code_39', 'code_93', 'codabar', 'ean_13', 'ean_8', 'itf', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'];
   const cameraError = e => e && (e.name === 'NotAllowedError' || e.name === 'SecurityError') ? 'A câmera está bloqueada. Permita o acesso à câmera para este site nas configurações do navegador e tente de novo.'
     : e && e.name === 'NotFoundError' ? 'Não encontrei câmera neste aparelho. Digite o código.'
     : (e && e.message) || 'Não consegui abrir a câmera. Digite o código.';
 
-  // Tela cheia com a câmera traseira; devolve o texto do primeiro QR lido.
+  // Tela cheia com a câmera traseira; devolve o texto do primeiro código de barras (ou QR) lido.
   function Scanner({ title, onResult, onClose }) {
     const video = useRef(null);
     const callback = useRef(onResult);
@@ -74,9 +75,23 @@
           element.srcObject = stream;
           element.setAttribute('playsinline', ''); element.muted = true;
           await element.play();
-          let detector = null;
-          if (root.BarcodeDetector) { try { detector = new root.BarcodeDetector({ formats: ['qr_code'] }); } catch { detector = null; } }
-          const decode = detector ? null : await loadJsQr();
+          let detector = null, reader = null;
+          if (root.BarcodeDetector) {
+            try {
+              const supported = root.BarcodeDetector.getSupportedFormats ? await root.BarcodeDetector.getSupportedFormats() : BARCODE_FORMATS;
+              const formats = BARCODE_FORMATS.filter(format => supported.includes(format));
+              if (formats.some(format => format !== 'qr_code')) detector = new root.BarcodeDetector({ formats });
+            } catch { detector = null; }
+          }
+          if (!detector) {
+            // iPhone/Safari não tem leitor nativo: usa o ZXing (código de barras 1D e QR).
+            const Z = await loadZxing();
+            const hints = new Map();
+            hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, ['CODE_128', 'CODE_39', 'CODE_93', 'CODABAR', 'EAN_13', 'EAN_8', 'ITF', 'UPC_A', 'UPC_E', 'QR_CODE', 'DATA_MATRIX'].map(name => Z.BarcodeFormat[name]));
+            hints.set(Z.DecodeHintType.TRY_HARDER, true);
+            reader = { Z, engine: new Z.MultiFormatReader() };
+            reader.engine.setHints(hints);
+          }
           const canvas = document.createElement('canvas');
           const context = canvas.getContext('2d', { willReadFrequently: true });
           const tick = async () => {
@@ -86,12 +101,13 @@
               try {
                 if (detector) text = (await detector.detect(element))[0]?.rawValue || '';
                 else {
-                  const scale = Math.min(1, 720 / element.videoWidth);
+                  const scale = Math.min(1, 1280 / element.videoWidth);
                   canvas.width = Math.round(element.videoWidth * scale); canvas.height = Math.round(element.videoHeight * scale);
                   context.drawImage(element, 0, 0, canvas.width, canvas.height);
-                  const image = context.getImageData(0, 0, canvas.width, canvas.height);
-                  const code = decode(image.data, image.width, image.height, { inversionAttempts: 'attemptBoth' });
-                  text = code ? code.data : '';
+                  try {
+                    const bitmap = new reader.Z.BinaryBitmap(new reader.Z.HybridBinarizer(new reader.Z.HTMLCanvasElementLuminanceSource(canvas)));
+                    text = reader.engine.decode(bitmap).getText();
+                  } catch { text = ''; }   // nada legível neste quadro
                 }
               } catch { text = ''; }
             }
@@ -108,7 +124,7 @@
       h('div', { className: 'sc9g-scanner-top' }, h('strong', null, title), h('button', { type: 'button', className: 'sc9g-scanner-close', onClick: onClose, 'aria-label': 'Fechar câmera' }, '✕')),
       !error && h('div', { className: 'sc9g-scanner-frame', 'aria-hidden': true }),
       h('div', { className: 'sc9g-scanner-bottom' },
-        error ? h('p', { className: 'sc9g-scanner-error', role: 'alert' }, error) : h('p', null, 'Aponte a câmera para o QR code'),
+        error ? h('p', { className: 'sc9g-scanner-error', role: 'alert' }, error) : h('p', null, 'Aponte a câmera para o código de barras e mantenha firme'),
         h(Button, { kind: 'light', onClick: onClose }, 'Digitar o código')));
   }
 
@@ -153,21 +169,21 @@
     }, [scope, query, filter]);
     useEffect(() => setLimit(60), [query, filter, kind]);
     const blocked = !data.bases.sb8.presente;
-    const fromQr = text => {
+    const fromCode = text => {
       setScanning(false);
       const code = Core.matchGaveta(text, data.gavetas.map(item => item.codigo));
-      if (!code) { setScanMsg('QR lido (' + text.slice(0, 40) + ') não é de uma gaveta cadastrada.'); return; }
+      if (!code) { setScanMsg('Código lido (' + text.slice(0, 40) + ') não é de uma gaveta cadastrada.'); return; }
       const matches = data.gavetas.filter(item => item.codigo === code);
       const item = matches.find(entry => !entry.ultima) || matches[0];
       if (blocked) { setScanMsg('Gaveta ' + code + ' reconhecida, mas o SB8 de hoje não está carregado.'); return; }
       setScanMsg(''); onOpen(item);
     };
     return h('div', { className: 'sc9g-stack' },
-      scanning && h(Scanner, { title: 'QR da gaveta', onResult: fromQr, onClose: () => setScanning(false) }),
+      scanning && h(Scanner, { title: 'Código de barras da gaveta', onResult: fromCode, onClose: () => setScanning(false) }),
       scanMsg && h('p', { className: 'sc9g-warn', role: 'alert', onClick: () => setScanMsg('') }, scanMsg),
       h('div', { className: 'sc9g-searchrow' },
       h('input', { className: 'sc9g-input sc9g-search', type: 'search', inputMode: 'search', autoCapitalize: 'characters', placeholder: 'Buscar gaveta ou armário', value: query, onChange: event => setQuery(event.target.value), 'aria-label': 'Buscar gaveta' }),
-        h('button', { type: 'button', className: 'sc9g-iconbtn', onClick: () => { setScanMsg(''); setScanning(true); }, 'aria-label': 'Ler o QR code da gaveta', disabled: !data.gavetas.length }, h(IconQr), h('span', null, 'QR'))),
+        h('button', { type: 'button', className: 'sc9g-iconbtn', onClick: () => { setScanMsg(''); setScanning(true); }, 'aria-label': 'Ler o código de barras da gaveta', disabled: !data.gavetas.length }, h(IconBarcode), h('span', null, 'Ler'))),
       kindCounts.armario > 0 && h('div', { className: 'sc9g-seg', role: 'tablist', 'aria-label': 'Tipo de endereço' }, [['gaveta', 'Gavetas'], ['armario', 'Armários'], ['todos', 'Ambos']].map(([id, label]) =>
         h('button', { key: id, type: 'button', role: 'tab', 'aria-selected': kind === id, className: kind === id ? 'is-on' : '', onClick: () => setKind(id) }, label, h('span', null, num(kindCounts[id]))))),
       h('div', { className: 'sc9g-seg', role: 'tablist' }, [['faltam', 'Faltam'], ['feitas', 'Analisadas'], ['todas', 'Todas']].map(([id, label]) =>
@@ -426,7 +442,7 @@
       h('div', { className: 'sc9g-body', ref: bodyRef },
         h('form', { className: 'sc9g-scan', onSubmit: search },
           h('input', { className: 'sc9g-input', value: scan, onChange: event => setScan(event.target.value), placeholder: 'Bipe ou digite o lote / código', autoCapitalize: 'characters', autoCorrect: 'off', autoComplete: 'off', spellCheck: false, enterKeyHint: 'search', 'aria-label': 'Buscar lote' }),
-          h('button', { type: 'button', className: 'sc9g-iconbtn', onClick: () => setCamera(true), 'aria-label': 'Ler código pela câmera' }, h(IconQr)),
+          h('button', { type: 'button', className: 'sc9g-iconbtn', onClick: () => setCamera(true), 'aria-label': 'Ler código de barras pela câmera' }, h(IconBarcode)),
           h('button', { type: 'submit', className: 'sc9g-iconbtn sc9g-iconbtn-dark', 'aria-label': 'Pesquisar o lote em todos os armazéns' }, h(IconSearch))),
         camera && h(Scanner, { title: 'Ler lote ou código', onResult: text => { setCamera(false); setScan(text); runSearch(text); }, onClose: () => setCamera(false) }),
         error && h('p', { className: 'sc9g-error', role: 'alert' }, error),

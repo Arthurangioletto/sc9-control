@@ -201,13 +201,15 @@ test('armazéns de consulta seguem a ordem 01, 02, 59, 30, 20, 25, ES, BH, DF, R
   assert.deepEqual(G.findLote(ctx, 'NAOEXISTE'), []);
 });
 
-test('QR da gaveta: aceita o código puro, com prefixo ou dentro de uma URL', () => {
+test('código de barras/QR da gaveta: aceita o código puro, com prefixo, dentro de uma URL ou com 1 caractere extra', () => {
   const codes = ['AA01', 'AA02', 'ZARM03'];
   assert.equal(G.matchGaveta('aa01', codes), 'AA01');
   assert.equal(G.matchGaveta(' AA02\n', codes), 'AA02');
   assert.equal(G.matchGaveta('GAVETA: ZARM03', codes), 'ZARM03');
   assert.equal(G.matchGaveta('https://sc9-control.onrender.com/g/aa01?x=1', codes), 'AA01');
   assert.equal(G.matchGaveta('AA-01', codes), 'AA01');
+  assert.equal(G.matchGaveta('AA03N', ['AA03', 'AA02']), 'AA03');   // dígito verificador do Code 39
+  assert.equal(G.matchGaveta('AA01A', ['AA01', 'A01A']), '');     // ambíguo: não chuta
   assert.equal(G.matchGaveta('XYZ', codes), '');
   assert.equal(G.matchGaveta('', codes), '');
 });
