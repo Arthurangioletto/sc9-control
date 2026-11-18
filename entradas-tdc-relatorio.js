@@ -136,6 +136,8 @@ h2.sec{font-size:18px;margin:26px 0 4px}p.secsub{margin:0 0 14px;color:#4F587A;f
 .met{background:#fff;border:1px solid #E1E6F2;border-radius:14px;padding:14px 18px;font-size:12.5px;color:#4F587A;margin-top:22px}.met b{color:#1B2138}
 .acoes{position:sticky;top:0;z-index:5;background:#EEF1F7;padding:10px 0;display:flex;gap:10px;justify-content:flex-end}
 .acoes button{border:0;background:#4F63D2;color:#fff;border-radius:8px;padding:9px 16px;font-weight:650;cursor:pointer}
+.acoes button:disabled{opacity:.6;cursor:wait}.pdfst{align-self:center;margin-right:auto;font-size:12.5px;color:#4F587A}
+body.pdf{background:#fff}body.pdf .acoes{display:none}body.pdf .pg{max-width:none;width:720px;margin:0;padding:0}body.pdf .kpis{grid-template-columns:repeat(5,1fr);gap:8px}body.pdf .kpi{padding:10px 12px}body.pdf .kpi strong{font-size:22px}body.pdf h2.sec{page-break-before:always;break-before:page;margin-top:0}body.pdf .graf{grid-template-columns:1fr 1fr}body.pdf .erro{grid-template-columns:260px 1fr}
 @media print{body{background:#fff}.pg{padding:0;max-width:none}.acoes{display:none}.cab{border-radius:12px}.kpis{grid-template-columns:repeat(5,1fr);gap:8px}.kpi{padding:10px 12px}.kpi strong{font-size:22px}.card,.kpi,.manchete{break-inside:avoid;page-break-inside:avoid}h2.sec,p.secsub{break-after:avoid;page-break-after:avoid}@page{size:A4;margin:12mm}}
 @media(max-width:760px){.graf{grid-template-columns:1fr}.erro{grid-template-columns:1fr}}
 `;
@@ -157,8 +159,9 @@ h2.sec{font-size:18px;margin:26px 0 4px}p.secsub{margin:0 0 14px;color:#4F587A;f
       ${rev.obs?`<div class="blk"><h3>Justificativa do estoque</h3><p class="just">“${esc(rev.obs)}”</p></div>`:''}
       ${por?`<div class="rod">${por}</div>`:''}</div></article>`;
   }
-  function gerarHTML(d,{fotos={},geradoEm=new Date(),geradoPor='',cobertura={}}={}){
+  function gerarHTML(d,{fotos={},geradoEm=new Date(),geradoPor='',cobertura={},origem='',auto=''}={}){
     const k=d.kpis,p=d.periodo;
+    const nomePdf='Relatorio_Entradas_TDC_'+String(p.de||'inicio').replace(/[^0-9A-Za-z_-]/g,'')+'_a_'+String(p.ate||'hoje').replace(/[^0-9A-Za-z_-]/g,'')+'.pdf';
     const tipoLinhas=ORDEM.map(t=>({rotulo:TIPOS[t].rotulo,v:d.porTipo[t].n,cor:TIPOS[t].cor,texto:d.porTipo[t].n+' · '+fmtN(d.porTipo[t].pecas,0)+' pç'}));
     const dias=[['Entradas sem erro',k.diasLimpos,'#0A8571'],['Entradas com erro',k.diasErro,'#C2453B']];
     const maxD=Math.max(1,...dias.map(x=>x[1]||0));
@@ -166,7 +169,7 @@ h2.sec{font-size:18px;margin:26px 0 4px}p.secsub{margin:0 0 14px;color:#4F587A;f
     const usuarioBloco=d.porUsuario.length?`<div class="card"><h2>Por quem lançou no TDC</h2><p class="sub">Erros confirmados por usuário que deu entrada na nota.</p>${barrasH(d.porUsuario.slice(0,8).map(u=>({rotulo:u.usuario,v:u.n,cor:'#4F63D2',texto:String(u.n)})))}</div>`:'';
     const metodo=[cobertura.sd1Ate?'SD1 (notas de entrada) até '+esc(fmtD(cobertura.sd1Ate)):'',cobertura.sd3Ate?'SD3 (movimentação) até '+esc(fmtD(cobertura.sd3Ate)):''].filter(Boolean).join(' · ');
     return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Relatório de divergências — Entradas do TDC (59) — ${esc(fmtD(p.de))} a ${esc(fmtD(p.ate))}</title><style>${CSS}</style></head><body><div class="pg">
-<div class="acoes"><button onclick="window.print()">Imprimir / salvar em PDF</button></div>
+<div class="acoes"><span id="pdfst" class="pdfst" role="status"></span><button type="button" id="btnImp" onclick="window.print()">Imprimir</button><button type="button" id="btnPdf" onclick="baixarPdf()">Baixar PDF</button></div>
 <header class="cab"><div><h1>Divergências nas entradas do TDC</h1><p>Armazém 59 · nota de entrada (SD1) × movimentação do Protheus (SD3)</p><span class="periodo">Período: ${esc(fmtD(p.de))} a ${esc(fmtD(p.ate))}${p.definido?'':' (todas as entradas conferidas)'}</span></div>
 <div class="meta">Relatório gerado em<br><b>${esc(fmtAgora(geradoEm))}</b>${geradoPor?'<br>por <b>'+esc(geradoPor)+'</b>':''}<br>Base: ${esc(d.escopo)}</div></header>
 <div class="manchete">${manchete(d)}</div>
@@ -184,7 +187,31 @@ ${usuarioBloco}</div>
 <h2 class="sec">Os erros, um a um</h2><p class="secsub">Cada ficha traz a foto do pacote, o que o Protheus registrou e a justificativa de quem conferiu no físico.</p>
 ${d.erros.length?d.erros.map(e=>cartaoErro(e,fotos)).join(''):'<div class="card"><p class="vazio">Nenhum erro confirmado neste período.</p></div>'}
 <div class="met"><b>Como ler:</b> só entram erros <b>confirmados pelo estoque</b> (suspeitas descartadas ou ainda não conferidas ficam de fora). O Protheus aponta o que foi corrigido no sistema; as fichas manuais registram o que foi visto no físico.${metodo?' <br><b>Dados usados:</b> '+metodo+'.':''}</div>
-</div></body></html>`;
+</div><script>${scriptPdf({nomePdf,origem,auto})}</script></body></html>`;
+  }
+
+  /* Script da própria página do relatório: "Baixar PDF" gera o arquivo (html2pdf, servido em /vendor-html2pdf.js) e baixa direto, sem passar pela janela de impressão. */
+  function scriptPdf({nomePdf,origem,auto}){
+    const j=v=>JSON.stringify(v).replace(/</g,'\\u003c');
+    return `var NOME=${j(nomePdf)},ORIGEM=${j(origem)},AUTO=${j(auto)};
+function aviso(t){var e=document.getElementById('pdfst');if(e)e.textContent=t||'';}
+function avisarPai(o){try{if(window.parent&&window.parent!==window)window.parent.postMessage(Object.assign({sc9RelatorioPdf:true},o),'*');}catch(e){}}
+function carregarLib(){return new Promise(function(ok,no){if(window.html2pdf)return ok();var s=document.createElement('script');s.src=ORIGEM+'/vendor-html2pdf.js';s.onload=function(){window.html2pdf?ok():no(new Error('biblioteca de PDF indisponível'));};s.onerror=function(){no(new Error('não consegui carregar a biblioteca de PDF'));};document.head.appendChild(s);});}
+async function baixarPdf(){
+  var b=document.getElementById('btnPdf');if(b)b.disabled=true;aviso('Gerando PDF…');
+  try{
+    await carregarLib();
+    if(document.images.length)await Promise.all(Array.prototype.map.call(document.images,function(i){return i.complete?0:new Promise(function(r){i.onload=i.onerror=r;});}));
+    document.body.classList.add('pdf');await new Promise(function(r){setTimeout(r,80);});
+    Array.prototype.forEach.call(document.querySelectorAll('svg'),function(v){var r=v.getBoundingClientRect();v.setAttribute('width',Math.round(r.width));v.setAttribute('height',Math.round(r.height));v.style.width=Math.round(r.width)+'px';v.style.height=Math.round(r.height)+'px';});
+    var el=document.querySelector('.pg'),alt=el.scrollHeight,esc=Math.max(1,Math.min(2,14000/alt));
+    await html2pdf().set({margin:[8,8,8,8],filename:NOME,image:{type:'jpeg',quality:0.92},html2canvas:{scale:esc,useCORS:true,backgroundColor:'#ffffff',scrollX:0,scrollY:0},jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},pagebreak:{mode:['css','legacy'],avoid:['.erro','.kpi','.card','.manchete','.met','.cab']}}).from(el).save();
+    aviso('PDF baixado.');avisarPai({ok:true});
+  }catch(e){var m='Não consegui gerar o PDF ('+(e&&e.message||e)+'). Use Imprimir e escolha Salvar como PDF.';aviso(m);avisarPai({ok:false,erro:m});}
+  finally{document.body.classList.remove('pdf');if(b)b.disabled=false;}
+}
+if(AUTO==='pdf')window.addEventListener('load',function(){baixarPdf();});
+if(AUTO==='imprimir')window.addEventListener('load',function(){setTimeout(function(){window.print();},300);});`;
   }
 
   const api={montarRelatorio,gerarHTML,manchete,esc,barrasH,colunas,fmtAgora};

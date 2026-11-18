@@ -734,20 +734,35 @@
     const dentro=d=>(!de||(d&&d>=de))&&(!ate||(d&&d<=ate));
     const doPeriodo=conf.filter(a=>dentro(M.dataRelatorio(a)));
     const nFotos=doPeriodo.reduce((s,a)=>s+((a.fotos||[]).length),0);
-    const montar=async()=>{
+    const montar=async(opts={})=>{
       const dados=Rp.montarRelatorio(res||{itens:[]},achados.map(a=>({...a,dataRelatorio:M.dataRelatorio(a)})),{de,ate,escopo:escopoRotulo});
       const ids=[...new Set(dados.erros.flatMap(e=>e.fotos||[]))],fotos={};let feitas=0;
       for(const id of ids){setBusy('Preparando fotos ('+(++feitas)+'/'+ids.length+')…');try{fotos[id]=await fotoParaDataUrl(id);}catch(e){/* foto indisponível: o cartão mostra "sem foto" */}}
-      return Rp.gerarHTML(dados,{fotos,geradoEm:new Date(),geradoPor:sessao&&(sessao.nome||sessao.usuario)||'',cobertura:{sd1Ate:res&&res.cobertura.sd1Ate,sd3Ate:res&&res.cobertura.sd3Ate}});
+      return Rp.gerarHTML(dados,{fotos,geradoEm:new Date(),geradoPor:sessao&&(sessao.nome||sessao.usuario)||'',cobertura:{sd1Ate:res&&res.cobertura.sd1Ate,sd3Ate:res&&res.cobertura.sd3Ate},origem:root.location.origin,auto:opts.auto||''});
     };
     const nomeArq=()=>'Relatorio_Entradas_TDC_'+(de||'inicio')+'_a_'+(ate||'hoje')+'.html';
     const abrir=async()=>{
       setErr('');const w=root.open('','_blank');// abre já, no clique, para o navegador não bloquear
-      try{setBusy('Montando relatório…');const html=await montar();
+      try{setBusy('Montando relatório…');const html=await montar({auto:'imprimir'});
         if(w){w.document.open();w.document.write(html);w.document.close();}else baixarArquivo(nomeArq(),html,'text/html;charset=utf-8');}
       catch(e){setErr(e.message);if(w)w.close();}finally{setBusy('');}
     };
     const baixar=async()=>{setErr('');try{setBusy('Montando relatório…');baixarArquivo(nomeArq(),await montar(),'text/html;charset=utf-8');}catch(e){setErr(e.message);}finally{setBusy('');}};
+    // PDF direto: a página do relatório roda escondida e gera/baixa o arquivo (nada de janela de impressão)
+    const baixarPdf=async()=>{
+      setErr('');let fr=null,ouvir=null;
+      try{
+        setBusy('Montando relatório…');const html=await montar({auto:'pdf'});
+        await new Promise((ok,no)=>{
+          fr=root.document.createElement('iframe');fr.setAttribute('aria-hidden','true');fr.setAttribute('title','Gerando PDF');
+          fr.style.cssText='position:fixed;left:-10000px;top:0;width:1000px;height:800px;border:0;opacity:0;pointer-events:none';
+          const t=setTimeout(()=>no(new Error('Demorou demais para gerar o PDF. Tente um período menor.')),180000);
+          ouvir=ev=>{if(ev.source!==fr.contentWindow||!ev.data||!ev.data.sc9RelatorioPdf)return;clearTimeout(t);ev.data.ok?ok():no(new Error(ev.data.erro||'Não consegui gerar o PDF.'));};
+          root.addEventListener('message',ouvir);setBusy('Gerando PDF…');fr.srcdoc=html;root.document.body.appendChild(fr);
+        });
+      }catch(e){setErr(e.message);}
+      finally{if(ouvir)root.removeEventListener('message',ouvir);if(fr&&fr.parentNode)fr.parentNode.removeChild(fr);setBusy('');}
+    };
     return h('div',{className:'sc9-tdc-modal',onClick:e=>{if(e.target===e.currentTarget&&!busy)onFechar();}},h('div',null,
       h('h2',{style:{margin:'0 0 4px',fontSize:16}},'Exportar'),
       h('p',{className:'sc9-tdc-sub'},'Abrir ou baixar o relatório mantém as fichas salvas. Para exportar uma semana, informe as datas. Fichas manuais sem data de entrada usam a data do registro.'),
@@ -758,7 +773,8 @@
       h('div',{className:'sc9-tdc-msg '+(doPeriodo.length?'ok':'info')},doPeriodo.length?`${doPeriodo.length} erro(s) confirmado(s) no período · ${nFotos} foto(s).`:'Nenhum erro confirmado neste período ainda. Confirme fichas no Fichário ou reporte um erro.'),
       err&&h('div',{className:'sc9-tdc-msg err'},err),busy&&h('div',{className:'sc9-tdc-msg info'},busy),
       h('div',{className:'sc9-tdc-act',style:{marginTop:12}},
-        h('button',{className:'sc9-tdc-btn pri',disabled:Boolean(busy),onClick:abrir},'Abrir relatório (imprimir / PDF)'),
+        h('button',{className:'sc9-tdc-btn pri',disabled:Boolean(busy),onClick:abrir},'Imprimir relatório'),
+        h('button',{className:'sc9-tdc-btn pri',disabled:Boolean(busy),onClick:baixarPdf},'Baixar PDF'),
         h('button',{className:'sc9-tdc-btn',disabled:Boolean(busy),onClick:baixar},'Baixar .html'),
         h('button',{className:'sc9-tdc-btn',disabled:Boolean(busy),onClick:async()=>{setErr('');try{setBusy('Gerando Excel…');await onExcel(de,ate);}catch(e){setErr(e.message||'Não foi possível gerar o Excel.');}finally{setBusy('');}}},'Baixar Excel (dados)'),
         h('button',{className:'sc9-tdc-btn',onClick:onFechar,disabled:Boolean(busy)},'Fechar'))));
