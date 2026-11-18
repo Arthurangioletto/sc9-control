@@ -401,6 +401,7 @@ SERVABLE.add("gaveta-ui.js");
 SERVABLE.add("consolidado.js");
 SERVABLE.add("consolidado-ui.js");
 SERVABLE.add("vendor-zxing.js");
+SERVABLE.add("vendor-html2pdf.js");
 SERVABLE.add("gaveta.css");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");

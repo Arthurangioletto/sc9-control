@@ -47,7 +47,7 @@ test('gerarHTML: período, data/hora de geração, foto, justificativa e escape 
   assert.match(html, /30\/10\/2026 às 16:20/);
   assert.match(html, /<img src="data:image\/jpeg;base64,AAAA"/);
   assert.match(html, /Contei 10 &lt;b&gt;caixas&lt;\/b&gt;/); assert.doesNotMatch(html, /<b>caixas<\/b>/);
-  assert.match(html, /Ana &lt;script&gt;/); assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /Ana &lt;script&gt;/); assert.strictEqual((html.match(/<script>/g) || []).length, 1); // só o script do botão Baixar PDF; o texto digitado continua escapado
   assert.match(html, /Veio MAIS do que a nota/); assert.match(html, /<svg/);
   assert.match(html, /SD3 \(movimentação\) até 29\/10\/2026/);
   assert.match(html, /Forn\. 14239/);
@@ -78,4 +78,20 @@ test('erro reportado à mão que o Protheus já apontou conta uma vez, juntando 
   assert.match(Rp.gerarHTML(d), /Nota errada <b>000123<\/b> · Nota correta <b>000124<\/b>/);
   assert.deepStrictEqual(T.linhasSumula(res, [man]).detalhe[1].slice(-2), ['000123', '000124']);
   assert.strictEqual(achados.find((a) => a.status === 'confirmado').fotos.length, 1); // não altera a entrada
+});
+
+test('gerarHTML: botões Imprimir e Baixar PDF separados, com nome do arquivo e origem seguros', () => {
+  const { res, achados } = base();
+  const d = Rp.montarRelatorio(res, achados, { de: '2026-10-01', ate: '2026-10-31' });
+  const html = Rp.gerarHTML(d, { origem: 'https://sc9.example</script><b>', auto: 'pdf' });
+  assert.match(html, /<button type="button" id="btnImp" onclick="window\.print\(\)">Imprimir<\/button>/);
+  assert.match(html, /<button type="button" id="btnPdf" onclick="baixarPdf\(\)">Baixar PDF<\/button>/);
+  assert.doesNotMatch(html, /Imprimir \/ salvar em PDF/);
+  assert.match(html, /NOME="Relatorio_Entradas_TDC_2026-10-01_a_2026-10-31\.pdf"/);
+  assert.match(html, /AUTO="pdf"/);
+  assert.doesNotMatch(html, /sc9\.example<\/script>/); // a origem não fecha o <script>
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  assert.doesNotThrow(() => new Function(script));
+  const semPeriodo = Rp.gerarHTML(Rp.montarRelatorio(res, achados, {}), {});
+  assert.match(semPeriodo, /NOME="Relatorio_Entradas_TDC_[0-9A-Za-z_-]+\.pdf"/);
 });
