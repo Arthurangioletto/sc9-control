@@ -185,6 +185,55 @@
     return linhas;
   }
 
+  // Os mesmos números das abas acima, só que em objetos: é o que o Excel formatado (consolidado-xlsx.js) usa para montar
+  // cartões, tabelas coloridas e gráficos. As abas simples (`abas`) continuam sendo geradas como antes.
+  function estruturar(pedidos, de, ate, ultimaEntrega, chaves, itensPorPedido, nomes) {
+    const dl = dashboard(pedidos, de, ate, ultimaEntrega);
+    const total = pedidos.length, enviados = conta(pedidos, 'Enviado');
+    const grupo = g => ({
+      total: g.length, enviados: conta(g, 'Enviado'), pecas: soma(g, p => p.qt), pecasEnviadas: soma(g.filter(p => p.status === 'Enviado'), p => p.qt),
+      atrasados: conta(g, 'Atrasado'), pendentes: conta(g, 'Pendente'), pct: razao(conta(g, 'Enviado'), g.length)
+    });
+    const dias = [...new Set(pedidos.map(p => p.dayKey))].sort().map(d => {
+      const g = pedidos.filter(p => p.dayKey === d);
+      return { chave: d, dia: fmt(d), pedidos: g.length, pecas: soma(g, p => p.qt), enviados: conta(g, 'Enviado'), atrasados: conta(g, 'Atrasado'), pendentes: conta(g, 'Pendente'), pct: razao(conta(g, 'Enviado'), g.length) };
+    });
+    const sem = new Map();
+    for (const p of pedidos) { const s = segunda(p.dayKey); if (!sem.has(s)) sem.set(s, []); sem.get(s).push(p); }
+    const semanas = dias.length > 7 ? [...sem.entries()].sort().map(([, g]) => {
+      const ds = g.map(p => p.dayKey).sort();
+      return { semana: fmtCurto(ds[0]) + ' a ' + fmtCurto(ds[ds.length - 1]), pedidos: g.length, pecas: soma(g, p => p.qt), enviados: conta(g, 'Enviado'), atrasados: conta(g, 'Atrasado'), pendentes: conta(g, 'Pendente'), pct: razao(conta(g, 'Enviado'), g.length) };
+    }) : [];
+    const rank = ARMAZENS.map(a => {
+      const por = new Map();
+      for (const k of chaves) {
+        if (!k.startsWith(a + '|')) continue;
+        for (const it of itensPorPedido.get(k) || []) por.set(it.produto, (por.get(it.produto) || 0) + (it.qt || 0));
+      }
+      return { armazem: a, itens: [...por.entries()].sort((x, y) => y[1] - x[1]).slice(0, 10).map(([cod, q], i) => ({ pos: i + 1, codigo: String(cod), nome: get(nomes, cod) || get(nomes, String(cod).replace(/^0+/, '')) || '(sem descrição)', qt: q })) };
+    });
+    const totalPecas = soma(pedidos, p => p.qt), tr = new Map();
+    for (const p of pedidos) { const g = tr.get(p.transportadora) || { n: 0, q: 0 }; g.n++; g.q += p.qt; tr.set(p.transportadora, g); }
+    return {
+      titulo: dl[0][0], subtitulo: dl[1][0], regra: dl[2][0], corte: fmtCurto(ate),
+      kpis: [
+        { rotulo: 'Pedidos (Combinado)', valor: total, legenda: 'todos os armazéns' },
+        { rotulo: 'Peças Liberadas (Qt.)', valor: totalPecas, legenda: 'soma de Qt Liberada' },
+        { rotulo: 'Pedidos Enviados', valor: enviados, legenda: 'na Entrega (Cambuci) / faturado (filiais)' },
+        { rotulo: 'Pedidos em Atraso', valor: conta(pedidos, 'Atrasado'), legenda: 'sem Entrega, sem separar/conferir' },
+        { rotulo: 'Pedidos Pendentes', valor: conta(pedidos, 'Pendente'), legenda: 'em processo / aguardando' }
+      ],
+      status: ['Enviado', 'Atrasado', 'Pendente'].map(s => ({ nome: s, pedidos: conta(pedidos, s), pct: razao(conta(pedidos, s), total) })),
+      armazens: ARMAZENS.map(a => ({ nome: a, ...grupo(pedidos.filter(p => p.armazem === a)) })),
+      totalGeral: { nome: 'Total Geral', ...grupo(pedidos) },
+      dias, semanas, ranking: rank,
+      transportadoras: [...tr.entries()].sort((a, b) => b[1].q - a[1].q || b[1].n - a[1].n).map(([nome, g]) => ({ nome, pedidos: g.n, pecas: g.q, pct: razao(g.q, totalPecas) })),
+      base: pedidos.map(p => ({ armazem: p.armazem, dia: p.dayKey, serial: serial(p.dayKey), cliente: p.cliente, nome: p.nome, pedido: p.pedido, itens: p.itens, nf: /^\d+$/.test(p.nf) ? Number(p.nf) : p.nf, temNF: p.nf ? 'Sim' : 'Não', status: p.status, qt: p.qt, separador: p.separador, conferente: p.conferente, transportadora: p.transportadora })),
+      baseTitulo: 'BASE DE DADOS — CAMBUCI + FILIAIS (dados de ' + fmt(de) + ' a ' + fmt(ate) + ')',
+      baseFonte: "Fonte: SC9 carregada no painel. Filtro: Bloq.Crédito e Bloq.Estoque em branco ou 10; itens 'IP' fora; Tamboré fora; pedidos Implacil (transferência) fora. Status: Cambuci = Enviado se está na Entrega; sem Entrega mas separado+conferido = Pendente; sem Entrega e sem separar/conferir = Atrasado. Filiais = Enviado só precisa de NF; sem NF e liberado antes do corte (" + fmtCurto(ate) + ') = Atrasado.'
+    };
+  }
+
   // data = { orders, items, itemNames, sc5PorPedido, entregaCounts, entregaInfo }; de/ate = 'AAAA-MM-DD'
   function construir(data, de, ate) {
     if (!data || !Array.isArray(data.items)) throw new Error('Carregue a base SC9 antes de exportar o consolidado.');
@@ -196,6 +245,7 @@
       de, ate, pedidos: pedidos.length,
       resumo: { pedidos: pedidos.length, pecas: soma(pedidos, p => p.qt), enviados: conta(pedidos, 'Enviado'), atrasados: conta(pedidos, 'Atrasado'), pendentes: conta(pedidos, 'Pendente') },
       avisos: [data.entregaCounts ? '' : 'A aba Entrega não foi carregada: o Cambuci foi classificado só pela nota fiscal.'].filter(Boolean),
+      dados: estruturar(pedidos, de, ate, ultimaEntrega, chaves, itensPorPedido, nomes),
       abas: [
         { nome: 'Dashboard', linhas: dashboard(pedidos, de, ate, ultimaEntrega), larguras: [34, 16, 18, 20, 16, 14, 14, 12] },
         { nome: 'Base de Dados', linhas: base(pedidos), larguras: [11, 14, 10, 42, 10, 7, 12, 9, 11, 11, 22, 22, 18], filtro: true, congelar: 1 },

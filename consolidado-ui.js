@@ -14,6 +14,7 @@
     const [escolha, setEscolha] = React.useState('');
     const [erro, setErro] = React.useState('');
     const [lado, setLado] = React.useState('right');
+    const [gerando, setGerando] = React.useState(false);
     const caixa = React.useRef(null);
     const per = React.useMemo(() => (data && data.items ? C().periodos(data.items) : { semanas: [], meses: [] }), [data && data.items]);
     const lista = tipo === 'mes' ? per.meses : per.semanas;
@@ -27,14 +28,24 @@
       return () => { document.removeEventListener('mousedown', fora); document.removeEventListener('keydown', esc); };
     }, [aberto]);
 
-    const baixar = () => {
-      if (!atual) return;
+    // Excel formatado (cores, cartões e gráficos, como o dashboard da equipe). Se as bibliotecas não carregarem,
+    // baixa o Excel simples de sempre, com os mesmos números.
+    const baixar = async () => {
+      if (!atual || gerando) return;
+      const nomeArq = C().nomeArquivo(atual.de, atual.ate, tipo);
+      let r;
+      try { r = C().construir(data, atual.de, atual.ate); } catch (e) { setErro(e.message || 'Não consegui gerar o consolidado.'); return; }
+      setGerando(true); setErro('');
       try {
-        const r = C().construir(data, atual.de, atual.ate);
-        const livro = C().paraPlanilha(r);
-        root.SC9Exports.downloadWorkbook(livro, C().nomeArquivo(atual.de, atual.ate, tipo));
+        if (!root.SC9ConsolidadoXlsx) throw new Error('módulo do Excel formatado indisponível');
+        await root.SC9ConsolidadoXlsx.baixar(r, nomeArq);
         setErro(r.avisos.join(' '));
-      } catch (e) { setErro(e.message || 'Não consegui gerar o consolidado.'); }
+      } catch (e) {
+        try {
+          root.SC9Exports.downloadWorkbook(C().paraPlanilha(r), nomeArq);
+          setErro(['Baixei o Excel simples (sem cores e gráficos): ' + (e.message || 'falha no Excel formatado') + '.'].concat(r.avisos).join(' '));
+        } catch (e2) { setErro(e2.message || 'Não consegui gerar o consolidado.'); }
+      } finally { setGerando(false); }
     };
 
     const seg = (id, rotulo) => h('button', {
@@ -56,7 +67,7 @@
           ? h('select', { value: atual ? atual.id : '', onChange: ev => { setEscolha(ev.target.value); setErro(''); }, 'aria-label': tipo === 'mes' ? 'Mês' : 'Semana', style: { width: '100%', padding: '7px 8px', fontSize: 13, borderRadius: 8, border: '1px solid ' + cor.border, background: cor.soft, color: cor.ink } },
             lista.map(p => h('option', { key: p.id, value: p.id }, p.label)))
           : h('div', { style: { fontSize: 12, color: cor.red } }, 'Carregue a base SC9 pra escolher o período.'),
-        h('button', { type: 'button', onClick: baixar, disabled: !atual, style: { marginTop: 12, width: '100%', padding: '8px 12px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', cursor: atual ? 'pointer' : 'not-allowed', background: cor.accent, color: '#fff', opacity: atual ? 1 : .5 } }, 'Baixar Excel'),
+        h('button', { type: 'button', onClick: baixar, disabled: !atual || gerando, style: { marginTop: 12, width: '100%', padding: '8px 12px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', cursor: atual && !gerando ? 'pointer' : 'not-allowed', background: cor.accent, color: '#fff', opacity: atual && !gerando ? 1 : .5 } }, gerando ? 'Gerando…' : 'Baixar Excel'),
         erro && h('div', { role: 'alert', style: { marginTop: 8, fontSize: 11, color: cor.red } }, erro)
       )
     );
