@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SC9 · SharePoint local</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header><span class="brand">9</span><div><strong>SC9 Control</strong><span>Teste local · Entrega de pedidos</span></div><span class="environment">LOCALHOST</span></header>
+<main>
+<p class="eyebrow">Conexão com Microsoft 365</p>
+<h1>Consultar a planilha de entrega</h1>
+<p class="intro">A presença de um pedido na planilha confirma sua saída, mesmo com a base SC9 anterior.</p>
+<section class="connection">
+<div><h2 id="file">Controle de Entregas 2026.xlsx</h2><p id="source">Preparando a configuração…</p></div>
+<span id="badge" class="badge">Verificando conexão</span>
+</section>
+<div class="actions"><button id="connect" type="button">Conectar conta Microsoft</button><button id="sync" type="button" class="secondary" disabled>Consultar planilha agora</button><a id="open-source" href="#" target="_blank" rel="noopener noreferrer">Abrir planilha no SharePoint ↗</a></div>
+<p class="account" id="account"></p>
+<p class="alert" id="error" role="alert" hidden></p>
+<div class="metrics">
+<div><span>Pedidos identificados</span><strong id="count">—</strong></div>
+<div><span>Última consulta bem-sucedida</span><strong id="last">—</strong></div>
+<div><span>Alteração da planilha</span><strong id="modified">—</strong></div>
+</div>
+<section class="search-panel">
+<h2>Verificar um pedido de Cambuci</h2>
+<p>A consulta usa a aba “Controle de entregas 2026”.</p>
+<form id="query"><label for="pedido">Número do pedido</label><div class="search"><input id="pedido" name="pedido" inputmode="numeric" autocomplete="off" placeholder="Ex. 311261" required><button id="search" type="submit" disabled>Consultar pedido</button></div></form>
+<div id="answer" aria-live="polite"></div>
+<div class="table-scroll" id="results" hidden><table><thead><tr><th>Linha</th><th>Data de saída</th><th>Cliente</th><th>Nota fiscal</th><th>Transportadora</th><th>Situação na planilha</th></tr></thead><tbody id="rows"></tbody></table></div>
+</section>
+<details><summary>Configuração da conexão local</summary><dl id="configuration"></dl></details>
+<p class="foot">Consulta automática a cada 60 segundos enquanto o teste local estiver conectado. A tela informa falhas de atualização e a data da última leitura válida.</p>
+</main>
+</body></html>

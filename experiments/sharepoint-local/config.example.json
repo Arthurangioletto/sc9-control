@@ -1,0 +1,11 @@
+{
+  "clientId": "00000000-0000-0000-0000-000000000001",
+  "tenantId": "00000000-0000-0000-0000-000000000002",
+  "host": "example-my.sharepoint.com",
+  "fileId": "CONFIGURE_FILE_ID",
+  "fileName": "Controle de Entregas 2026.xlsx",
+  "sheet": "Controle de entregas 2026",
+  "sourceUrl": "https://example-my.sharepoint.com/",
+  "warehouse": "Cambuci",
+  "intervalSeconds": 60
+}

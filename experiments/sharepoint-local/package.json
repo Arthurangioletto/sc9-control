@@ -1,0 +1,16 @@
+{
+  "name": "sc9-sharepoint-local-test",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.cjs",
+    "test": "node --test delivery.test.cjs audit/projection.test.cjs",
+    "test:audit": "node --test audit/scenarios.cjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@azure/msal-node": "7.2.3"
+  }
+}
