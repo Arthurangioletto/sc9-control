@@ -57,7 +57,7 @@
     for (const row of products) if (row.sku) catalog.set(key(scope(row.filial), code(row.sku)), row);
     for (const row of addresses) {
       const arm = scope(row.arm);
-      if (arm !== '1' || !row.sku || !row.endereco) continue;
+      if (arm !== '2' || !row.sku || !row.endereco) continue;
       const id = key(scope(row.filial), code(row.sku), code(row.lote));
       if (!locations.has(id)) locations.set(id, new Set());
       locations.get(id).add(row.endereco);
