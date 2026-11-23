@@ -27,7 +27,7 @@ test('rota do histórico de atraso: só administrador, grava por mês, troca só
     assert.equal((await req('/api/atraso-historico', registro(hoje, 5, []), '')).status, 401, 'sem login não grava');
     cookie = (await req('/api/login', { password: process.env.APP_PASSWORD })).cookie;
 
-    assert.deepEqual((await req('/api/atraso-historico')).data, { meses: {}, expedicao: {} });
+    assert.deepEqual((await req('/api/atraso-historico')).data, { meses: {}, expedicao: {}, entregues: {}, saidas: {} });
     assert.equal((await req('/api/atraso-historico', registro(ontem, 50, [['P1', 'Cambuci', ontem, 3, 'E', 'A', 2]]))).status, 200);
     assert.equal((await req('/api/atraso-historico', registro(hoje, 60, [['P2', 'BH', ontem, 4, 'F', 'P', 1], ['P3', 'BH', ontem, 1, 'E', 'A', 1]]))).status, 200);
     assert.equal((await req('/api/atraso-historico', registro(hoje, 61, [['P2', 'BH', ontem, 4, 'F', 'A', 1]]))).status, 200, 'o mesmo dia pode ser regravado');

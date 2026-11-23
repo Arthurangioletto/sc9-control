@@ -275,6 +275,19 @@
     return dias;
   }
 
+  // Data de despacho de cada pedido da planilha de Entrega (só os dos últimos 120 dias): { pedido: 'AAAA-MM-DD' }.
+  // A página usa isso para marcar "estava em atraso, mas foi despachado em dd/mm".
+  function entreguesPorPedido(pedidos, entrega, agora) {
+    const mapa = {};
+    if (!entrega || typeof entrega.get !== 'function') return mapa;
+    const limite = chaveDia(new Date((agora instanceof Date ? agora : new Date()).getTime() - 120 * 864e5));
+    for (const o of pedidos || []) {
+      const e = entrega.get(o.pedido), dia = e ? chaveDia(e.data) : '';
+      if (dia && dia >= limite && o.pedido != null) mapa[String(o.pedido).trim()] = dia;
+    }
+    return mapa;
+  }
+
   function registroDoDia(pedidos, agora, dia, sc5, entrega) {
     const itens = [];
     let pecas = 0;
@@ -289,7 +302,7 @@
       const dias = o.dt && agora ? Math.max(0, Math.round((agora - o.dt) / 864e5)) : 0;
       itens.push([texto(o.pedido), o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem), o.dayKey || chaveDia(o.dt), Math.round((Number(o.qt) || 0) * 100) / 100, tipo, o.status === 'Atrasado' ? 'A' : 'P', dias, transportadoraDe(o, sc5)]);
     }
-    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens, despachados: despachadosPorDia(pedidos, entrega) };
+    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens, despachados: despachadosPorDia(pedidos, entrega), entregues: entreguesPorPedido(pedidos, entrega, agora) };
   }
 
   // junta o registro de hoje no histórico lido do servidor (vale o de hoje se o servidor não respondeu)
@@ -376,7 +389,7 @@
 
   // blocos de estilo e utilidades para o Excel do Histórico de Atraso
   const base = { COR, MESES, solido, bordas, fonte, letra, ref, faixa, banner, secao, legenda, cabecalho, celula, barras, brData, injetar, nomeAba, carregarScript, baixarBytes, gravar, ler, diaDeHoje };
-  const api = { gerar, baixar, registrarSilencioso, registroDoDia, despachadosPorDia, mesclarLocal, base };
+  const api = { gerar, baixar, registrarSilencioso, registroDoDia, despachadosPorDia, entreguesPorPedido, mesclarLocal, base };
   root.SC9RelatorioGeralXlsx = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);

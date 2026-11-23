@@ -18,19 +18,48 @@
   const diasDoMes = (mes) => { const [a, m] = mes.split('-').map(Number); const n = new Date(Date.UTC(a, m, 0)).getUTCDate(); return Array.from({ length: n }, (_, i) => mes + '-' + String(i + 1).padStart(2, '0')); };
 
   // ---------- cálculo (puro) ----------
+  const pedidoNormal = (v) => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+/, '');
+  const entregaDe = (entregues, pedido) => (entregues && (entregues[String(pedido)] || entregues[pedidoNormal(pedido)])) || '';
+  const diaSP = (iso) => new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+
+  // Pedido achado na Saída p/ Expedição (saidas: { pedido: ISO }) já saiu do estoque: o atraso dele deixa de ser de estoque e passa a ser
+  // de faturamento (falta a nota), desde que a saída tenha sido registrada até o dia da foto. Marca a linha: [8] = ISO da saída,
+  // [9] = 'E' quando o SC9 tinha marcado como estoque e a página reclassificou.
+  function aplicarSaidas(meses, saidas) {
+    const copia = {};
+    for (const [mes, m] of Object.entries(meses || {})) {
+      const dias = {};
+      for (const [dia, reg] of Object.entries((m && m.dias) || {})) {
+        const itens = reg.itens.map((it) => {
+          const iso = saidas && saidas[pedidoNormal(it[0])];
+          if (!iso) return it;
+          const novo = it.slice(0, 8);
+          novo[8] = iso;
+          if (novo[4] === 'E' && diaSP(iso) <= reg.dia) { novo[4] = 'F'; novo[9] = 'E'; }
+          return novo;
+        });
+        dias[dia] = Object.assign({}, reg, { itens });
+      }
+      copia[mes] = Object.assign({}, m, { dias });
+    }
+    return copia;
+  }
+
   // Junta as fotos de atraso e o despacho por dia numa estrutura só.
   function preparar(data) {
-    const analises = X().analisar((data && data.meses) || {});
+    const analises = X().analisar(aplicarSaidas((data && data.meses) || {}, data && data.saidas));
     const exp = {};
     for (const m of Object.values((data && data.expedicao) || {})) Object.assign(exp, m);
     const dias = new Set(analises.map((a) => a.reg.dia));
     Object.keys(exp).forEach((d) => dias.add(d));
     const meses = [...new Set([...dias].map((d) => d.slice(0, 7)))].sort().reverse();
     const porDia = new Map(analises.map((a) => [a.reg.dia, a]));
+    const entregues = (data && data.entregues) || {};
+    const saidas = (data && data.saidas) || {};
     const historico = new Map(); // pedido → dias (fotos) em que estava em atraso
     for (const a of analises) for (const it of a.reg.itens) { const k = chave(it); if (!historico.has(k)) historico.set(k, []); historico.get(k).push(a.reg.dia); }
     const diasExp = Object.keys(exp).sort();
-    return { analises, porDia, exp, meses, historico, diasExp };
+    return { analises, porDia, exp, meses, historico, diasExp, entregues, saidas };
   }
 
   // Quantas fotos seguidas o pedido está em atraso, terminando no dia escolhido.
@@ -61,11 +90,19 @@
     transp: (a, b) => String(a[7]).localeCompare(String(b[7]), 'pt-BR', { numeric: true })
   };
 
-  // f = { tipo:'E'|'F'|'', sit:'A'|'P'|'', arm:'', transp:'', busca:'', ordem:'dias', desc:true }
-  function filtrar(itens, f) {
+  // Status do pedido: foi despachado (planilha de Entrega)? aba = 'atraso' | 'novos' | 'saiu'.
+  function statusDoPedido(entregues, it, dia, aba) {
+    const ent = entregaDe(entregues, it[0]);
+    if (ent) return { tipo: 'desp', em: ent, texto: (aba !== 'saiu' && ent > dia ? 'Estava em atraso · despachado em ' : 'Despachado em ') + ddmm(ent) };
+    if (it[8]) return { tipo: 'exp', em: it[8], texto: 'Saída p/ expedição em ' + ddmm(diaSP(it[8])) + ' às ' + new Date(it[8]).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) };
+    return aba === 'saiu' ? { tipo: 'saiu', em: '', texto: 'Saiu do atraso · sem despacho' } : { tipo: 'atr', em: '', texto: 'Em atraso' };
+  }
+
+  // f = { tipo:'E'|'F'|'', sit:'A'|'P'|'', arm:'', transp:'', busca:'', status:'desp'|'nao'|'', ordem:'dias', desc:true }
+  function filtrar(itens, f, entregues) {
     const busca = String((f && f.busca) || '').trim().toLowerCase();
     let lista = itens.filter((it) =>
-      (!f.tipo || it[4] === f.tipo) && (!f.sit || it[5] === f.sit) && (!f.arm || it[1] === f.arm) && (!f.transp || (it[7] || '') === f.transp)
+      (!f.status || (f.status === 'desp') === Boolean(entregaDe(entregues, it[0]))) && (!f.tipo || it[4] === f.tipo) && (!f.sit || it[5] === f.sit) && (!f.arm || it[1] === f.arm) && (!f.transp || (it[7] || '') === f.transp)
       && (!busca || String(it[0]).toLowerCase().includes(busca) || String(it[7] || '').toLowerCase().includes(busca)));
     const cmp = ORDEM[f.ordem] || ORDEM.dias;
     lista = lista.slice().sort((a, b) => (f.desc ? -1 : 1) * cmp(a, b) || ORDEM.pedido(a, b));
@@ -76,14 +113,14 @@
   const SIT = { A: 'Atrasado', P: 'Em processo' };
 
   // CSV (separador ";", com BOM para o Excel abrir com acento) da lista que está na tela.
-  function csv(itens) {
+  function csv(itens, entregues, dia, aba) {
     const cel = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const linhas = [['Pedido', 'Armazém', 'Liberado em', 'Peças', 'Tipo', 'Situação', 'Dias de atraso', 'Transportadora']];
-    for (const it of itens) linhas.push([it[0], it[1], it[2] ? ddmmaaaa(it[2]) : '', String(it[3]).replace('.', ','), TIPO[it[4]] || it[4], SIT[it[5]] || it[5], it[6], it[7] || '']);
+    const linhas = [['Pedido', 'Armazém', 'Liberado em', 'Peças', 'Tipo', 'Situação', 'Dias de atraso', 'Transportadora', 'Status do pedido']];
+    for (const it of itens) linhas.push([it[0], it[1], it[2] ? ddmmaaaa(it[2]) : '', String(it[3]).replace('.', ','), TIPO[it[4]] || it[4], SIT[it[5]] || it[5], it[6], it[7] || '', statusDoPedido(entregues, it, dia || '', aba || 'atraso').texto]);
     return '﻿' + linhas.map((l) => l.map(cel).join(';')).join('\r\n');
   }
 
-  const api = { preparar, sequencia, despacho, filtrar, csv, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
+  const api = { aplicarSaidas, preparar, sequencia, despacho, filtrar, csv, statusDoPedido, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
   root.SC9HistoricoAtraso = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (typeof document === 'undefined' || !document.getElementById || !document.getElementById('app')) return;
@@ -103,7 +140,7 @@
     return e;
   };
   const $app = document.getElementById('app');
-  const estado = { data: null, p: null, mes: '', dia: '', aba: 'atraso', filtro: { tipo: '', sit: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }, aberto: '', limite: 100, ajuda: true, aviso: '' };
+  const estado = { data: null, p: null, mes: '', dia: '', aba: 'atraso', filtro: { tipo: '', sit: '', status: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }, aberto: '', limite: 100, ajuda: true, aviso: '' };
 
   const seta = (atual, ref, pioraSobe) => {
     if (ref == null) return null;
@@ -160,7 +197,7 @@
 
   function escolherDia(dia, rolar) {
     estado.dia = dia; estado.mes = dia.slice(0, 7); estado.aba = 'atraso'; estado.aberto = ''; estado.limite = 100;
-    estado.filtro = { tipo: '', sit: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true };
+    estado.filtro = { tipo: '', sit: '', status: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true };
     try { history.replaceState(null, '', '#' + dia); } catch (e) { /* sem histórico de navegação */ }
     desenhar();
     if (rolar !== false) { const alvo = document.getElementById('dia-detalhe'); if (alvo) alvo.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
@@ -198,8 +235,9 @@
     let ultimo = '';
     for (const a of estado.p.analises) if (a.reg.atualizadoEm && a.reg.atualizadoEm > ultimo) ultimo = a.reg.atualizadoEm;
     if (!ultimo) return 'Atualizada sempre que o Histórico de Atraso é exportado no SC9.';
+    // (a Saída p/ Expedição é cruzada em tempo real, abaixo)
     const q = new Date(ultimo);
-    return 'Atualizada em ' + q.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) + ' às ' + q.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) + ', na última exportação do Histórico de Atraso. Ela só muda quando o atraso é exportado de novo.';
+    return 'Atualizada em ' + q.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) + ' às ' + q.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) + ', na última exportação do Histórico de Atraso (fotos e despachados da Entrega só mudam quando o atraso é exportado de novo). A Saída p/ Expedição é cruzada em tempo real, a cada 30 segundos.';
   }
 
   function faixaDeDias() {
@@ -285,7 +323,9 @@
       h('div', null, h('h2', { text: semana(dia).replace(/^./, (c) => c.toUpperCase()) + ', ' + ddmmaaaa(dia) }), h('p', { class: 'mudo', text: a ? 'Foto gravada' + (hora ? ' às ' + hora : '') + '.' : 'Sem foto de atraso neste dia (só há dados de despacho).' })),
       h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(location.origin + location.pathname + '#' + dia); estado.aviso = 'Link do dia copiado.'; } catch (e) { estado.aviso = 'Não consegui copiar sozinho. Copie o endereço que está na barra do navegador.'; } desenhar(); }, text: 'Copiar link deste dia' })));
     if (estado.aviso) { caixa.appendChild(h('p', { class: 'aviso', role: 'status', text: estado.aviso })); estado.aviso = ''; }
+    const reclass = a ? a.reg.itens.filter((it) => it[9]).length : 0;
     if (a) caixa.appendChild(h('p', { class: 'frase ' + (a.cmp ? (a.resumo.tot < a.cmp.resumoAnt.tot ? 'bom' : a.resumo.tot > a.cmp.resumoAnt.tot ? 'ruim' : '') : ''), text: X().frase(a) }));
+    if (reclass) caixa.appendChild(h('p', { class: 'resumo-status', text: fmtN(reclass) + (reclass === 1 ? ' pedido que o SC9 marcou como estoque foi contado' : ' pedidos que o SC9 marcou como estoque foram contados') + ' como atraso de faturamento, porque já passou' + (reclass === 1 ? '' : 'ram') + ' pela Saída p/ Expedição (só falta a nota).' }));
     const r = a ? a.resumo : null, ra = a && a.cmp ? a.cmp.resumoAnt : null;
     const refTxt = a && a.cmp ? ' vs ' + ddmm(a.cmp.ant.dia) : '';
     const kpis = h('div', { class: 'kpis' });
@@ -325,7 +365,8 @@
     if (!abas.some((x) => x.id === estado.aba)) estado.aba = 'atraso';
     const aba = abas.find((x) => x.id === estado.aba);
     const f = estado.filtro;
-    const lista = filtrar(aba.itens, f);
+    const lista = filtrar(aba.itens, f, estado.p.entregues);
+    const desp = aba.itens.filter((it) => entregaDe(estado.p.entregues, it[0])).length;
     const pecas = lista.reduce((s, it) => s + it[3], 0);
     const mostrados = lista.slice(0, estado.limite);
 
@@ -337,21 +378,30 @@
       h('thead', null, h('tr', null,
         cabecas.map(([id, nome]) => h('th', { class: id === 'pecas' || id === 'dias' ? 'num' : '', 'aria-sort': f.ordem === id ? (f.desc ? 'descending' : 'ascending') : 'none' },
           h('button', { class: 'ord', id: 'ord-' + id, onclick: () => { if (f.ordem === id) f.desc = !f.desc; else { f.ordem = id; f.desc = id === 'dias' || id === 'pecas'; } desenhar(); }, text: nome + (f.ordem === id ? (f.desc ? ' ▼' : ' ▲') : '') }))),
+        h('th', { text: 'Status do pedido' }),
         aba.id === 'novos' ? null : h('th', { text: aba.id === 'saiu' ? 'Estava em' : 'Mudou' }))),
       h('tbody', null, mostrados.map((it) => linhaDoPedido(a, it, aba))));
 
     return h('div', { class: 'pedidos-bloco' },
-      h('div', { class: 'abas', role: 'tablist' }, abas.map((x) => h('button', { class: 'aba' + (x.id === estado.aba ? ' ativa' : ''), id: 'aba-' + x.id, role: 'tab', 'aria-selected': x.id === estado.aba, title: x.dica, onclick: () => { estado.aba = x.id; estado.aberto = ''; estado.limite = 100; estado.filtro = { tipo: '', sit: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }; desenhar(); }, text: x.nome + ' (' + fmtN(x.itens.length) + ')' }))),
+      h('div', { class: 'abas', role: 'tablist' }, abas.map((x) => h('button', { class: 'aba' + (x.id === estado.aba ? ' ativa' : ''), id: 'aba-' + x.id, role: 'tab', 'aria-selected': x.id === estado.aba, title: x.dica, onclick: () => { estado.aba = x.id; estado.aberto = ''; estado.limite = 100; estado.filtro = { tipo: '', sit: '', status: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }; desenhar(); }, text: x.nome + ' (' + fmtN(x.itens.length) + ')' }))),
       h('p', { class: 'mudo peq', text: aba.dica + ' Clique em um pedido para ver todos os dados dele.' }),
       h('div', { class: 'filtros' },
         h('label', { class: 'campo busca' }, h('span', { text: 'Buscar pedido ou transportadora' }), h('input', { type: 'search', id: 'f-busca', value: f.busca, placeholder: 'Digite o número do pedido…', oninput: (ev) => { f.busca = ev.target.value; estado.limite = 100; const pos = ev.target.selectionStart; desenhar(); const novo = document.querySelector('.filtros input[type=search]'); if (novo) { novo.focus(); novo.setSelectionRange(pos, pos); } } })),
-        sel('tipo', 'Tipo', ['E', 'F'], TIPO), sel('sit', 'Situação', ['A', 'P'], SIT), sel('arm', 'Armazém', opcoes(aba.itens, 1)), sel('transp', 'Transportadora', opcoes(aba.itens, 7)),
-        h('button', { class: 'btn', id: 'f-limpar', onclick: () => { estado.filtro = { tipo: '', sit: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }; desenhar(); }, text: 'Limpar filtros' }),
-        h('button', { class: 'btn', disabled: !lista.length, onclick: () => baixarCsv(lista, aba.nome), text: 'Baixar lista (CSV)' })),
+        sel('status', 'Status do pedido', ['desp', 'nao'], { desp: 'Despachados', nao: 'Sem despacho registrado' }), sel('tipo', 'Tipo', ['E', 'F'], TIPO), sel('sit', 'Situação', ['A', 'P'], SIT), sel('arm', 'Armazém', opcoes(aba.itens, 1)), sel('transp', 'Transportadora', opcoes(aba.itens, 7)),
+        h('button', { class: 'btn', id: 'f-limpar', onclick: () => { estado.filtro = { tipo: '', sit: '', status: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }; desenhar(); }, text: 'Limpar filtros' }),
+        h('button', { class: 'btn', disabled: !lista.length, onclick: () => baixarCsv(lista, aba.nome, aba.id), text: 'Baixar lista (CSV)' })),
+      resumoDeStatus(aba, desp),
       h('p', { class: 'mudo peq' }, 'Número vermelho em "Dias de atraso" = 5 dias ou mais.', h('span', { class: 'so-desk', text: ' Clique no título da coluna para ordenar.' })),
       h('p', { class: 'contagem', 'aria-live': 'polite', text: 'Mostrando ' + fmtN(Math.min(mostrados.length, lista.length)) + ' de ' + fmtN(lista.length) + ' pedidos · ' + fmtN(pecas) + ' peças' }),
       lista.length ? h('div', { class: 'rolagem' }, tabela) : h('p', { class: 'vazio-msg', text: aba.itens.length ? 'Nenhum pedido com esses filtros.' : 'Nenhum pedido nesta lista.' }),
       lista.length > estado.limite ? h('button', { class: 'btn primario', onclick: () => { estado.limite += 200; desenhar(); }, text: 'Mostrar mais ' + Math.min(200, lista.length - estado.limite) }) : null);
+  }
+
+  function resumoDeStatus(aba, desp) {
+    const total = aba.itens.length;
+    if (!total) return null;
+    if (aba.id === 'saiu') return h('p', { class: 'resumo-status', text: 'Dos ' + fmtN(total) + (total === 1 ? ' pedido que saiu' : ' pedidos que saíram') + ' do atraso, ' + fmtN(desp) + (desp === 1 ? ' foi despachado' : ' foram despachados') + ' (planilha de Entrega) e ' + fmtN(total - desp) + ' saíram sem despacho registrado (faturados ou regularizados).' });
+    return desp ? h('p', { class: 'resumo-status', text: fmtN(desp) + (desp === 1 ? ' pedido desta lista já foi despachado' : ' pedidos desta lista já foram despachados') + ' depois da foto (planilha de Entrega).' }) : null;
   }
 
   function status(a, it, aba) {
@@ -363,28 +413,29 @@
   }
 
   function linhaDoPedido(a, it, aba) {
-    const k = aba.id + '|' + chave(it), aberto = estado.aberto === k;
+    const k = aba.id + '|' + chave(it), aberto = estado.aberto === k, st = statusDoPedido(estado.p.entregues, it, a.reg.dia, aba.id);
     const tr = h('tr', { class: 'clicavel' + (aberto ? ' sel' : ''), tabindex: '0', 'aria-expanded': aberto, onclick: () => { estado.aberto = aberto ? '' : k; desenhar(); }, onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tr.click(); } } },
       h('td', { class: 'ped', text: it[0] }), h('td', { 'data-l': 'Armazém', text: it[1] || '—' }), h('td', { 'data-l': 'Liberado em', text: it[2] ? ddmmaaaa(it[2]) : '—' }), h('td', { class: 'num', 'data-l': 'Peças', text: fmtN(it[3]) }),
-      h('td', { 'data-l': 'Tipo' }, h('span', { class: 'tag ' + (it[4] === 'F' ? 'fat' : 'est'), text: TIPO[it[4]] })), h('td', { 'data-l': 'Situação' }, h('span', { class: 'tag ' + (it[5] === 'A' ? 'atr' : 'proc'), text: SIT[it[5]] })),
-      h('td', { class: 'num' + (it[6] >= 5 ? ' forte' : ''), 'data-l': 'Dias de atraso', text: fmtN(it[6]) }), h('td', { 'data-l': 'Transportadora', text: it[7] || '—' }), aba.id === 'novos' ? null : h('td', { 'data-l': aba.id === 'saiu' ? 'Estava em' : 'Mudou', text: status(a, it, aba) }));
+      h('td', { 'data-l': 'Tipo' }, h('span', { class: 'tag ' + (it[4] === 'F' ? 'fat' : 'est'), title: it[9] ? 'O SC9 marcou como estoque, mas o pedido foi achado na Saída p/ Expedição: contado como faturamento (falta a nota).' : '', text: TIPO[it[4]] + (it[9] ? ' (saída)' : '') })), h('td', { 'data-l': 'Situação' }, h('span', { class: 'tag ' + (it[5] === 'A' ? 'atr' : 'proc'), text: SIT[it[5]] })),
+      h('td', { class: 'num' + (it[6] >= 5 ? ' forte' : ''), 'data-l': 'Dias de atraso', text: fmtN(it[6]) }), h('td', { 'data-l': 'Transportadora', text: it[7] || '—' }), h('td', { 'data-l': 'Status' }, h('span', { class: 'tag ' + st.tipo, text: st.texto })), aba.id === 'novos' ? null : h('td', { 'data-l': aba.id === 'saiu' ? 'Estava em' : 'Mudou', text: status(a, it, aba) }));
     if (!aberto) return tr;
     const p = estado.p, seq = sequencia(p, chave(it), a.reg.dia), dias = p.historico.get(chave(it)) || [];
     const campo = (t, v) => h('div', { class: 'cd' }, h('span', { text: t }), h('b', { text: v }));
-    const det = h('tr', { class: 'detalhe' }, h('td', { colspan: 9, class: 'det-td' },
+    const det = h('tr', { class: 'detalhe' }, h('td', { colspan: 10, class: 'det-td' },
       h('div', { class: 'det-grid' },
         campo('Pedido', it[0]), campo('Armazém', it[1] || '—'), campo('Transportadora', it[7] || '—'), campo('Liberado em', it[2] ? ddmmaaaa(it[2]) + ' (' + semana(it[2], 'short').replace('.', '') + ')' : '—'),
         campo('Peças', fmtN(it[3])), campo('Dias de atraso', fmtN(it[6])),
-        campo('Tipo de atraso', it[4] === 'F' ? 'Faturamento: já conferido, falta a nota fiscal' : 'Estoque: ainda em separação/conferência'),
+        campo('Tipo de atraso', it[9] ? 'Faturamento (reclassificado): o SC9 marcava estoque, mas o pedido está na Saída p/ Expedição; falta a nota fiscal' : it[4] === 'F' ? 'Faturamento: já conferido, falta a nota fiscal' : 'Estoque: ainda em separação/conferência'),
         campo('Situação', it[5] === 'A' ? 'Atrasado: passou do prazo' : 'Em processo: andando dentro do atraso'),
+        campo('Status do pedido', st.tipo === 'exp' ? 'Está na Saída p/ Expedição (' + st.texto.replace('Saída p/ expedição em ', '') + '); ainda sem despacho na planilha de Entrega' : st.tipo === 'desp' ? 'Despachado em ' + ddmmaaaa(st.em) + (aba.id !== 'saiu' && st.em > a.reg.dia ? ' (estava em atraso nesta foto)' : '') : st.tipo === 'saiu' ? 'Saiu do atraso; não há despacho registrado na planilha de Entrega' : 'Em atraso; sem despacho registrado'),
         campo('Comparado ao dia anterior', status(a, it, { id: 'atraso' }) || '—'),
-        campo('Dias seguidos em atraso', seq.n ? seq.n + (seq.n === 1 ? ' dia' : ' dias') + ' (desde ' + ddmm(seq.desde) + ')' : 'não estava em atraso neste dia')),
+        campo('Dias seguidos em atraso', seq.n ? seq.n + (seq.n === 1 ? ' dia' : ' dias') + ' (desde ' + ddmm(seq.desde) + ')' : aba.id === 'saiu' ? 'saiu do atraso nesta foto (estava na anterior)' : 'não estava em atraso neste dia')),
       dias.length ? h('div', { class: 'linha-tempo' }, h('span', { class: 'mudo', text: 'Dias gravados em que apareceu em atraso: ' }), dias.map((d) => h('button', { class: 'chip' + (d === a.reg.dia ? ' ativo' : ''), onclick: (ev) => { ev.stopPropagation(); escolherDia(d); }, text: ddmm(d) }))) : null));
     return [tr, det];
   }
 
-  function baixarCsv(lista, nome) {
-    const blob = new Blob([csv(lista)], { type: 'text/csv;charset=utf-8' });
+  function baixarCsv(lista, nome, abaId) {
+    const blob = new Blob([csv(lista, estado.p.entregues, estado.dia, abaId)], { type: 'text/csv;charset=utf-8' });
     const a = h('a', { href: URL.createObjectURL(blob), download: 'historico-atraso-' + estado.dia + '-' + nome.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.csv' });
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
@@ -399,6 +450,27 @@
     root.scrollTo(0, y);
     if (foco) { const e = document.getElementById(foco); if (e && e.focus) e.focus({ preventScroll: true }); }
   }
+
+  // Tempo real: a cada 30 s (com a aba aberta) cruza de novo os pedidos com a Saída p/ Expedição e só redesenha se algo mudou.
+  // As fotos de atraso e os despachados da Entrega não mudam aqui: só quando o atraso é exportado no SC9.
+  let ultimaSaidas = null;
+  async function atualizarSaidas() {
+    if (!estado.p || document.hidden) return;
+    try {
+      const r = await fetch('/api/atraso-historico?meses=24&so=saidas', { cache: 'no-store', credentials: 'same-origin' });
+      if (!r.ok) return;
+      const novas = (await r.json()).saidas || {};
+      const chave = JSON.stringify(novas);
+      if (ultimaSaidas === null) ultimaSaidas = JSON.stringify(estado.data.saidas || {});
+      if (chave === ultimaSaidas) return;
+      ultimaSaidas = chave;
+      estado.data.saidas = novas;
+      estado.p = preparar(estado.data);
+      desenhar();
+    } catch (e) { /* sem rede: tenta de novo no próximo ciclo */ }
+  }
+  setInterval(atualizarSaidas, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) atualizarSaidas(); });
 
   window.addEventListener('hashchange', () => { const d = (location.hash || '').replace('#', ''); if (estado.p && d !== estado.dia && (estado.p.porDia.has(d) || estado.p.exp[d])) { estado.dia = d; estado.mes = d.slice(0, 7); desenhar(); } });
   carregar();

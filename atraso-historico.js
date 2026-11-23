@@ -91,4 +91,28 @@ function mesclarDespachados(guardado, novos) {
   return ordenado;
 }
 
-module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses, normalizarDespachados, mesclarDespachados };
+// { pedido: 'AAAA-MM-DD' } com a data em que o pedido foi despachado (planilha de Entrega); lixo é ignorado.
+function normalizarEntregues(corpo) {
+  const saida = {};
+  if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) return saida;
+  let n = 0;
+  for (const pedido of Object.keys(corpo)) {
+    if (n >= MAX_ITENS) break;
+    const dia = corpo[pedido], chave = texto(pedido, 30);
+    if (!chave || !validarDia(dia)) continue;
+    saida[chave] = dia;
+    n++;
+  }
+  return saida;
+}
+
+// Junta os novos aos guardados e descarta quem foi despachado há mais de 120 dias (hoje = 'AAAA-MM-DD').
+function mesclarEntregues(guardado, novos, hoje) {
+  const todos = Object.assign({}, guardado || {}, novos || {});
+  const limite = new Date(new Date(hoje + 'T12:00:00Z').getTime() - 120 * 864e5).toISOString().slice(0, 10);
+  const saida = {};
+  for (const [pedido, dia] of Object.entries(todos)) if (dia >= limite) saida[pedido] = dia;
+  return saida;
+}
+
+module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses, normalizarDespachados, mesclarDespachados, normalizarEntregues, mesclarEntregues };
