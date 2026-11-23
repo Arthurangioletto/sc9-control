@@ -18,13 +18,27 @@
   const diasDoMes = (mes) => { const [a, m] = mes.split('-').map(Number); const n = new Date(Date.UTC(a, m, 0)).getUTCDate(); return Array.from({ length: n }, (_, i) => mes + '-' + String(i + 1).padStart(2, '0')); };
 
   // ---------- cálculo (puro) ----------
+  const extra = (it) => (it && it[8]) || {};
+  const ETAPA = { S: 'Separação', C: 'Conferência', F: 'Faturamento (falta a nota)', D: 'Despacho (já tem nota)' };
+  const brl = (n) => Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // há quanto tempo o pedido está parado na etapa em que está (a partir do último passo concluído até a hora da foto)
+  function paradoDesde(it) {
+    const x = extra(it);
+    return x.fa || x.ce || x.pe || x.h || '';
+  }
+  function duracao(desdeIso, ateIso) {
+    const ms = new Date(ateIso) - new Date(desdeIso);
+    if (!Number.isFinite(ms) || ms < 0) return '';
+    const h = Math.floor(ms / 36e5), d = Math.floor(h / 24);
+    return d ? d + (d === 1 ? ' dia' : ' dias') + (h % 24 ? ' e ' + (h % 24) + ' h' : '') : h + ' h';
+  }
   const pedidoNormal = (v) => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+/, '');
   const entregaDe = (entregues, pedido) => (entregues && (entregues[String(pedido)] || entregues[pedidoNormal(pedido)])) || '';
   const diaSP = (iso) => new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
 
   // Pedido achado na Saída p/ Expedição (saidas: { pedido: ISO }) já saiu do estoque: o atraso dele deixa de ser de estoque e passa a ser
-  // de faturamento (falta a nota), desde que a saída tenha sido registrada até o dia da foto. Marca a linha: [8] = ISO da saída,
-  // [9] = 'E' quando o SC9 tinha marcado como estoque e a página reclassificou.
+  // de faturamento (falta a nota), desde que a saída tenha sido registrada até o dia da foto. Marca a linha: [9] = ISO da saída,
+  // [10] = 'E' quando o SC9 tinha marcado como estoque e a página reclassificou.
   function aplicarSaidas(meses, saidas) {
     const copia = {};
     for (const [mes, m] of Object.entries(meses || {})) {
@@ -33,9 +47,9 @@
         const itens = reg.itens.map((it) => {
           const iso = saidas && saidas[pedidoNormal(it[0])];
           if (!iso) return it;
-          const novo = it.slice(0, 8);
-          novo[8] = iso;
-          if (novo[4] === 'E' && diaSP(iso) <= reg.dia) { novo[4] = 'F'; novo[9] = 'E'; }
+          const novo = it.slice(0, 9);
+          novo[9] = iso;
+          if (novo[4] === 'E' && diaSP(iso) <= reg.dia) { novo[4] = 'F'; novo[10] = 'E'; }
           return novo;
         });
         dias[dia] = Object.assign({}, reg, { itens });
@@ -87,14 +101,15 @@
     tipo: (a, b) => String(a[4]).localeCompare(String(b[4])),
     sit: (a, b) => String(a[5]).localeCompare(String(b[5])),
     dias: (a, b) => a[6] - b[6],
-    transp: (a, b) => String(a[7]).localeCompare(String(b[7]), 'pt-BR', { numeric: true })
+    transp: (a, b) => String(a[7]).localeCompare(String(b[7]), 'pt-BR', { numeric: true }),
+    cliente: (a, b) => String(extra(a).n || '').localeCompare(String(extra(b).n || ''), 'pt-BR')
   };
 
   // Status do pedido: foi despachado (planilha de Entrega)? aba = 'atraso' | 'novos' | 'saiu'.
   function statusDoPedido(entregues, it, dia, aba) {
     const ent = entregaDe(entregues, it[0]);
     if (ent) return { tipo: 'desp', em: ent, texto: (aba !== 'saiu' && ent > dia ? 'Estava em atraso · despachado em ' : 'Despachado em ') + ddmm(ent) };
-    if (it[8]) return { tipo: 'exp', em: it[8], texto: 'Saída p/ expedição em ' + ddmm(diaSP(it[8])) + ' às ' + new Date(it[8]).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) };
+    if (it[9]) return { tipo: 'exp', em: it[9], texto: 'Saída p/ expedição em ' + ddmm(diaSP(it[9])) + ' às ' + new Date(it[9]).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) };
     return aba === 'saiu' ? { tipo: 'saiu', em: '', texto: 'Saiu do atraso · sem despacho' } : { tipo: 'atr', em: '', texto: 'Em atraso' };
   }
 
@@ -102,8 +117,8 @@
   function filtrar(itens, f, entregues) {
     const busca = String((f && f.busca) || '').trim().toLowerCase();
     let lista = itens.filter((it) =>
-      (!f.status || (f.status === 'desp') === Boolean(entregaDe(entregues, it[0]))) && (!f.tipo || it[4] === f.tipo) && (!f.sit || it[5] === f.sit) && (!f.arm || it[1] === f.arm) && (!f.transp || (it[7] || '') === f.transp)
-      && (!busca || String(it[0]).toLowerCase().includes(busca) || String(it[7] || '').toLowerCase().includes(busca)));
+      (!f.status || (f.status === 'desp') === Boolean(entregaDe(entregues, it[0]))) && (!f.etapa || extra(it).e === f.etapa) && (!f.tipo || it[4] === f.tipo) && (!f.sit || it[5] === f.sit) && (!f.arm || it[1] === f.arm) && (!f.transp || (it[7] || '') === f.transp)
+      && (!busca || String(it[0]).toLowerCase().includes(busca) || String(it[7] || '').toLowerCase().includes(busca) || String(extra(it).n || '').toLowerCase().includes(busca) || String(extra(it).nf || '').includes(busca) || String(extra(it).c || '').toLowerCase().includes(busca)));
     const cmp = ORDEM[f.ordem] || ORDEM.dias;
     lista = lista.slice().sort((a, b) => (f.desc ? -1 : 1) * cmp(a, b) || ORDEM.pedido(a, b));
     return lista;
@@ -115,12 +130,15 @@
   // CSV (separador ";", com BOM para o Excel abrir com acento) da lista que está na tela.
   function csv(itens, entregues, dia, aba) {
     const cel = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const linhas = [['Pedido', 'Armazém', 'Liberado em', 'Peças', 'Tipo', 'Situação', 'Dias de atraso', 'Transportadora', 'Status do pedido']];
-    for (const it of itens) linhas.push([it[0], it[1], it[2] ? ddmmaaaa(it[2]) : '', String(it[3]).replace('.', ','), TIPO[it[4]] || it[4], SIT[it[5]] || it[5], it[6], it[7] || '', statusDoPedido(entregues, it, dia || '', aba || 'atraso').texto]);
+    const linhas = [['Pedido', 'Cliente', 'Código do cliente', 'Nota fiscal', 'Valor (R$)', 'Armazém', 'Liberado em', 'Peças', 'Linhas', 'Tipo', 'Etapa', 'Situação', 'Dias de atraso', 'Transportadora', 'Separador', 'Conferente', 'Parado desde', 'Status do pedido']];
+    for (const it of itens) {
+      const x = extra(it), desde = paradoDesde(it);
+      linhas.push([it[0], x.n || '', x.c || '', x.nf || '', x.v != null ? String(x.v).replace('.', ',') : '', it[1], it[2] ? ddmmaaaa(it[2]) : '', String(it[3]).replace('.', ','), x.l || '', TIPO[it[4]] || it[4], ETAPA[x.e] || '', SIT[it[5]] || it[5], it[6], it[7] || '', x.sp || '', x.cf || '', desde ? new Date(desde).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '', statusDoPedido(entregues, it, dia || '', aba || 'atraso').texto]);
+    }
     return '﻿' + linhas.map((l) => l.map(cel).join(';')).join('\r\n');
   }
 
-  const api = { aplicarSaidas, preparar, sequencia, despacho, filtrar, csv, statusDoPedido, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
+  const api = { extra, ETAPA, aplicarSaidas, preparar, sequencia, despacho, filtrar, csv, statusDoPedido, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
   root.SC9HistoricoAtraso = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (typeof document === 'undefined' || !document.getElementById || !document.getElementById('app')) return;
@@ -326,7 +344,7 @@
       h('div', null, h('h2', { text: semana(dia).replace(/^./, (c) => c.toUpperCase()) + ', ' + ddmmaaaa(dia) }), h('p', { class: 'mudo', text: a ? 'Foto gravada' + (hora ? ' às ' + hora : '') + '.' : 'Sem foto de atraso neste dia (só há dados de despacho).' })),
       h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(location.origin + location.pathname + location.search + '#' + dia); estado.aviso = 'Link do dia copiado.'; } catch (e) { estado.aviso = 'Não consegui copiar sozinho. Copie o endereço que está na barra do navegador.'; } desenhar(); }, text: 'Copiar link deste dia' })));
     if (estado.aviso) { caixa.appendChild(h('p', { class: 'aviso', role: 'status', text: estado.aviso })); estado.aviso = ''; }
-    const reclass = a ? a.reg.itens.filter((it) => it[9]).length : 0;
+    const reclass = a ? a.reg.itens.filter((it) => it[10]).length : 0;
     if (a) caixa.appendChild(h('p', { class: 'frase ' + (a.cmp ? (a.resumo.tot < a.cmp.resumoAnt.tot ? 'bom' : a.resumo.tot > a.cmp.resumoAnt.tot ? 'ruim' : '') : ''), text: X().frase(a) }));
     if (reclass) caixa.appendChild(h('p', { class: 'resumo-status', text: fmtN(reclass) + (reclass === 1 ? ' pedido que o SC9 marcou como estoque foi contado' : ' pedidos que o SC9 marcou como estoque foram contados') + ' como atraso de faturamento, porque já passou' + (reclass === 1 ? '' : 'ram') + ' pela Saída p/ Expedição (só falta a nota).' }));
     const r = a ? a.resumo : null, ra = a && a.cmp ? a.cmp.resumoAnt : null;
@@ -337,6 +355,7 @@
         cartaoKpi('Em atraso', fmtN(r.tot), pct(r.tot, r.total) + ' dos ' + fmtN(r.total) + ' pedidos', ra ? h('span', { class: 'ks' }, seta(r.tot, ra.tot, true), refTxt) : null, 'atraso', 'Pedidos em atraso na foto deste dia (estoque + faturamento).'),
         cartaoKpi('Atraso de estoque', fmtN(r.e), pct(r.e, r.total) + ' · ' + fmtN(r.ep) + ' peças', ra ? h('span', { class: 'ks' }, seta(r.e, ra.e, true), refTxt) : null, '', 'Pedidos que ainda estão em separação/conferência e passaram do prazo.'),
         cartaoKpi('Atraso de faturamento', fmtN(r.f), pct(r.f, r.total) + ' · ' + fmtN(r.fp) + ' peças', ra ? h('span', { class: 'ks' }, seta(r.f, ra.f, true), refTxt) : null, '', 'Pedidos já conferidos, só faltando a nota fiscal.'),
+        cartaoKpi('Valor em atraso', somaValor(a.reg.itens) ? brl(somaValor(a.reg.itens)) : '—', somaValor(a.reg.itens) ? 'só pedidos já faturados (valor da nota)' : 'sem nota fiscal ainda', null, '', 'Soma do valor das notas dos pedidos em atraso que já têm nota fiscal.'),
         cartaoKpi('Peças em atraso', fmtN(r.pecas), 'estoque + faturamento', ra ? h('span', { class: 'ks' }, seta(r.pecas, ra.pecas, true), refTxt) : null, '', 'Soma das peças dos pedidos em atraso.'));
     }
     kpis.append(
@@ -356,7 +375,11 @@
     return caixa;
   }
 
+  const hora = (iso) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) : '—');
+
   function opcoes(itens, i) { return [...new Set(itens.map((it) => it[i] || '').filter(Boolean))].sort((x, y) => String(x).localeCompare(String(y), 'pt-BR', { numeric: true })); }
+
+  const somaValor = (itens) => itens.reduce((t, it) => t + (extra(it).v || 0), 0);
 
   function listaDePedidos(a) {
     const cmp = a.cmp;
@@ -376,7 +399,7 @@
     const sel = (id, rotulo, valores, mapa) => h('label', { class: 'campo' }, h('span', { text: rotulo }),
       h('select', { id: 'f-' + id, onchange: (ev) => { f[id] = ev.target.value; estado.limite = 100; desenhar(); } }, h('option', { value: '', text: 'Todos' }), valores.map((v) => h('option', { value: v, selected: f[id] === v, text: mapa ? mapa[v] : v }))));
 
-    const cabecas = [['pedido', 'Pedido'], ['arm', 'Armazém'], ['lib', 'Liberado em'], ['pecas', 'Peças'], ['tipo', 'Tipo'], ['sit', 'Situação'], ['dias', 'Dias de atraso'], ['transp', 'Transportadora']];
+    const cabecas = [['pedido', 'Pedido'], ['cliente', 'Cliente'], ['arm', 'Armazém'], ['lib', 'Liberado em'], ['pecas', 'Peças'], ['tipo', 'Tipo'], ['sit', 'Situação'], ['dias', 'Dias de atraso'], ['transp', 'Transportadora']];
     const tabela = h('table', { class: 'tab pedidos' },
       h('thead', null, h('tr', null,
         cabecas.map(([id, nome]) => h('th', { class: id === 'pecas' || id === 'dias' ? 'num' : '', 'aria-sort': f.ordem === id ? (f.desc ? 'descending' : 'ascending') : 'none' },
@@ -389,8 +412,8 @@
       h('div', { class: 'abas', role: 'tablist' }, abas.map((x) => h('button', { class: 'aba' + (x.id === estado.aba ? ' ativa' : ''), id: 'aba-' + x.id, role: 'tab', 'aria-selected': x.id === estado.aba, title: x.dica, onclick: () => { estado.aba = x.id; estado.aberto = ''; estado.limite = 100; estado.filtro = { tipo: '', sit: '', status: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }; desenhar(); }, text: x.nome + ' (' + fmtN(x.itens.length) + ')' }))),
       h('p', { class: 'mudo peq', text: aba.dica + ' Clique em um pedido para ver todos os dados dele.' }),
       h('div', { class: 'filtros' },
-        h('label', { class: 'campo busca' }, h('span', { text: 'Buscar pedido ou transportadora' }), h('input', { type: 'search', id: 'f-busca', value: f.busca, placeholder: 'Digite o número do pedido…', oninput: (ev) => { f.busca = ev.target.value; estado.limite = 100; const pos = ev.target.selectionStart; desenhar(); const novo = document.querySelector('.filtros input[type=search]'); if (novo) { novo.focus(); novo.setSelectionRange(pos, pos); } } })),
-        sel('status', 'Status do pedido', ['desp', 'nao'], { desp: 'Despachados', nao: 'Sem despacho registrado' }), sel('tipo', 'Tipo', ['E', 'F'], TIPO), sel('sit', 'Situação', ['A', 'P'], SIT), sel('arm', 'Armazém', opcoes(aba.itens, 1)), sel('transp', 'Transportadora', opcoes(aba.itens, 7)),
+        h('label', { class: 'campo busca' }, h('span', { text: 'Buscar pedido, cliente, nota ou transportadora' }), h('input', { type: 'search', id: 'f-busca', value: f.busca, placeholder: 'Pedido, cliente ou nota fiscal…', oninput: (ev) => { f.busca = ev.target.value; estado.limite = 100; const pos = ev.target.selectionStart; desenhar(); const novo = document.querySelector('.filtros input[type=search]'); if (novo) { novo.focus(); novo.setSelectionRange(pos, pos); } } })),
+        sel('etapa', 'Etapa em que parou', ['S', 'C', 'F', 'D'], { S: 'Separação', C: 'Conferência', F: 'Faturamento (falta a nota)', D: 'Despacho (tem nota)' }), sel('status', 'Status do pedido', ['desp', 'nao'], { desp: 'Despachados', nao: 'Sem despacho registrado' }), sel('tipo', 'Tipo', ['E', 'F'], TIPO), sel('sit', 'Situação', ['A', 'P'], SIT), sel('arm', 'Armazém', opcoes(aba.itens, 1)), sel('transp', 'Transportadora', opcoes(aba.itens, 7)),
         h('button', { class: 'btn', id: 'f-limpar', onclick: () => { estado.filtro = { tipo: '', sit: '', status: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }; desenhar(); }, text: 'Limpar filtros' }),
         h('button', { class: 'btn', disabled: !lista.length, onclick: () => baixarCsv(lista, aba.nome, aba.id), text: 'Baixar lista (CSV)' })),
       resumoDeStatus(aba, desp),
@@ -418,17 +441,21 @@
   function linhaDoPedido(a, it, aba) {
     const k = aba.id + '|' + chave(it), aberto = estado.aberto === k, st = statusDoPedido(estado.p.entregues, it, a.reg.dia, aba.id);
     const tr = h('tr', { class: 'clicavel' + (aberto ? ' sel' : ''), tabindex: '0', 'aria-expanded': aberto, onclick: () => { estado.aberto = aberto ? '' : k; desenhar(); }, onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tr.click(); } } },
-      h('td', { class: 'ped', text: it[0] }), h('td', { 'data-l': 'Armazém', text: it[1] || '—' }), h('td', { 'data-l': 'Liberado em', text: it[2] ? ddmmaaaa(it[2]) : '—' }), h('td', { class: 'num', 'data-l': 'Peças', text: fmtN(it[3]) }),
-      h('td', { 'data-l': 'Tipo' }, h('span', { class: 'tag ' + (it[4] === 'F' ? 'fat' : 'est'), title: it[9] ? 'O SC9 marcou como estoque, mas o pedido foi achado na Saída p/ Expedição: contado como faturamento (falta a nota).' : '', text: TIPO[it[4]] + (it[9] ? ' (saída)' : '') })), h('td', { 'data-l': 'Situação' }, h('span', { class: 'tag ' + (it[5] === 'A' ? 'atr' : 'proc'), text: SIT[it[5]] })),
+      h('td', { class: 'ped', text: it[0] }), h('td', { class: 'cli', 'data-l': 'Cliente', title: extra(it).n || '', text: extra(it).n || '—' }), h('td', { 'data-l': 'Armazém', text: it[1] || '—' }), h('td', { 'data-l': 'Liberado em', text: it[2] ? ddmmaaaa(it[2]) : '—' }), h('td', { class: 'num', 'data-l': 'Peças', text: fmtN(it[3]) }),
+      h('td', { 'data-l': 'Tipo' }, h('span', { class: 'tag ' + (it[4] === 'F' ? 'fat' : 'est'), title: it[10] ? 'O SC9 marcou como estoque, mas o pedido foi achado na Saída p/ Expedição: contado como faturamento (falta a nota).' : '', text: TIPO[it[4]] + (it[10] ? ' (saída)' : '') })), h('td', { 'data-l': 'Situação' }, h('span', { class: 'tag ' + (it[5] === 'A' ? 'atr' : 'proc'), text: SIT[it[5]] })),
       h('td', { class: 'num' + (it[6] >= 5 ? ' forte' : ''), 'data-l': 'Dias de atraso', text: fmtN(it[6]) }), h('td', { 'data-l': 'Transportadora', text: it[7] || '—' }), h('td', { 'data-l': 'Status' }, h('span', { class: 'tag ' + st.tipo, text: st.texto })), aba.id === 'novos' ? null : h('td', { 'data-l': aba.id === 'saiu' ? 'Estava em' : 'Mudou', text: status(a, it, aba) }));
     if (!aberto) return tr;
     const p = estado.p, seq = sequencia(p, chave(it), a.reg.dia), dias = p.historico.get(chave(it)) || [];
     const campo = (t, v) => h('div', { class: 'cd' }, h('span', { text: t }), h('b', { text: v }));
-    const det = h('tr', { class: 'detalhe' }, h('td', { colspan: 10, class: 'det-td' },
+    const det = h('tr', { class: 'detalhe' }, h('td', { colspan: 11, class: 'det-td' },
       h('div', { class: 'det-grid' },
-        campo('Pedido', it[0]), campo('Armazém', it[1] || '—'), campo('Transportadora', it[7] || '—'), campo('Liberado em', it[2] ? ddmmaaaa(it[2]) + ' (' + semana(it[2], 'short').replace('.', '') + ')' : '—'),
+        campo('Pedido', it[0]), campo('Cliente', extra(it).n ? extra(it).n + (extra(it).c ? ' (cód. ' + extra(it).c + ')' : '') : '—'), campo('Armazém', it[1] || '—'), campo('Transportadora', it[7] || '—'),
+        campo('Nota fiscal', extra(it).nf || 'ainda sem nota'), campo('Valor da nota', extra(it).v ? brl(extra(it).v) : '—'), campo('Linhas do pedido', extra(it).l ? fmtN(extra(it).l) : '—'),
+        campo('Etapa em que parou', ETAPA[extra(it).e] || '—'), campo('Separador', extra(it).sp || '—'), campo('Conferente', extra(it).cf || '—'),
+        campo('Fim da separação', hora(extra(it).pe)), campo('Fim da conferência', hora(extra(it).ce)), campo('Faturado em', hora(extra(it).fa)),
+        campo('Parado nessa etapa há', paradoDesde(it) && a.reg.atualizadoEm ? duracao(paradoDesde(it), a.reg.atualizadoEm) || '—' : '—'), campo('Liberado em', it[2] ? ddmmaaaa(it[2]) + ' (' + semana(it[2], 'short').replace('.', '') + ')' : '—'),
         campo('Peças', fmtN(it[3])), campo('Dias de atraso', fmtN(it[6])),
-        campo('Tipo de atraso', it[9] ? 'Faturamento (reclassificado): o SC9 marcava estoque, mas o pedido está na Saída p/ Expedição; falta a nota fiscal' : it[4] === 'F' ? 'Faturamento: já conferido, falta a nota fiscal' : 'Estoque: ainda em separação/conferência'),
+        campo('Tipo de atraso', it[10] ? 'Faturamento (reclassificado): o SC9 marcava estoque, mas o pedido está na Saída p/ Expedição; falta a nota fiscal' : it[4] === 'F' ? 'Faturamento: já conferido, falta a nota fiscal' : 'Estoque: ainda em separação/conferência'),
         campo('Situação', it[5] === 'A' ? 'Atrasado: passou do prazo' : 'Em processo: andando dentro do atraso'),
         campo('Status do pedido', st.tipo === 'exp' ? 'Está na Saída p/ Expedição (' + st.texto.replace('Saída p/ expedição em ', '') + '); ainda sem despacho na planilha de Entrega' : st.tipo === 'desp' ? 'Despachado em ' + ddmmaaaa(st.em) + (aba.id !== 'saiu' && st.em > a.reg.dia ? ' (estava em atraso nesta foto)' : '') : st.tipo === 'saiu' ? 'Saiu do atraso; não há despacho registrado na planilha de Entrega' : 'Em atraso; sem despacho registrado'),
         campo('Comparado ao dia anterior', status(a, it, { id: 'atraso' }) || '—'),

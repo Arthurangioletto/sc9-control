@@ -59,6 +59,7 @@
   .tab tbody tr.clicavel { cursor:pointer; } .tab tbody tr.clicavel:hover { background:#f6f9ff; } .tab tr.sel { background:#eaf1ff !important; }
   .tab tfoot td { font-weight:800; background:var(--soft); }
   .ord { font:inherit; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:inherit; background:none; border:none; padding:0; cursor:pointer; }
+  .cli { max-width:230px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .ped { font-weight:800; font-variant-numeric:tabular-nums; } .forte { color:var(--red); font-weight:800; }
   .tag { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; font-weight:700; white-space:nowrap; }
   .tag.exp { background:#e3edff; color:#173d86; } .tag.desp { background:#dff5e8; color:#14693a; } .tag.saiu { background:#eceff4; color:#46536b; }
@@ -86,6 +87,7 @@
     .tab.pedidos tr.clicavel td,.tab.mes tr.clicavel td { border:none; padding:2px 0; text-align:left; }
     .tab.pedidos td[data-l]::before,.tab.mes td[data-l]::before { content:attr(data-l); display:block; font-size:10px; font-weight:700; text-transform:uppercase; color:var(--mute); }
     .tab.pedidos td.ped,.tab.mes td.ped { grid-column:1 / -1; font-size:17px; }
+    .tab.pedidos td.cli { grid-column:1 / -1; max-width:none; white-space:normal; }
     .tab.pedidos tr.detalhe,.tab.pedidos tr.detalhe td { display:block; }
     .tab.pedidos tr.detalhe { margin:-4px 0 10px; border:1px solid var(--line); border-radius:12px; }
     .tab.mes tfoot td { display:block; border:none; padding:2px 0; } .tab.mes tfoot td:nth-child(2) { grid-column:1 / -1; }

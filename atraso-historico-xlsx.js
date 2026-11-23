@@ -257,7 +257,7 @@
   async function baixar(dados) {
     const B = base(), R = RG();
     await Promise.all([B.carregarScript('/vendor-exceljs.js', () => !!root.ExcelJS), B.carregarScript('/vendor-jszip.js', () => !!root.JSZip)]);
-    const registro = R.registroDoDia(dados.orders, dados.agora, undefined, dados.sc5, dados.entrega);
+    const registro = R.registroDoDia(dados.orders, dados.agora, undefined, dados.sc5, dados.entrega, { faturamento: dados.faturamento, valores: dados.valores });
     let salvo = false, meses = {};
     if (registro.total) { try { await B.gravar(registro); salvo = true; } catch (e) { if (root.console) root.console.warn(e); } }
     try { meses = await B.ler(24); } catch (e) { if (root.console) root.console.warn(e); }

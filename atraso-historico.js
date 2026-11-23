@@ -20,6 +20,20 @@ function validarDia(dia) {
   return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === dia;
 }
 
+// Dados extras do pedido (nome do cliente, NF, valor, etapa...): só as chaves conhecidas, com tamanho e tipo limitados.
+const ETAPAS = new Set(['S', 'C', 'F', 'D']);
+const dataIso = (v) => { const s = texto(v, 30); return s && !Number.isNaN(Date.parse(s)) ? s : ''; };
+function extrasDoItem(x) {
+  const saida = {};
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return saida;
+  for (const [k, max] of [['n', 60], ['c', 20], ['nf', 20], ['sp', 40], ['cf', 40]]) { const v = texto(x[k], max); if (v) saida[k] = v; }
+  for (const k of ['pe', 'ce', 'fa', 'h']) { const v = dataIso(x[k]); if (v) saida[k] = v; }
+  if (numero(x.v) > 0) saida.v = numero(x.v);
+  if (inteiro(x.l) > 0) saida.l = inteiro(x.l);
+  if (ETAPAS.has(x.e)) saida.e = x.e;
+  return saida;
+}
+
 // Devolve o registro limpo ou lança Error com a mensagem para o usuário.
 function normalizarRegistro(corpo) {
   if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) throw new Error('Registro de atraso inválido.');
@@ -40,7 +54,7 @@ function normalizarRegistro(corpo) {
     if (visto.has(chave)) continue;
     visto.add(chave);
     const lib = DIA.test(String(it[2] || '')) ? String(it[2]) : '';
-    itens.push([pedido, arm, lib, numero(it[3]), tipo, it[5] === 'P' ? 'P' : 'A', inteiro(it[6]), texto(it[7], 40)]);
+    itens.push([pedido, arm, lib, numero(it[3]), tipo, it[5] === 'P' ? 'P' : 'A', inteiro(it[6]), texto(it[7], 40), extrasDoItem(it[8])]);
   }
   return { dia, total, pecas: numero(corpo.pecas), atualizadoEm: new Date().toISOString(), itens };
 }
