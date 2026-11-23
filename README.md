@@ -304,10 +304,10 @@ Ao lado dele fica o botão **Histórico de Atraso** (`atraso-historico-ui.js`, E
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
 
 - Lê somente o saldo do armazém **59** no SB8 e soma as linhas do mesmo produto e lote.
-- Mostra o endereço de destino no armazém **02** a partir da aba ZZ2, cruzando filial, produto e lote quando disponível.
+- Mostra o endereço de destino a partir da aba ZZ2 do **armazém de destino escolhido**, cruzando filial, produto e lote quando disponível. A origem é sempre o **59**; o destino (padrão 02) é escolhido na própria tela de bipagem, no bloco **Armazéns da transferência** (botões 01/02, os armazéns que existem na ZZ2 ou qualquer código digitado em *Outro*). Ao trocar, o endereço, a tabela, a busca e a exportação passam a usar o novo destino. O 59 não é aceito como destino.
 - A bipagem mostra o saldo do 59 e avisa quando a contagem excede esse saldo.
 - A quantidade conferida pode ser **editada direto** na tabela.
-- A exportação soma as quantidades por filial, produto, lote e armazém de origem nas duas abas. O destino é escolhido na tela Documentos (padrão 02; quem já tinha salvo 01 nesse navegador escolhe 02 uma vez).
+- A exportação soma as quantidades por filial, produto, lote e armazém de origem nas duas abas. O destino é escolhido na tela de bipagem (e também na tela Documentos; padrão 02; quem já tinha salvo 01 nesse navegador escolhe 02 uma vez).
 - Transferência e Retem salvam os documentos no servidor com numeração própria (`TRF-000001` e `DOC-000001`). Operadores consultam e editam somente os próprios documentos conforme o perfil de cada aba. O administrador consulta todos e pode importar documentos antigos no navegador onde foram criados. O histórico antigo é identificado sem atribuir autoria.
 - Em cada aba, o comparativo do administrador usa um arquivo SD3 com filial e reúne os documentos finalizados na data selecionada. Mantém as referências dos documentos SC9 para cada lote e rota.
 - Em **Visualizar documentos**, somente o administrador pode exportar dois ou mais documentos finalizados num Excel consolidado. A aba **Transferência múltipla** soma por produto, lote e armazém de origem. O **Resumo** identifica o documento original de cada lançamento.
