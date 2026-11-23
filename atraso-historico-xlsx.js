@@ -127,14 +127,16 @@
     });
   }
 
+  const ETAPA = { S: 'Separação', C: 'Conferência', F: 'Faturamento (falta a nota)', D: 'Despacho (já tem nota)' };
+
   function montarDia(wb, a, ctx, usados) {
     const B = base(), cor = B.COR;
     const nome = B.nomeAba(nomeDaAba(a.reg.dia), usados);
     const ws = wb.addWorksheet(nome, { views: [{ showGridLines: false }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
-    [12, 11, 12, 10, 12, 18, 13, 13, 24, 3, 12, 11, 9, 18, 13, 12].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    [12, 30, 11, 12, 10, 10, 18, 13, 13, 18, 13, 14, 24, 3, 12, 30, 11, 9, 18, 13, 12].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
     const dia = a.reg.dia, x = a.resumo;
     const sem = diaDaSemana(dia);
-    B.banner(ws, 16, 'ATRASO DO DIA — ' + ddmmaaaa(dia) + ' · ' + sem, (isNaN(new Date(a.reg.atualizadoEm)) ? 'Foto do dia.' : 'Foto gravada em ' + new Date(a.reg.atualizadoEm).toLocaleString('pt-BR') + '.'));
+    B.banner(ws, 21, 'ATRASO DO DIA — ' + ddmmaaaa(dia) + ' · ' + sem, (isNaN(new Date(a.reg.atualizadoEm)) ? 'Foto do dia.' : 'Foto gravada em ' + new Date(a.reg.atualizadoEm).toLocaleString('pt-BR') + '.'));
     cartao(ws, 4, [
       ['Em atraso', x.tot, 'pedidos · ' + (razao(x.tot, x.total) * 100).toFixed(1).replace('.', ',') + '% da base', cor.vermelho],
       ['Atraso de Estoque', x.e, (razao(x.e, x.total) * 100).toFixed(1).replace('.', ',') + '% da base', 'FFB87708'],
@@ -145,9 +147,9 @@
 
     // comparativo com o dia anterior
     let r = 9;
-    B.secao(ws, r, 16, a.cmp ? 'COMPARATIVO COM ' + ddmmaaaa(a.cmp.ant.dia) + ' (' + diaDaSemana(a.cmp.ant.dia) + ')' : 'COMPARATIVO');
+    B.secao(ws, r, 21, a.cmp ? 'COMPARATIVO COM ' + ddmmaaaa(a.cmp.ant.dia) + ' (' + diaDaSemana(a.cmp.ant.dia) + ')' : 'COMPARATIVO');
     r++;
-    ws.mergeCells(r, 1, r, 16); ws.getRow(r).height = 36;
+    ws.mergeCells(r, 1, r, 21); ws.getRow(r).height = 36;
     const f = ws.getCell(r, 1); f.value = frase(a); f.font = B.fonte(12, { bold: true, color: { argb: a.cmp ? (x.tot < a.cmp.resumoAnt.tot ? cor.verde : x.tot > a.cmp.resumoAnt.tot ? cor.vermelho : cor.navy) : cor.mudo } });
     f.alignment = { vertical: 'middle', wrapText: true };
     r++;
@@ -180,17 +182,17 @@
 
     // listas lado a lado: em atraso neste dia (esquerda) e saíram do atraso (direita)
     const t = r;
-    ws.mergeCells(t, 1, t, 9); ws.mergeCells(t, 11, t, 16);
+    ws.mergeCells(t, 1, t, 13); ws.mergeCells(t, 15, t, 21);
     const titulo1 = ws.getCell(t, 1); titulo1.value = 'PEDIDOS EM ATRASO NESTE DIA';
-    for (let cc = 1; cc <= 9; cc++) ws.getCell(t, cc).fill = B.solido(cor.navy);
+    for (let cc = 1; cc <= 13; cc++) ws.getCell(t, cc).fill = B.solido(cor.navy);
     titulo1.font = B.fonte(12, { bold: true, color: { argb: cor.branco } });
-    const titulo2 = ws.getCell(t, 11); titulo2.value = a.cmp ? 'SAÍRAM DO ATRASO DESDE ' + ddmm(a.cmp.ant.dia) : 'SAÍRAM DO ATRASO';
-    for (let cc = 11; cc <= 16; cc++) ws.getCell(t, cc).fill = B.solido(cor.verde);
+    const titulo2 = ws.getCell(t, 15); titulo2.value = a.cmp ? 'SAÍRAM DO ATRASO DESDE ' + ddmm(a.cmp.ant.dia) : 'SAÍRAM DO ATRASO';
+    for (let cc = 15; cc <= 21; cc++) ws.getCell(t, cc).fill = B.solido(cor.verde);
     titulo2.font = B.fonte(12, { bold: true, color: { argb: cor.branco } });
-    ws.getCell(t, 1).alignment = { vertical: 'middle' }; ws.getCell(t, 11).alignment = { vertical: 'middle' };
+    ws.getCell(t, 1).alignment = { vertical: 'middle' }; ws.getCell(t, 15).alignment = { vertical: 'middle' };
     ws.getRow(t).height = 20;
 
-    B.cabecalho(ws, t + 1, 1, ['Pedido', 'Armazém', 'Liberado em', 'Dias de atraso', 'Peças', 'Transportadora', 'Tipo', 'Situação', 'Comparativo']);
+    B.cabecalho(ws, t + 1, 1, ['Pedido', 'Cliente', 'Armazém', 'Liberado em', 'Dias de atraso', 'Peças', 'Transportadora', 'Tipo', 'Situação', 'Etapa em que parou', 'Nota fiscal', 'Valor da nota', 'Comparativo']);
     ws.getRow(t + 1).height = 30;
     const ordem = (x1, x2) => (x1[4] === x2[4] ? 0 : x1[4] === 'E' ? -1 : 1) || x2[6] - x1[6] || String(x1[0]).localeCompare(String(x2[0]));
     const itens = a.reg.itens.slice().sort(ordem);
@@ -201,33 +203,45 @@
         const antes = a.cmp.antes.get(chave(it));
         cmpTxt = !antes ? 'Novo (não estava em ' + ddmm(a.cmp.ant.dia) + ')' : antes[4] !== it[4] ? 'Passou de ' + (antes[4] === 'E' ? 'Estoque' : 'Faturamento') + ' p/ ' + (it[4] === 'E' ? 'Estoque' : 'Faturamento') : 'Continua desde antes de ' + ddmm(dia);
       }
+      const x = (it[8] && typeof it[8] === 'object') ? it[8] : {};
       B.celula(ws, rr, 1, it[0], { fundo, h: 'center' });
-      B.celula(ws, rr, 2, it[1], { fundo, h: 'left' });
-      B.celula(ws, rr, 3, it[2] ? ddmmaaaa(it[2]) : '-', { fundo, h: 'center' });
-      B.celula(ws, rr, 4, it[6], { fundo, fmt: '#,##0', h: 'center' });
-      B.celula(ws, rr, 5, it[3], { fundo, fmt: '#,##0', h: 'center', negrito: true });
-      B.celula(ws, rr, 6, it[7] || '-', { fundo, h: 'left' });
-      B.celula(ws, rr, 7, it[4] === 'F' ? 'Faturamento' : 'Estoque', { fundo, h: 'center', negrito: true, cor: it[4] === 'F' ? cor.azul : 'FFB87708' });
-      B.celula(ws, rr, 8, it[5] === 'P' ? 'Em processo' : 'Atrasado', { fundo, h: 'center', negrito: true, cor: it[5] === 'P' ? cor.mudo : cor.vermelho });
-      B.celula(ws, rr, 9, cmpTxt, { fundo, h: 'left', sz: 10, negrito: !a.cmp ? false : /^Novo/.test(cmpTxt), cor: /^Novo/.test(cmpTxt) ? cor.vermelho : cor.preto });
+      B.celula(ws, rr, 2, x.n || '-', { fundo, h: 'left', sz: 10 });
+      B.celula(ws, rr, 3, it[1], { fundo, h: 'left' });
+      B.celula(ws, rr, 4, it[2] ? ddmmaaaa(it[2]) : '-', { fundo, h: 'center' });
+      B.celula(ws, rr, 5, it[6], { fundo, fmt: '#,##0', h: 'center' });
+      B.celula(ws, rr, 6, it[3], { fundo, fmt: '#,##0', h: 'center', negrito: true });
+      B.celula(ws, rr, 7, it[7] || '-', { fundo, h: 'left' });
+      B.celula(ws, rr, 8, it[4] === 'F' ? 'Faturamento' : 'Estoque', { fundo, h: 'center', negrito: true, cor: it[4] === 'F' ? cor.azul : 'FFB87708' });
+      B.celula(ws, rr, 9, it[5] === 'P' ? 'Em processo' : 'Atrasado', { fundo, h: 'center', negrito: true, cor: it[5] === 'P' ? cor.mudo : cor.vermelho });
+      B.celula(ws, rr, 10, ETAPA[x.e] || '-', { fundo, h: 'left', sz: 10 });
+      B.celula(ws, rr, 11, x.nf || '-', { fundo, h: 'center' });
+      B.celula(ws, rr, 12, x.v ? x.v : '-', { fundo, h: 'right', fmt: x.v ? '"R$" #,##0.00' : undefined });
+      B.celula(ws, rr, 13, cmpTxt, { fundo, h: 'left', sz: 10, negrito: !a.cmp ? false : /^Novo/.test(cmpTxt), cor: /^Novo/.test(cmpTxt) ? cor.vermelho : cor.preto });
     });
-    if (itens.length) ws.autoFilter = { from: { row: t + 1, column: 1 }, to: { row: t + 1 + itens.length, column: 9 } };
-    else B.legenda(ws, t + 2, 9, 'Nenhum pedido em atraso neste dia.');
+    if (itens.length) ws.autoFilter = { from: { row: t + 1, column: 1 }, to: { row: t + 1 + itens.length, column: 13 } };
+    else B.legenda(ws, t + 2, 13, 'Nenhum pedido em atraso neste dia.');
 
-    B.cabecalho(ws, t + 1, 11, ['Pedido', 'Armazém', 'Peças', 'Transportadora', 'Tipo que tinha', 'Dias de atraso que tinha']);
+    // aviso só sobre a tabela da direita (não cobre a lista da esquerda)
+    const legendaDireita = (texto) => {
+      ws.mergeCells(t + 2, 15, t + 2, 21);
+      const c = ws.getCell(t + 2, 15);
+      c.value = texto; c.font = B.fonte(9, { color: { argb: cor.mudo } }); c.alignment = { vertical: 'middle', wrapText: true };
+    };
+    B.cabecalho(ws, t + 1, 15, ['Pedido', 'Cliente', 'Armazém', 'Peças', 'Transportadora', 'Tipo que tinha', 'Dias de atraso que tinha']);
     if (a.cmp) {
       const saiu = a.cmp.saiu.slice().sort(ordem);
       saiu.forEach((it, i) => {
         const rr = t + 2 + i, fundo = i % 2 ? cor.zebra : undefined;
-        B.celula(ws, rr, 11, it[0], { fundo, h: 'center' });
-        B.celula(ws, rr, 12, it[1], { fundo, h: 'left' });
-        B.celula(ws, rr, 13, it[3], { fundo, fmt: '#,##0', h: 'center', negrito: true });
-        B.celula(ws, rr, 14, it[7] || '-', { fundo, h: 'left' });
-        B.celula(ws, rr, 15, it[4] === 'F' ? 'Faturamento' : 'Estoque', { fundo, h: 'center', negrito: true, cor: it[4] === 'F' ? cor.azul : 'FFB87708' });
-        B.celula(ws, rr, 16, it[6], { fundo, fmt: '#,##0', h: 'center' });
+        B.celula(ws, rr, 15, it[0], { fundo, h: 'center' });
+        B.celula(ws, rr, 16, (it[8] && it[8].n) || '-', { fundo, h: 'left', sz: 10 });
+        B.celula(ws, rr, 17, it[1], { fundo, h: 'left' });
+        B.celula(ws, rr, 18, it[3], { fundo, fmt: '#,##0', h: 'center', negrito: true });
+        B.celula(ws, rr, 19, it[7] || '-', { fundo, h: 'left' });
+        B.celula(ws, rr, 20, it[4] === 'F' ? 'Faturamento' : 'Estoque', { fundo, h: 'center', negrito: true, cor: it[4] === 'F' ? cor.azul : 'FFB87708' });
+        B.celula(ws, rr, 21, it[6], { fundo, fmt: '#,##0', h: 'center' });
       });
-      if (!saiu.length) B.legenda(ws, t + 2, 16, 'Nenhum pedido saiu do atraso desde ' + ddmm(a.cmp.ant.dia) + '.');
-    } else B.legenda(ws, t + 2, 16, 'Sem dia anterior gravado para comparar.');
+      if (!saiu.length) legendaDireita('Nenhum pedido saiu do atraso desde ' + ddmm(a.cmp.ant.dia) + '.');
+    } else legendaDireita('Sem dia anterior gravado para comparar.');
     return ws;
   }
 
