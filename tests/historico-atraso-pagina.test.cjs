@@ -211,3 +211,50 @@ test('o servidor acha na Saída p/ Expedição os pedidos das fotos (ignora zero
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('link sem senha: só leitura, o administrador gera, troca e desativa', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-histlink-'));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  fs.mkdirSync(path.join(dir, 'data'));
+  delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
+  process.env.PORT = '0'; process.env.APP_PASSWORD = crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomUUID(); process.env.NODE_ENV = 'test';
+  const server = require(path.join(dir, 'server.js'));
+  if (!server.listening) await new Promise(resolve => server.once('listening', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const hoje = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  try {
+    const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1' }, body: JSON.stringify({ password: process.env.APP_PASSWORD }) });
+    const cookie = login.headers.get('set-cookie').split(';')[0];
+    const adm = (url, corpo) => fetch(base + url, { method: corpo ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1', Cookie: cookie }, body: corpo ? JSON.stringify(corpo) : undefined });
+    const anonimo = (url, corpo) => fetch(base + url, { method: corpo ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1' }, body: corpo ? JSON.stringify(corpo) : undefined });
+    await adm('/api/atraso-historico', { dia: hoje, total: 5, pecas: 10, itens: [['P1', 'BH', hoje, 3, 'E', 'A', 2, 'TCS']] });
+
+    assert.equal((await anonimo('/api/atraso-historico-link')).status, 401, 'sem login não vê nem o código');
+    assert.equal((await anonimo('/api/atraso-historico-link', { acao: 'gerar' })).status, 401, 'sem login não gera');
+    assert.equal((await (await adm('/api/atraso-historico-link')).json()).token, null, 'começa sem link');
+    assert.equal((await anonimo('/api/atraso-historico?k=qualquer')).status, 401, 'código inventado não vale, e sem link ativo nada vale');
+    assert.equal((await adm('/api/atraso-historico-link', { acao: 'xyz' })).status, 400);
+
+    const t1 = (await (await adm('/api/atraso-historico-link', { acao: 'gerar' })).json()).token;
+    assert.match(t1, /^[A-Za-z0-9_-]{32}$/, 'código longo e aleatório');
+    assert.equal((await (await adm('/api/atraso-historico-link')).json()).token, t1);
+    const lido = await anonimo('/api/atraso-historico?meses=2&k=' + t1);
+    assert.equal(lido.status, 200, 'com o código, qualquer pessoa lê');
+    assert.equal(Object.values((await lido.json()).meses)[0].dias[hoje].itens.length, 1);
+    assert.equal((await anonimo('/api/atraso-historico?so=saidas&k=' + t1)).status, 200, 'e a atualização em tempo real também');
+    assert.equal((await anonimo('/api/atraso-historico?k=' + t1.slice(0, -1) + 'x')).status, 401, 'código errado');
+    assert.equal((await anonimo('/api/atraso-historico?k=' + t1, { dia: hoje, total: 9, pecas: 1, itens: [['X', 'BH', hoje, 1, 'E', 'A', 1, '']] })).status, 401, 'o código não grava nada');
+    assert.equal((await anonimo('/api/atraso-historico-link?k=' + t1)).status, 401, 'o código não administra o link');
+    assert.equal((await anonimo('/api/login', { password: t1 })).status, 401, 'o código não vira senha');
+
+    const t2 = (await (await adm('/api/atraso-historico-link', { acao: 'gerar' })).json()).token;
+    assert.notEqual(t2, t1);
+    assert.equal((await anonimo('/api/atraso-historico?k=' + t1)).status, 401, 'gerar novo desativa o antigo');
+    assert.equal((await anonimo('/api/atraso-historico?k=' + t2)).status, 200);
+    await adm('/api/atraso-historico-link', { acao: 'desativar' });
+    assert.equal((await anonimo('/api/atraso-historico?k=' + t2)).status, 401, 'desativado');
+    assert.equal((await (await adm('/api/atraso-historico-link')).json()).token, null);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});

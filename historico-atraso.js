@@ -140,6 +140,9 @@
     return e;
   };
   const $app = document.getElementById('app');
+  // Link sem senha: /historico-atraso.html?k=CÓDIGO (só leitura). Sem código, a página pede o login do SC9.
+  const chaveLink = new URLSearchParams(location.search).get('k') || '';
+  const comChave = (url) => url + (chaveLink ? (url.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(chaveLink) : '');
   const estado = { data: null, p: null, mes: '', dia: '', aba: 'atraso', filtro: { tipo: '', sit: '', status: '', arm: '', transp: '', busca: '', ordem: 'dias', desc: true }, aberto: '', limite: 100, ajuda: true, aviso: '' };
 
   const seta = (atual, ref, pioraSobe) => {
@@ -153,9 +156,9 @@
   async function carregar() {
     $app.replaceChildren(h('p', { class: 'carregando', text: 'Carregando o histórico…' }));
     let r;
-    try { r = await fetch('/api/atraso-historico?meses=24', { cache: 'no-store', credentials: 'same-origin' }); }
+    try { r = await fetch(comChave('/api/atraso-historico?meses=24'), { cache: 'no-store', credentials: 'same-origin' }); }
     catch (e) { return telaErro('Não consegui falar com o servidor. Verifique a internet e tente de novo.'); }
-    if (r.status === 401) return telaLogin('');
+    if (r.status === 401) return chaveLink ? telaErro('Este link não vale mais. Peça um link novo ao administrador do SC9.') : telaLogin('');
     if (r.status === 403) return telaErro('Seu usuário não tem acesso a esta página. Peça ao administrador o perfil "Geral".');
     if (!r.ok) return telaErro('O servidor não conseguiu abrir o histórico agora. Tente de novo em instantes.');
     estado.data = await r.json();
@@ -170,7 +173,7 @@
   }
 
   function telaErro(msg) {
-    $app.replaceChildren(h('div', { class: 'cartao centro' }, h('h2', { text: 'Não deu para abrir' }), h('p', { text: msg }), h('button', { class: 'btn primario', onclick: carregar, text: 'Tentar de novo' })));
+    $app.replaceChildren(h('div', { class: 'cartao centro' }, h('h2', { text: 'Não deu para abrir' }), h('p', { text: msg }), chaveLink ? null : h('button', { class: 'btn primario', onclick: carregar, text: 'Tentar de novo' })));
   }
 
   function telaLogin(erro) {
@@ -227,7 +230,7 @@
         h('button', { class: 'btn', onclick: () => i < meses.length - 1 && trocarMes(meses[i + 1]), disabled: i >= meses.length - 1, 'aria-label': 'Mês anterior', text: '◀' }),
         sel,
         h('button', { class: 'btn', onclick: () => i > 0 && trocarMes(meses[i - 1]), disabled: i <= 0, 'aria-label': 'Próximo mês', text: '▶' }),
-        h('a', { class: 'btn', href: '/', text: 'Voltar ao SC9' })));
+        chaveLink ? null : h('a', { class: 'btn', href: '/', text: 'Voltar ao SC9' })));
   }
 
   // Esta página só muda quando alguém exporta o Histórico de Atraso no SC9; mostra quando foi a última vez.
@@ -321,7 +324,7 @@
     const hora = a && a.reg.atualizadoEm ? new Date(a.reg.atualizadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) : '';
     caixa.appendChild(h('div', { class: 'dia-titulo' },
       h('div', null, h('h2', { text: semana(dia).replace(/^./, (c) => c.toUpperCase()) + ', ' + ddmmaaaa(dia) }), h('p', { class: 'mudo', text: a ? 'Foto gravada' + (hora ? ' às ' + hora : '') + '.' : 'Sem foto de atraso neste dia (só há dados de despacho).' })),
-      h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(location.origin + location.pathname + '#' + dia); estado.aviso = 'Link do dia copiado.'; } catch (e) { estado.aviso = 'Não consegui copiar sozinho. Copie o endereço que está na barra do navegador.'; } desenhar(); }, text: 'Copiar link deste dia' })));
+      h('button', { class: 'btn', onclick: async () => { try { await navigator.clipboard.writeText(location.origin + location.pathname + location.search + '#' + dia); estado.aviso = 'Link do dia copiado.'; } catch (e) { estado.aviso = 'Não consegui copiar sozinho. Copie o endereço que está na barra do navegador.'; } desenhar(); }, text: 'Copiar link deste dia' })));
     if (estado.aviso) { caixa.appendChild(h('p', { class: 'aviso', role: 'status', text: estado.aviso })); estado.aviso = ''; }
     const reclass = a ? a.reg.itens.filter((it) => it[9]).length : 0;
     if (a) caixa.appendChild(h('p', { class: 'frase ' + (a.cmp ? (a.resumo.tot < a.cmp.resumoAnt.tot ? 'bom' : a.resumo.tot > a.cmp.resumoAnt.tot ? 'ruim' : '') : ''), text: X().frase(a) }));
@@ -457,7 +460,7 @@
   async function atualizarSaidas() {
     if (!estado.p || document.hidden) return;
     try {
-      const r = await fetch('/api/atraso-historico?meses=24&so=saidas', { cache: 'no-store', credentials: 'same-origin' });
+      const r = await fetch(comChave('/api/atraso-historico?meses=24&so=saidas'), { cache: 'no-store', credentials: 'same-origin' });
       if (!r.ok) return;
       const novas = (await r.json()).saidas || {};
       const chave = JSON.stringify(novas);
