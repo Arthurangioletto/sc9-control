@@ -401,6 +401,7 @@ SERVABLE.add("gaveta-ui.js");
 SERVABLE.add("consolidado.js");
 SERVABLE.add("consolidado-ui.js");
 SERVABLE.add("consolidado-xlsx.js");
+SERVABLE.add("relatorio-geral-xlsx.js");
 SERVABLE.add("vendor-exceljs.js");
 SERVABLE.add("vendor-jszip.js");
 SERVABLE.add("vendor-zxing.js");
@@ -1621,6 +1622,40 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       console.error("Erro ao carregar snapshot:", e);
       return sendJson(res, 500, erroPublico(e, "erro ao carregar"));
+    }
+  }
+
+  // Histórico de atraso do Relatório Geral: uma foto por dia, guardada por mês (arquivos atraso-historico-AAAA-MM.json).
+  // Gravar um dia troca só aquele dia. GET devolve os últimos N meses (padrão 6) para o Excel montar uma aba por mês.
+  if (pathname === "/api/atraso-historico" && (method === "GET" || method === "POST")) {
+    if (!(await exigir(req, res, ["admin"]))) return;
+    const AtrasoHistorico = require("./atraso-historico.js");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      if (method === "GET") {
+        const n = Math.min(24, Math.max(1, Math.round(Number(new URL(req.url, "http://x").searchParams.get("meses"))) || 6));
+        const meses = {};
+        for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
+          const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
+          if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
+        }
+        return sendJson(res, 200, { meses });
+      }
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      let registro;
+      try { registro = AtrasoHistorico.normalizarRegistro(corpo); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      const amanha = diaSP(new Date(Date.now() + 24 * 3600 * 1000));
+      if (registro.dia > amanha) return sendJson(res, 400, { error: "Dia no futuro." });
+      const mes = AtrasoHistorico.mesDoDia(registro.dia);
+      await comFila("atraso-historico-" + mes, async () => {
+        const atual = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
+        await objSave(AtrasoHistorico.nomeDoMes(mes), AtrasoHistorico.mesclarDia(atual, registro));
+      });
+      return sendJson(res, 200, { ok: true, dia: registro.dia, pedidos: registro.itens.length });
+    } catch (e) {
+      console.error("Erro no histórico de atraso:", e);
+      return sendJson(res, 500, erroPublico(e, "erro no histórico de atraso"));
     }
   }
 

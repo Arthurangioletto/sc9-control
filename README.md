@@ -285,6 +285,16 @@ No cabeçalho do painel, o botão **Consolidado** abre uma caixinha para escolhe
 - **Datas numéricas:** exportações do Protheus trazem Dt Fim Pick / Dt Fim Conf como número (serial do Excel) nas linhas mais recentes. O painel passou a ler esses números como data; antes essas linhas apareciam como "não separadas".
 - **Validação:** o consolidado de 09 a 13/11/2026 gerado no navegador com a base de 17/11 bate coluna a coluna com o que foi feito à mão (1.165 pedidos, 33.494 peças, 1.154 enviados, 4 atrasados, 7 pendentes). Testes em `tests/consolidado.test.cjs` e `tests/consolidado-xlsx.test.cjs`. No Excel estilizado os números são os mesmos; só muda a ordem de itens empatados no Ranking.
 
+## Relatório Geral: visual novo e Histórico de Atraso por mês
+
+O botão **Relatório Geral** do painel agora baixa o Excel com o mesmo desenho do Consolidado (faixa azul, cartões de indicadores, tabelas com cabeçalho azul e listras, barras de %, gráfico na Tendência Diária). As abas e colunas são as mesmas de antes (Resumo, Por Armazém, Tendência Diária e Semanal, Top 5 Itens, Top Separadores, Alertas); porcentagens e datas viram valores de verdade do Excel. Geração em `relatorio-geral-xlsx.js` (ExcelJS + JSZip, `vendor-exceljs.js` e `vendor-jszip.js`, carregados só ao clicar). Se algo falhar, baixa o Excel simples de antes.
+
+- **Aba "Histórico de Atraso MM-AAAA" (uma por mês):** resumo por dia (pedidos na base, atraso de estoque e de faturamento em pedidos, peças e %, total e média do mês, gráfico de % por dia) e, abaixo, a lista de pedidos em atraso dia a dia (pedido, armazém, liberado em, dias de atraso, peças, tipo e situação), com filtro.
+- **Não apaga o histórico:** cada exportação (e cada carga do SC9 pelo administrador) grava só a foto de hoje em `atraso-historico-AAAA-MM.json` (um arquivo por mês); o mesmo dia é trocado pela versão mais recente e os outros dias ficam como estavam. O Excel traz os últimos 12 meses gravados. Rotas `GET/POST /api/atraso-historico` (somente administrador); regras em `atraso-historico.js`.
+- **Regras:** *Faturamento* = sem nota, já separado e conferido (entra também "em processo", como o "Atraso Faturamento" do Resumo). *Estoque* = qualquer outro pedido Atrasado (ainda não separado/conferido ou, se já tem nota, ainda sem saída na Entrega), o mesmo "Atrasados" do painel. % = pedidos em atraso ÷ pedidos da base no dia.
+- **Só passa a existir daqui para frente:** dias anteriores à primeira exportação depois desta versão não têm foto; o histórico começa no dia em que o primeiro for gravado.
+- **Validação:** com a base real de 17/11 carregada no navegador, o Excel baixado fecha com o Resumo (Atrasados 144 = 142 de estoque + 2 de faturamento) e um dia gravado antes continuou no arquivo depois da exportação de hoje. Testes em `tests/relatorio-geral-xlsx.test.cjs`.
+
 ## Transferência (aba por perfil)
 
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
