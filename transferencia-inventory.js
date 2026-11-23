@@ -5,7 +5,19 @@
   const header = value => code(value).normalize('NFD').replace(/[\u0300-\u036f]|[^A-Z0-9]/g, '');
   const key = (...parts) => JSON.stringify(parts);
   const isSource = arm => scope(arm) === '59';
-  const destinationAddress = row => row.enderecoDestino || '';
+  // Endereço do item no armazém de destino escolhido (padrão 02). A ZZ2 guarda os endereços de todos os armazéns; a base
+  // salva antes da escolha do destino só tem o campo enderecoDestino (armazém 02).
+  const destinationAddress = (row, destino) => {
+    const arm = scope(destino || '2');
+    if (row.enderecosDestino && typeof row.enderecosDestino === 'object') return row.enderecosDestino[arm] || '';
+    return arm === '2' ? row.enderecoDestino || '' : '';
+  };
+  // Armazéns (fora o 59 de origem) que têm endereço na ZZ2 desta base: sugestões para o campo de destino.
+  const destinationArms = items => {
+    const arms = new Set();
+    for (const row of items || []) for (const arm of Object.keys(row.enderecosDestino || {})) arms.add(arm);
+    return [...arms].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+  };
 
   function sheetRows(book, xlsx, name, columns, optional = []) {
     const sheetName = book.SheetNames.find(value => header(value) === name);
@@ -57,10 +69,12 @@
     for (const row of products) if (row.sku) catalog.set(key(scope(row.filial), code(row.sku)), row);
     for (const row of addresses) {
       const arm = scope(row.arm);
-      if (arm !== '2' || !row.sku || !row.endereco) continue;
+      if (!arm || isSource(arm) || !row.sku || !row.endereco) continue;
       const id = key(scope(row.filial), code(row.sku), code(row.lote));
-      if (!locations.has(id)) locations.set(id, new Set());
-      locations.get(id).add(row.endereco);
+      if (!locations.has(id)) locations.set(id, new Map());
+      const byArm = locations.get(id);
+      if (!byArm.has(arm)) byArm.set(arm, new Set());
+      byArm.get(arm).add(row.endereco);
     }
     for (const row of stock) {
       const arm = scope(row.arm);
@@ -81,10 +95,11 @@
       }
       const product = catalog.get(key(filial, sku)) || catalog.get(key('', sku));
       const addresses = locations.get(key(filial, sku, lote)) || locations.get(key(filial, sku, ''));
-      const enderecoDestino = addresses ? [...addresses].sort().join(' / ') : '';
+      const enderecosDestino = {};
+      if (addresses) for (const [arm, list] of addresses) enderecosDestino[arm] = [...list].sort().join(' / ');
       group.itens.set(itemKey, { id: key(filial, sku, lote, arm), sku: row.sku, lote, arm,
         validade: row.validade, descricao: product?.descricao || sku, ean: product?.ean || '',
-        unidade: product?.unidade || '', endereco: '', enderecoDestino,
+        unidade: product?.unidade || '', endereco: '', enderecosDestino,
         esperado: amount, conferido: 0, avaria: 0 });
     }
     return [...lots.values()].map(group => ({
@@ -152,6 +167,8 @@
     for (const item of items) {
       if (!item || textFields.some(field => typeof item[field] !== 'string') ||
           (item.enderecoDestino !== undefined && typeof item.enderecoDestino !== 'string') ||
+          (item.enderecosDestino !== undefined && (!item.enderecosDestino || typeof item.enderecosDestino !== 'object' || Array.isArray(item.enderecosDestino) ||
+            Object.values(item.enderecosDestino).some(value => typeof value !== 'string'))) ||
           !item.id || !item.filial || !item.lote || !item.sku || ids.has(item.id) ||
           !Number.isFinite(item.esperado) || item.esperado <= 0 ||
           !Number.isFinite(item.conferido) || item.conferido < 0 ||
@@ -348,6 +365,6 @@
     return xlsx.CFB.write(zip,{type:'array',fileType:'zip',compression:true});
   }
 
-  root.SC9TransferenciaInventory = { read, isSource, findInventoryScan, aggregateExportRecords, destinationAddress, template, savePartial, readPartial, records, restore, compareTransfer, compareDaily, compareSelectedDocuments, expiryStatus, highlightExpiredWorkbook };
+  root.SC9TransferenciaInventory = { read, isSource, findInventoryScan, aggregateExportRecords, destinationAddress, destinationArms, template, savePartial, readPartial, records, restore, compareTransfer, compareDaily, compareSelectedDocuments, expiryStatus, highlightExpiredWorkbook };
   if (typeof module === 'object' && module.exports) module.exports = root.SC9TransferenciaInventory;
 })(typeof window === 'object' ? window : globalThis);

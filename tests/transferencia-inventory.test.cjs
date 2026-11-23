@@ -31,6 +31,32 @@ test('Transferência lê somente o saldo do 59 e mostra o endereço de destino n
   assert.equal(inventory.destinationAddress({ endereco: 'A59' }), '');
 });
 
+test('o endereço de destino segue o armazém escolhido (qualquer um da ZZ2, menos o 59)', () => {
+  const lots = read(book({
+    SB8: [['Filial', 'Produto', 'Armazem', 'Data Validad', 'Saldo Lote', 'Lote'], [1, 'P01', 59, '', 5, '000123']],
+    ZZ2: [['Filial', 'Armazem', 'Endereco', 'Produto', 'Lote'],
+      [1, 59, 'A59', 'P01', '000123'], ['01', '01', 'G01', 'P01', '000123'], ['01', '02', 'D02', 'P01', '000123'],
+      ['01', '02', 'D02B', 'P01', '000123'], ['01', '03', 'T03', 'P01', '000123'], ['01', 'ES', 'E-ES', 'P01', '000123']],
+    SB1: sb1
+  }), xlsx);
+  const item = lots[0].itens[0];
+  assert.equal(inventory.destinationAddress(item), 'D02 / D02B', 'padrão: armazém 02, vários endereços juntos');
+  assert.equal(inventory.destinationAddress(item, '02'), 'D02 / D02B');
+  assert.equal(inventory.destinationAddress(item, '01'), 'G01', 'armazém 01 com zero à esquerda');
+  assert.equal(inventory.destinationAddress(item, '3'), 'T03');
+  assert.equal(inventory.destinationAddress(item, 'es'), 'E-ES');
+  assert.equal(inventory.destinationAddress(item, '04'), '', 'sem endereço nesse armazém');
+  assert.equal(inventory.destinationAddress(item, '59'), '', 'o 59 é a origem e não vira destino');
+  assert.deepEqual(inventory.destinationArms(lots[0].itens), ['1', '2', '3', 'ES']);
+  // base salva antes da escolha do destino: só o armazém 02 existe
+  assert.equal(inventory.destinationAddress({ enderecoDestino: 'ANTIGO' }, '02'), 'ANTIGO');
+  assert.equal(inventory.destinationAddress({ enderecoDestino: 'ANTIGO' }, '03'), '');
+  // o arquivo parcial aceita o mapa novo e recusa lixo
+  const parcial = { ...item, filial: lots[0].filial, bipado: false, conferido: 0, avaria: 0 };
+  assert.equal(inventory.readPartial(inventory.savePartial('x.xlsx', [parcial])).items.length, 1);
+  assert.throws(() => inventory.readPartial(inventory.savePartial('x.xlsx', [{ ...parcial, enderecosDestino: { 2: 7 } }])), /inválidos/);
+});
+
 test('Transferência soma o saldo repetido do mesmo lote e armazém e ignora linhas sem lote', () => {
   const lots = read(book({
     SB8: [
