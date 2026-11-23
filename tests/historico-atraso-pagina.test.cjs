@@ -67,10 +67,11 @@ test('filtrar combina tipo, situação, armazém, transportadora e busca, e orde
 });
 
 test('csv sai com BOM, ponto e vírgula, aspas escapadas e nomes legíveis', () => {
-  const texto = H.csv([['1001', 'Cambuci "A"', '2026-11-10', 5.5, 'F', 'P', 9, '']], { 1001: '2026-11-21' }, '2026-11-19', 'atraso');
-  assert.ok(texto.startsWith('\ufeff"Pedido";"Armazém"'));
+  const item = ['1001', 'Cambuci "A"', '2026-11-10', 5.5, 'F', 'P', 9, '', { n: 'CLIENTE X', c: '001902', nf: '884285', v: 1234.5, l: 3, e: 'F', sp: 'ANA', cf: 'BIA', ce: '2026-11-17T13:30:00.000Z' }];
+  const texto = H.csv([item], { 1001: '2026-11-21' }, '2026-11-19', 'atraso');
+  assert.ok(texto.startsWith('\ufeff"Pedido";"Cliente"'));
   const linhas = texto.slice(1).split('\r\n');
-  assert.equal(linhas[1], '"1001";"Cambuci ""A""";"10/11/2026";"5,5";"Faturamento";"Em processo";"9";"";"Estava em atraso · despachado em 21/11"');
+  assert.equal(linhas[1], '"1001";"CLIENTE X";"001902";"884285";"1234,5";"Cambuci ""A""";"10/11/2026";"5,5";"3";"Faturamento";"Faturamento (falta a nota)";"Em processo";"9";"";"ANA";"BIA";"17/11/2026, 10:30:00";"Estava em atraso · despachado em 21/11"');
 });
 
 test('status do pedido: despachado (e quando), saiu sem despacho ou ainda em atraso', () => {
@@ -164,9 +165,9 @@ test('pedido achado na Saída p/ Expedição passa a contar como atraso de fatur
   const novo = H.aplicarSaidas(meses, saidas)['2026-11'].dias;
   const d18 = novo['2026-11-18'].itens;
   assert.deepEqual(d18.map(i => i[4]), ['F', 'E', 'F'], '5001 vira faturamento; 5002 ainda era estoque no dia 18');
-  assert.equal(d18[0][9], 'E', 'marca que foi reclassificado');
-  assert.equal(d18[0][8], '2026-11-18T18:00:00.000Z');
-  assert.equal(d18[2][9], undefined, 'quem já era faturamento não é reclassificado');
+  assert.equal(d18[0][10], 'E', 'marca que foi reclassificado');
+  assert.equal(d18[0][9], '2026-11-18T18:00:00.000Z');
+  assert.equal(d18[2][10], undefined, 'quem já era faturamento não é reclassificado');
   assert.equal(novo['2026-11-19'].itens[0][4], 'F');
   assert.equal(novo['2026-11-19'].itens[1][4], 'E', '5002 só saiu depois da foto');
   assert.equal(meses['2026-11'].dias['2026-11-18'].itens[0][4], 'E', 'os dados originais não são alterados');
@@ -257,4 +258,43 @@ test('link sem senha: só leitura, o administrador gera, troca e desativa', asyn
   } finally {
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test('dados do pedido (cliente, NF, valor, etapa...) vão na foto e dá para buscar e filtrar por eles', () => {
+  const RG = require('../relatorio-geral-xlsx.js');
+  const d = (h) => new Date(Date.UTC(2026, 10, 17, h));
+  const faturamento = new Map([['884285', d(18)]]);
+  const valores = new Map([['884285', { mercad: 1000, fatura: 1234.5 }]]);
+  const base = { armazem: 'Cambuci', dt: new Date(2026, 10, 10), qt: 8, itens: 3, status: 'Atrasado', nome: 'FUNDACAO X', cliente: '001902' };
+  const pedidos = [
+    { ...base, pedido: '1', nf: '000884285.0', separador: 'ANA', conferente: 'BIA', pickEnd: d(12), confEnd: d(14) },
+    { ...base, pedido: '2', nf: null, separador: 'ANA', conferente: '0', pickEnd: d(12), confEnd: null },
+    { ...base, pedido: '3', nf: null, separador: '', conferente: '', pickEnd: null, confEnd: null },
+    { ...base, pedido: '4', nf: null, separador: 'ANA', conferente: 'BIA', pickEnd: d(12), confEnd: d(14), nome: 'OUTRO CLIENTE', cliente: '77' }
+  ];
+  const x = (n) => RG.extrasDoPedido(pedidos[n], !!pedidos[n].pickEnd, !!pedidos[n].confEnd, { faturamento, valores });
+  assert.deepEqual(x(1), { n: 'FUNDACAO X', c: '001902', l: 3, e: 'C', sp: 'ANA', pe: d(12).toISOString() });
+  assert.equal(x(2).e, 'S');
+  assert.equal(x(3).e, 'F');
+  const rico = x(0);
+  assert.equal(rico.e, 'D'); assert.equal(rico.v, 1234.5); assert.equal(rico.fa, d(18).toISOString()); assert.equal(rico.cf, 'BIA');
+  const itens = pedidos.map((o) => [o.pedido, 'Cambuci', '2026-11-10', 8, 'F', 'A', 7, 'TCS', RG.extrasDoPedido(o, !!o.pickEnd, !!o.confEnd, { faturamento, valores })]);
+  const f = (extra) => H.filtrar(itens, Object.assign({ tipo: '', sit: '', arm: '', transp: '', busca: '', status: '', etapa: '', ordem: 'pedido', desc: false }, extra)).map(i => i[0]);
+  assert.deepEqual(f({ busca: 'outro cliente' }), ['4'], 'busca pelo nome do cliente');
+  assert.deepEqual(f({ busca: '884285' }), ['1'], 'busca pela nota fiscal');
+  assert.deepEqual(f({ busca: '77' }), ['4'], 'busca pelo código do cliente');
+  assert.deepEqual(f({ etapa: 'S' }), ['3']);
+  assert.deepEqual(f({ etapa: 'F' }), ['4']);
+  assert.deepEqual(f({ ordem: 'cliente' }).slice(0, 1), ['1'], 'ordena pelo nome do cliente');
+});
+
+test('o servidor guarda só os dados conhecidos do pedido, limpos', async () => {
+  const AH = require('../atraso-historico.js');
+  const lixo = { n: 'N'.repeat(200), c: 5, nf: '99', v: '12,5', l: 2.4, e: 'Z', sp: 'ANA', pe: 'não é data', ce: '2026-11-17T13:30:00.000Z', hack: '<img>', fa: { a: 1 } };
+  const reg = AH.normalizarRegistro({ dia: '2026-11-20', total: 3, itens: [['1', 'BH', '2026-11-10', 3, 'E', 'A', 2, 'TCS', lixo], ['2', 'BH', '2026-11-10', 3, 'E', 'A', 2, 'TCS'], ['3', 'BH', '2026-11-10', 3, 'E', 'A', 2, 'TCS', 'texto']] });
+  assert.deepEqual(reg.itens[0][8], { n: 'N'.repeat(60), c: '5', nf: '99', sp: 'ANA', ce: '2026-11-17T13:30:00.000Z', l: 2 }, 'valor "12,5" vira 0 (não é número); etapa inválida, data ruim e chaves desconhecidas saem');
+  assert.deepEqual(reg.itens[1][8], {}, 'sem extras: objeto vazio');
+  assert.deepEqual(reg.itens[2][8], {}, 'lixo vira vazio');
+  const bom = AH.normalizarRegistro({ dia: '2026-11-20', total: 1, itens: [['1', 'BH', '2026-11-10', 3, 'F', 'A', 2, 'TCS', { v: 12.5, e: 'D', fa: '2026-11-18T10:00:00Z' }]] });
+  assert.deepEqual(bom.itens[0][8], { v: 12.5, e: 'D', fa: '2026-11-18T10:00:00Z' });
 });

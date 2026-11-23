@@ -288,7 +288,35 @@
     return mapa;
   }
 
-  function registroDoDia(pedidos, agora, dia, sc5, entrega) {
+  // Dados do pedido para acompanhar o atraso (linha[8] do histórico), em chaves curtas:
+  // n nome do cliente · c código do cliente · nf nota fiscal · v valor (nota) · l linhas · e etapa (S separação, C conferência,
+  // F faturamento = falta a nota, D despacho = já tem nota) · sp separador · cf conferente · pe fim da separação · ce fim da
+  // conferência · fa faturado em · h liberado às. faturamento/valores = mapas por nota fiscal (aba SF2).
+  function extrasDoPedido(o, separado, conferido, extras) {
+    const texto = v => (v == null ? '' : String(v)).trim();
+    const iso = d => (d instanceof Date && !isNaN(d) ? d.toISOString() : '');
+    const nf = texto(o.nf).replace(/\.0$/, '');
+    const x = {};
+    const put = (k, v) => { if (v !== '' && v != null && v !== false) x[k] = v; };
+    put('n', texto(o.nome).slice(0, 60));
+    put('c', texto(o.cliente).slice(0, 20));
+    put('nf', nf.slice(0, 20));
+    const achar = (mapa) => (nf && mapa && typeof mapa.get === 'function' ? mapa.get(nf) || mapa.get(nf.replace(/^0+/, '')) : null);
+    const val = achar(extras && extras.valores);
+    const valor = val ? Number(val.fatura) || Number(val.mercad) || 0 : 0;
+    if (valor > 0) x.v = Math.round(valor * 100) / 100;
+    if (Number(o.itens) > 0) x.l = Math.round(Number(o.itens));
+    x.e = nf ? 'D' : separado && conferido ? 'F' : separado ? 'C' : 'S';
+    const sep = texto(o.separador), conf = texto(o.conferente);
+    put('sp', sep && sep !== '0' ? sep.slice(0, 40) : '');
+    put('cf', conf && conf !== '0' ? conf.slice(0, 40) : '');
+    put('pe', iso(o.pickEnd)); put('ce', iso(o.confEnd)); put('h', iso(o.dtLiberacaoHora));
+    const fat = achar(extras && extras.faturamento);
+    put('fa', iso(fat));
+    return x;
+  }
+
+  function registroDoDia(pedidos, agora, dia, sc5, entrega, extras) {
     const itens = [];
     let pecas = 0;
     const texto = v => (v == null ? '' : String(v)).trim();
@@ -300,7 +328,7 @@
       const tipo = !o.nf && separado && conferido ? 'F' : 'E';
       if (tipo === 'E' && o.status !== 'Atrasado') continue;
       const dias = o.dt && agora ? Math.max(0, Math.round((agora - o.dt) / 864e5)) : 0;
-      itens.push([texto(o.pedido), o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem), o.dayKey || chaveDia(o.dt), Math.round((Number(o.qt) || 0) * 100) / 100, tipo, o.status === 'Atrasado' ? 'A' : 'P', dias, transportadoraDe(o, sc5)]);
+      itens.push([texto(o.pedido), o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem), o.dayKey || chaveDia(o.dt), Math.round((Number(o.qt) || 0) * 100) / 100, tipo, o.status === 'Atrasado' ? 'A' : 'P', dias, transportadoraDe(o, sc5), extrasDoPedido(o, separado, conferido, extras)]);
     }
     return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens, despachados: despachadosPorDia(pedidos, entrega), entregues: entreguesPorPedido(pedidos, entrega, agora) };
   }
@@ -389,7 +417,7 @@
 
   // blocos de estilo e utilidades para o Excel do Histórico de Atraso
   const base = { COR, MESES, solido, bordas, fonte, letra, ref, faixa, banner, secao, legenda, cabecalho, celula, barras, brData, injetar, nomeAba, carregarScript, baixarBytes, gravar, ler, diaDeHoje };
-  const api = { gerar, baixar, registrarSilencioso, registroDoDia, despachadosPorDia, entreguesPorPedido, mesclarLocal, base };
+  const api = { gerar, baixar, registrarSilencioso, registroDoDia, extrasDoPedido, despachadosPorDia, entreguesPorPedido, mesclarLocal, base };
   root.SC9RelatorioGeralXlsx = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);

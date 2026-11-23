@@ -34,7 +34,7 @@
       if (gerando) return;
       setGerando(true); setErro('');
       try {
-        const r = await X().baixar({ orders: props.orders, agora: props.agora, sc5: props.sc5, entrega: props.entrega, mes: atual ? atual.id : undefined });
+        const r = await X().baixar({ orders: props.orders, agora: props.agora, sc5: props.sc5, entrega: props.entrega, faturamento: props.faturamento, valores: props.valores, mes: atual ? atual.id : undefined });
         if (!r.salvo) setErro('Baixei o Excel, mas não consegui gravar a foto de hoje no servidor.');
       } catch (e) { setErro(e.message || 'Não consegui gerar o histórico de atraso.'); }
       finally { setGerando(false); }
