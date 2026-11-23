@@ -402,6 +402,8 @@ SERVABLE.add("consolidado.js");
 SERVABLE.add("consolidado-ui.js");
 SERVABLE.add("consolidado-xlsx.js");
 SERVABLE.add("relatorio-geral-xlsx.js");
+SERVABLE.add("atraso-historico-xlsx.js");
+SERVABLE.add("atraso-historico-ui.js");
 SERVABLE.add("vendor-exceljs.js");
 SERVABLE.add("vendor-jszip.js");
 SERVABLE.add("vendor-zxing.js");

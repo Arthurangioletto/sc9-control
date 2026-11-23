@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const H = require('../atraso-historico.js');
+require('../consolidado.js'); // tabela código → nome da transportadora
 const X = require('../relatorio-geral-xlsx.js');
 const ExcelJS = require('../vendor-exceljs.js');
 const JSZip = require('../vendor-jszip.js');
@@ -45,22 +46,19 @@ test('registro do dia: estoque só quando atrasado (com ou sem nota); faturament
     ped({ pedido: 'F2', status: 'Pendente', pickEnd: d('2026-11-22'), confEnd: d('2026-11-22'), armazem: 'Tambore' }),
     ped({ pedido: 'OK', status: 'Enviado' }),
     ped({ pedido: 'NF', status: 'Atrasado', nf: '123' })
-  ], agora, '2026-11-23');
+  ], agora, '2026-11-23', new Map([['E1', '10085'], ['F1', '000004'], ['NF', 999]]));
   assert.equal(r.total, 6);
+  assert.deepEqual(r.itens.map(i => i[7]), ['TCS', 'Retira 01', '(não definida)', 'Código 999'], 'transportadora pelo código do SC5, igual ao Consolidado');
   assert.deepEqual(r.itens.map(i => [i[0], i[4], i[5]]), [['E1', 'E', 'A'], ['F1', 'F', 'A'], ['F2', 'F', 'P'], ['NF', 'E', 'A']], 'atrasado já faturado e sem saída conta como estoque');
   assert.equal(r.itens[2][1], 'Tamboré');
   assert.equal(r.itens[0][6], 5, 'dias de atraso desde a liberação');
   assert.equal(H.normalizarRegistro(r).itens.length, 4, 'o servidor aceita o que o navegador manda');
 });
 
-test('Excel do Relatório Geral: abas do painel com formato novo e uma aba de histórico por mês', async () => {
-  const meses = {
-    '2026-11': { dias: { '2026-11-20': reg('2026-11-20', 3, 2), '2026-11-21': reg('2026-11-21', 1, 4) } },
-    '2026-10': { dias: { '2026-10-30': reg('2026-10-30', 2, 0) } }
-  };
-  const bytes = await X.gerar(abasDoPainel(), { escopo: 'Todos os armazéns', subtitulo: 'Gerado em teste' }, meses, { ExcelJS, JSZip });
+test('Excel do Relatório Geral: mesmas abas do painel, formato novo e sem as abas de histórico (que saem em botão à parte)', async () => {
+  const bytes = await X.gerar(abasDoPainel(), { escopo: 'Todos os armazéns', subtitulo: 'Gerado em teste' }, { ExcelJS, JSZip });
   const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(bytes));
-  assert.deepEqual(wb.worksheets.map(w => w.name), ['Resumo', 'Por Armazém', 'Tendência Diária', 'Alertas', 'Histórico de Atraso 11-2026', 'Histórico de Atraso 10-2026']);
+  assert.deepEqual(wb.worksheets.map(w => w.name), ['Resumo', 'Por Armazém', 'Tendência Diária', 'Alertas']);
 
   const resumo = wb.getWorksheet('Resumo');
   assert.match(String(resumo.getCell('A1').value), /RELATÓRIO GERAL SC9/);
@@ -76,33 +74,18 @@ test('Excel do Relatório Geral: abas do painel com formato novo e uma aba de hi
   assert.equal(arm.getCell('A7').value, 'Total Geral');
   assert.equal(wb.getWorksheet('Tendência Diária').getCell('A5').value, '20/11/2026');
 
-  const h = wb.getWorksheet('Histórico de Atraso 11-2026');
-  assert.match(String(h.getCell('A1').value), /NOVEMBRO\/2026/);
-  assert.equal(h.getCell('A7').value, '20/11/2026');
-  assert.equal(h.getCell('C7').value, 3); assert.equal(h.getCell('F7').value, 2);
-  assert.equal(h.getCell('E7').value, 0.03, '% estoque = pedidos em atraso ÷ pedidos da base');
-  assert.equal(h.getCell('H8').value, 0.04);
-  assert.equal(h.getCell('A9').value, 'Média do mês');
-  // lista dos pedidos: 5 + 5 linhas, cada uma com dia, pedido, peças e tipo
-  const linhas = []; h.eachRow((row, n) => { if (/^\d\d\/\d\d\/\d{4}$/.test(String(row.getCell(1).value)) && row.getCell(2).value && typeof row.getCell(7).value === 'string') linhas.push(row); });
-  assert.equal(linhas.length, 10);
-  assert.ok(linhas.some(l => l.getCell(2).value === 'F0' && l.getCell(7).value === 'Faturamento'));
-  assert.ok(linhas.some(l => l.getCell(2).value === 'E0' && l.getCell(7).value === 'Estoque' && l.getCell(6).value === 5));
-
   const zip = await JSZip.loadAsync(bytes);
   const tipos = await zip.file('[Content_Types].xml').async('string');
-  assert.equal((tipos.match(/chart\+xml/g) || []).length, 3, 'gráfico da tendência + um por mês de histórico');
-  const grafico = await zip.file('xl/charts/chart2.xml').async('string');
-  assert.match(grafico, /Hist[^!]*Atraso 11-2026'!\$E\$7:\$E\$8/);
-  assert.ok(!/<x14:id\/>/.test(await zip.file('xl/worksheets/sheet5.xml').async('string')));
+  assert.equal((tipos.match(/chart\+xml/g) || []).length, 1, 'gráfico da tendência diária');
+  assert.ok(!/<x14:id\/>/.test(await zip.file('xl/worksheets/sheet2.xml').async('string')));
 });
 
-test('sem histórico nem Tendência Diária o arquivo sai só com as abas do painel', async () => {
-  const bytes = await X.gerar([abasDoPainel()[0]], { escopo: 'X' }, {}, { ExcelJS, JSZip });
+test('sem Tendência Diária o arquivo sai só com as abas do painel', async () => {
+  const bytes = await X.gerar([abasDoPainel()[0]], { escopo: 'X' }, { ExcelJS, JSZip });
   const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(bytes));
   assert.deepEqual(wb.worksheets.map(w => w.name), ['Resumo']);
-  await assert.rejects(() => X.gerar([], {}, {}, { ExcelJS, JSZip }), /abas/);
-  await assert.rejects(() => X.gerar(abasDoPainel(), {}, {}, {}), /bibliotecas/);
+  await assert.rejects(() => X.gerar([], {}, { ExcelJS, JSZip }), /abas/);
+  await assert.rejects(() => X.gerar(abasDoPainel(), {}, {}), /bibliotecas/);
 });
 
 test('histórico local: o dia de hoje entra sem apagar os anteriores', () => {

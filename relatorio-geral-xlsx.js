@@ -1,9 +1,8 @@
 /* Excel formatado do Relatório Geral: mesmo visual do Consolidado (faixa azul, cartões, tabelas com cabeçalho azul,
- * barras de % e gráficos de verdade do Excel) e, por mês, a aba "Histórico de Atraso" com os pedidos em atraso de
- * estoque e de faturamento, dia a dia. O histórico é guardado no servidor (/api/atraso-historico): cada exportação
- * grava só o dia de hoje e os dias anteriores continuam lá.
- * Recebe as abas que o painel já montava ([{ name, rows }]) e devolve os bytes do .xlsx.
- * ExcelJS monta células/estilos; JSZip só acrescenta barras de dados e gráficos (o ExcelJS não escreve gráficos). */
+ * barras de % e gráficos de verdade do Excel). Recebe as abas que o painel já montava ([{ name, rows }]) e devolve os bytes do .xlsx.
+ * ExcelJS monta células/estilos; JSZip só acrescenta barras de dados e gráficos (o ExcelJS não escreve gráficos).
+ * Também guarda a foto diária do atraso (/api/atraso-historico) e expõe os blocos de estilo para o Excel do Histórico de Atraso
+ * (atraso-historico-xlsx.js), que sai por um botão à parte. */
 (function (root) {
   const COR = {
     navy: 'FF1E2761', navy2: 'FF141B4D', claro: 'FFF4F6FB', zebra: 'FFEFF2F9', borda: 'FFD5DAE6', mudo: 'FF5B6472',
@@ -157,79 +156,6 @@
     return { ws, nome, cols, ult };
   }
 
-  /* ------------------------------ histórico de atraso ------------------------------ */
-  const pct = (a, b) => (b ? a / b : 0);
-  const rotuloMes = mes => { const [a, m] = mes.split('-'); return MESES[Number(m) - 1].toUpperCase() + '/' + a; };
-
-  function resumoDoDia(reg) {
-    let e = 0, ep = 0, f = 0, fp = 0;
-    for (const it of reg.itens) { if (it[4] === 'F') { f++; fp += it[3]; } else { e++; ep += it[3]; } }
-    return { dia: reg.dia, total: reg.total, e, ep, f, fp };
-  }
-
-  function montarHistorico(wb, mes, dados, ctx, usados) {
-    const nome = nomeAba('Histórico de Atraso ' + mes.slice(5) + '-' + mes.slice(0, 4), usados);
-    const ws = wb.addWorksheet(nome, { views: [{ showGridLines: false }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
-    [14, 14, 14, 14, 13, 16, 14, 14, 14, 12].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-    const dias = Object.keys(dados.dias).sort().map(d => dados.dias[d]);
-    banner(ws, 10, 'HISTÓRICO DE ATRASO — ' + rotuloMes(mes), 'Uma foto por dia, gravada a cada exportação: os dias anteriores não são apagados. Atualizado até ' + brData(dias[dias.length - 1].dia) + '.');
-    ws.getRow(3).height = 28;
-    legenda(ws, 3, 10, 'Estoque = pedido atrasado que ainda não saiu (separação, conferência ou despacho). Faturamento = já separado e conferido, falta só a nota fiscal. % = pedidos em atraso ÷ pedidos da base no dia.');
-
-    secao(ws, 5, 10, 'RESUMO POR DIA');
-    cabecalho(ws, 6, 1, ['Dia', 'Pedidos na base', 'Atraso Estoque (pedidos)', 'Peças Estoque', '% Estoque', 'Atraso Faturamento (pedidos)', 'Peças Faturamento', '% Faturamento', 'Total em atraso', '% Total']);
-    ws.getRow(6).height = 42;
-    const resumos = dias.map(resumoDoDia);
-    resumos.forEach((x, i) => {
-      const r = 7 + i, fundo = i % 2 ? COR.zebra : undefined, tot = x.e + x.f;
-      celula(ws, r, 1, brData(x.dia), { fundo, h: 'left' });
-      [x.total, x.e, x.ep, null, x.f, x.fp, null, tot].forEach((v, j) => { if (v !== null) celula(ws, r, 2 + j, v, { fundo, fmt: '#,##0', h: 'center' }); });
-      celula(ws, r, 5, pct(x.e, x.total), { fundo, fmt: '0.0%', h: 'center', negrito: true, cor: 'FFB87708' });
-      celula(ws, r, 8, pct(x.f, x.total), { fundo, fmt: '0.0%', h: 'center', negrito: true, cor: COR.azul });
-      celula(ws, r, 10, pct(tot, x.total), { fundo, fmt: '0.0%', h: 'center', negrito: true, cor: COR.vermelho });
-    });
-    const p1 = 7, u1 = 6 + resumos.length;
-    const mediaR = u1 + 1, o = { sz: 10, negrito: true, cor: COR.branco, fundo: COR.navy2, h: 'center' };
-    const media = (f) => resumos.length ? resumos.reduce((s, x) => s + f(x), 0) / resumos.length : 0;
-    celula(ws, mediaR, 1, 'Média do mês', Object.assign({}, o, { h: 'left' }));
-    celula(ws, mediaR, 2, Math.round(media(x => x.total)), Object.assign({ fmt: '#,##0' }, o));
-    celula(ws, mediaR, 3, Math.round(media(x => x.e)), Object.assign({ fmt: '#,##0' }, o));
-    celula(ws, mediaR, 4, Math.round(media(x => x.ep)), Object.assign({ fmt: '#,##0' }, o));
-    celula(ws, mediaR, 5, media(x => pct(x.e, x.total)), Object.assign({ fmt: '0.0%' }, o));
-    celula(ws, mediaR, 6, Math.round(media(x => x.f)), Object.assign({ fmt: '#,##0' }, o));
-    celula(ws, mediaR, 7, Math.round(media(x => x.fp)), Object.assign({ fmt: '#,##0' }, o));
-    celula(ws, mediaR, 8, media(x => pct(x.f, x.total)), Object.assign({ fmt: '0.0%' }, o));
-    celula(ws, mediaR, 9, Math.round(media(x => x.e + x.f)), Object.assign({ fmt: '#,##0' }, o));
-    celula(ws, mediaR, 10, media(x => pct(x.e + x.f, x.total)), Object.assign({ fmt: '0.0%' }, o));
-    barras(ws, ref(10, p1) + ':' + ref(10, u1), 'FFE9858D', 0.1);
-
-    // pedidos em atraso, dia a dia (cada pedido uma linha; filtro na linha de cabeçalho)
-    const t2 = Math.max(mediaR, 6 + LINHAS_GRAFICO) + 3;
-    secao(ws, t2, 10, 'PEDIDOS EM ATRASO, DIA A DIA');
-    cabecalho(ws, t2 + 1, 1, ['Dia', 'Pedido', 'Armazém', 'Liberado em', 'Dias de atraso', 'Peças', 'Tipo', 'Situação']);
-    ws.getRow(t2 + 1).height = 24;
-    let r = t2 + 2;
-    for (const reg of dias) {
-      const linhas = reg.itens.slice().sort((a, b) => (a[4] === b[4] ? b[6] - a[6] : a[4] === 'E' ? -1 : 1) || String(a[0]).localeCompare(String(b[0])));
-      for (const it of linhas) {
-        const fundo = (r - t2) % 2 ? COR.zebra : undefined;
-        celula(ws, r, 1, brData(reg.dia), { fundo, h: 'center' });
-        celula(ws, r, 2, it[0], { fundo, h: 'center' });
-        celula(ws, r, 3, it[1], { fundo, h: 'left' });
-        celula(ws, r, 4, it[2] ? brData(it[2]) : '-', { fundo, h: 'center' });
-        celula(ws, r, 5, it[6], { fundo, fmt: '#,##0', h: 'center' });
-        celula(ws, r, 6, it[3], { fundo, fmt: '#,##0', h: 'center' });
-        celula(ws, r, 7, it[4] === 'F' ? 'Faturamento' : 'Estoque', { fundo, h: 'center', negrito: true, cor: it[4] === 'F' ? COR.azul : 'FFB87708' });
-        celula(ws, r, 8, it[5] === 'P' ? 'Em processo' : 'Atrasado', { fundo, h: 'center', negrito: true, cor: it[5] === 'P' ? COR.mudo : COR.vermelho });
-        r++;
-      }
-    }
-    const ult = r - 1;
-    if (ult >= t2 + 2) ws.autoFilter = { from: { row: t2 + 1, column: 1 }, to: { row: ult, column: 8 } };
-    else legenda(ws, t2 + 2, 10, 'Nenhum pedido em atraso nos dias gravados.');
-    return { nome, graficos: [{ tipo: 'colunas', cat: { de: p1, ate: u1, cab: 6 }, cols: [{ col: 5, cor: 'F2A93B' }, { col: 8, cor: '4F63D2' }], titulo: '% de atraso por dia — Estoque x Faturamento', eixo: '0%', ancora: { col: 11, linha: 5 } }] };
-  }
-
   /* ------------------------------ gráficos (XML do Excel) ------------------------------ */
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const NS = 'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
@@ -321,7 +247,15 @@
   // Mesma regra do painel: sem nota, já separado e conferido = atraso de faturamento (entra também em processo, como o
   // "Atraso Faturamento" do Resumo); qualquer outro pedido Atrasado conta como estoque (ainda não separado/conferido ou,
   // se já tem nota, ainda não saiu na Entrega), igual ao "Atrasados" do painel.
-  function registroDoDia(pedidos, agora, dia) {
+  const pegar = (m, k) => (m && typeof m.get === 'function' ? m.get(k) : m ? m[k] : undefined);
+  // Transportadora do pedido: código vem do SC5 (ou do próprio pedido) e vira nome pela mesma tabela do Consolidado.
+  function transportadoraDe(o, sc5) {
+    const codigo = pegar(sc5, o.pedido) != null ? pegar(sc5, o.pedido) : o.transportadora;
+    const C = root.SC9Consolidado;
+    const nome = C && C.nomeTransportadora ? C.nomeTransportadora(codigo) : String(codigo == null ? '' : codigo).trim();
+    return nome || '(não definida)';
+  }
+  function registroDoDia(pedidos, agora, dia, sc5) {
     const itens = [];
     let pecas = 0;
     const texto = v => (v == null ? '' : String(v)).trim();
@@ -333,9 +267,9 @@
       const tipo = !o.nf && separado && conferido ? 'F' : 'E';
       if (tipo === 'E' && o.status !== 'Atrasado') continue;
       const dias = o.dt && agora ? Math.max(0, Math.round((agora - o.dt) / 864e5)) : 0;
-      itens.push([texto(o.pedido), o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem), o.dayKey || chaveDia(o.dt), Math.round((Number(o.qt) || 0) * 100) / 100, tipo, o.status === 'Atrasado' ? 'A' : 'P', dias]);
+      itens.push([texto(o.pedido), o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem), o.dayKey || chaveDia(o.dt), Math.round((Number(o.qt) || 0) * 100) / 100, tipo, o.status === 'Atrasado' ? 'A' : 'P', dias, transportadoraDe(o, sc5)]);
     }
-    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), itens };
+    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens };
   }
 
   // junta o registro de hoje no histórico lido do servidor (vale o de hoje se o servidor não respondeu)
@@ -349,8 +283,8 @@
   }
 
   /* ------------------------------ geração ------------------------------ */
-  // abas = retorno do painel ([{name, rows}]); ctx = { escopo, subtitulo }; meses = { 'AAAA-MM': { dias: {...} } }
-  async function gerar(abas, ctx, meses, libs) {
+  // abas = retorno do painel ([{name, rows}]); ctx = { escopo, subtitulo }
+  async function gerar(abas, ctx, libs) {
     const { ExcelJS, JSZip } = libs || {};
     if (!ExcelJS || !JSZip) throw new Error('As bibliotecas do Excel não carregaram.');
     if (!Array.isArray(abas) || !abas.length) throw new Error('Não há abas para exportar.');
@@ -369,12 +303,6 @@
         if (col('Atrasados (estoque)') > 0) cols.push({ col: col('Atrasados (estoque)'), cor: 'D64550' });
         graficos[t.nome] = [{ tipo: 'colunas', cat: { de: 5, ate: 4 + aba.rows.length, cab: 4 }, cols, titulo: 'Pedidos por dia de liberação — total x atrasados', eixo: '#,##0', ancora: { col: t.cols.length + 1, linha: 3 } }];
       }
-    }
-    for (const mes of Object.keys(meses || {}).sort().reverse()) {
-      const dados = meses[mes];
-      if (!dados || !dados.dias || !Object.keys(dados.dias).length) continue;
-      const h = montarHistorico(wb, mes, dados, ctx, usados);
-      graficos[h.nome] = h.graficos;
     }
     const porBarras = {};
     wb.worksheets.forEach(ws => { porBarras[ws.name] = ws.__barras || []; });
@@ -405,30 +333,30 @@
   }
 
   // Grava a foto de hoje sem baixar nada (chamado quando o SC9 é carregado); erros não atrapalham ninguém.
-  async function registrarSilencioso(pedidos, agora) {
+  async function registrarSilencioso(pedidos, agora, sc5) {
     try {
-      const reg = registroDoDia(pedidos, agora);
+      const reg = registroDoDia(pedidos, agora, undefined, sc5);
       if (reg.total) await gravar(reg);
     } catch (e) { if (root.console) root.console.warn('Histórico de atraso não gravado:', e && e.message); }
   }
 
-  // dados = { abas, pedidos, agora, escopo, corte }
+  // dados = { abas, escopo, corte }
   async function baixar(dados, nomeArquivo) {
     await Promise.all([carregarScript('/vendor-exceljs.js', () => !!root.ExcelJS), carregarScript('/vendor-jszip.js', () => !!root.JSZip)]);
-    const registro = registroDoDia(dados.pedidos, dados.agora);
-    let meses = {}, salvo = false;
-    if (registro.total) { try { await gravar(registro); salvo = true; } catch (e) { if (root.console) root.console.warn(e); } }
-    try { meses = await ler(12); } catch (e) { if (root.console) root.console.warn(e); }
-    if (registro.total) meses = mesclarLocal(meses, registro);
     const corte = dados.corte instanceof Date ? dados.corte.toLocaleDateString('pt-BR') : String(dados.corte || '');
-    const subtitulo = 'Gerado em ' + new Date().toLocaleString('pt-BR') + (corte ? ' · data de corte ' + corte : '') + (salvo ? '' : ' · histórico de atraso sem gravar hoje (servidor indisponível)');
-    const bytes = await gerar(dados.abas, { escopo: dados.escopo, subtitulo }, meses, { ExcelJS: root.ExcelJS, JSZip: root.JSZip });
+    const subtitulo = 'Gerado em ' + new Date().toLocaleString('pt-BR') + (corte ? ' · data de corte ' + corte : '');
+    const bytes = await gerar(dados.abas, { escopo: dados.escopo, subtitulo }, { ExcelJS: root.ExcelJS, JSZip: root.JSZip });
+    baixarBytes(bytes, nomeArquivo);
+  }
+  function baixarBytes(bytes, nomeArquivo) {
     const url = root.URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     const a = root.document.createElement('a'); a.href = url; a.download = nomeArquivo; root.document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => root.URL.revokeObjectURL(url), 4000);
   }
 
-  const api = { gerar, baixar, registrarSilencioso, registroDoDia, mesclarLocal, resumoDoDia };
+  // blocos de estilo e utilidades para o Excel do Histórico de Atraso
+  const base = { COR, MESES, solido, bordas, fonte, letra, ref, faixa, banner, secao, legenda, cabecalho, celula, barras, brData, injetar, nomeAba, carregarScript, baixarBytes, gravar, ler, diaDeHoje };
+  const api = { gerar, baixar, registrarSilencioso, registroDoDia, mesclarLocal, base };
   root.SC9RelatorioGeralXlsx = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);

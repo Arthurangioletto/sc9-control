@@ -1,6 +1,6 @@
 /* Histórico de atraso do Relatório Geral: uma foto por dia (pedidos em atraso de estoque e de faturamento),
  * guardada por mês. Gravar um dia troca só aquele dia; os outros dias do mês ficam como estavam.
- * Registro: { dia:'AAAA-MM-DD', total, pecas, atualizadoEm, itens:[[pedido, armazém, liberadoEm, peças, 'E'|'F', 'A'|'P', diasDeAtraso]] }
+ * Registro: { dia:'AAAA-MM-DD', total, pecas, atualizadoEm, itens:[[pedido, armazém, liberadoEm, peças, 'E'|'F', 'A'|'P', diasDeAtraso, transportadora]] }
  * E = atraso de estoque (separação/conferência), F = atraso de faturamento (já conferido, só falta a nota);
  * A = Atrasado (passou do prazo), P = ainda em processo. */
 'use strict';
@@ -40,7 +40,7 @@ function normalizarRegistro(corpo) {
     if (visto.has(chave)) continue;
     visto.add(chave);
     const lib = DIA.test(String(it[2] || '')) ? String(it[2]) : '';
-    itens.push([pedido, arm, lib, numero(it[3]), tipo, it[5] === 'P' ? 'P' : 'A', inteiro(it[6])]);
+    itens.push([pedido, arm, lib, numero(it[3]), tipo, it[5] === 'P' ? 'P' : 'A', inteiro(it[6]), texto(it[7], 40)]);
   }
   return { dia, total, pecas: numero(corpo.pecas), atualizadoEm: new Date().toISOString(), itens };
 }
