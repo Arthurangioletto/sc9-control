@@ -65,4 +65,30 @@ function ultimosMeses(mesBase, n) {
   return lista;
 }
 
-module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses };
+// Pedidos e peças despachados por dia (pedidos que aparecem na planilha de Entrega). Chega junto da foto, quando o atraso é exportado.
+// → { 'AAAA-MM-DD': { pedidos, pecas } } com valores limpos; lixo é ignorado.
+function normalizarDespachados(corpo) {
+  const saida = {};
+  if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) return saida;
+  for (const dia of Object.keys(corpo).slice(0, 400)) {
+    const v = corpo[dia];
+    if (!validarDia(dia) || !v || typeof v !== 'object') continue;
+    const pedidos = inteiro(v.pedidos);
+    if (!pedidos) continue;
+    saida[dia] = { pedidos, pecas: numero(v.pecas) };
+  }
+  return saida;
+}
+
+// Junta os dias novos aos guardados do mês. Um dia só cresce: vale o maior número de pedidos (a ponta da planilha de Entrega pode vir cortada).
+function mesclarDespachados(guardado, novos) {
+  const dias = Object.assign({}, guardado || {});
+  for (const [dia, v] of Object.entries(novos || {})) {
+    if (!dias[dia] || v.pedidos >= dias[dia].pedidos) dias[dia] = v;
+  }
+  const ordenado = {};
+  for (const k of Object.keys(dias).sort()) ordenado[k] = dias[k];
+  return ordenado;
+}
+
+module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses, normalizarDespachados, mesclarDespachados };

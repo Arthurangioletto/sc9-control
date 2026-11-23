@@ -299,6 +299,17 @@ Ao lado dele fica o botão **Histórico de Atraso** (`atraso-historico-ui.js`, E
 - **Só passa a existir daqui para frente:** dias anteriores à primeira foto gravada depois desta versão não existem; o primeiro dia sai sem comparativo.
 - **Validação:** com a base real de 17/11 no navegador, o Resumo bate com a aba do dia (Atrasados 144 = 142 de estoque + 2 de faturamento), as transportadoras aparecem e dias gravados antes continuam no arquivo. Testes em `tests/relatorio-geral-xlsx.test.cjs`, `tests/atraso-historico-xlsx.test.cjs` e `tests/atraso-historico-server.test.cjs`.
 
+## Página do Histórico de Atraso (link fixo)
+
+`/historico-atraso.html` (arquivos `historico-atraso.html` e `historico-atraso.js`) mostra, no navegador, tudo o que o Histórico de Atraso já grava por dia no servidor, sem baixar Excel. Quem abre o link já logado no SC9 (administrador ou perfil `geral`) entra direto; se não, a própria página pede usuário e senha.
+
+- **Escolha o dia:** faixa com todos os dias do mês (dias sem foto aparecem apagados). `#AAAA-MM-DD` no endereço abre um dia específico; "Copiar link deste dia" gera esse endereço.
+- **Detalhe do dia:** frase do comparativo com o dia anterior, cartões (em atraso, estoque, faturamento, peças em atraso, pedidos e peças despachados) com a variação, e a lista de pedidos em três abas: Em atraso, Entraram e Saíram do atraso. Filtros por tipo, situação, armazém, transportadora e busca; colunas ordenáveis; "Baixar lista (CSV)". Clicar num pedido abre todos os dados dele e os dias em que apareceu no atraso.
+- **Despacho por dia:** vem da **planilha de Entrega**. Quando o Histórico de Atraso é exportado no SC9, a foto leva junto os pedidos (cada pedido uma vez) e as peças (itens do pedido na base) por data de entrega, e o servidor guarda em `atraso-expedicao-AAAA-MM.json`; `GET /api/atraso-historico` devolve isso em `expedicao`. Um dia só cresce (vale o maior número de pedidos, porque a ponta da planilha pode vir cortada).
+- **A página só muda quando o atraso é exportado.** O SC9 não grava mais a foto ao carregar a base; só o botão Histórico de Atraso grava. A página mostra a data e hora da última exportação.
+- A gravação da foto continua só do administrador; a leitura passou a aceitar também o perfil `geral`.
+- No painel, o botão **Histórico de Atraso** ganhou o atalho "Abrir a página do histórico".
+
 ## Transferência (aba por perfil)
 
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:

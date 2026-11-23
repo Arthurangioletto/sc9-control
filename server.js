@@ -404,6 +404,8 @@ SERVABLE.add("consolidado-xlsx.js");
 SERVABLE.add("relatorio-geral-xlsx.js");
 SERVABLE.add("atraso-historico-xlsx.js");
 SERVABLE.add("atraso-historico-ui.js");
+SERVABLE.add("historico-atraso.html");
+SERVABLE.add("historico-atraso.js");
 SERVABLE.add("vendor-exceljs.js");
 SERVABLE.add("vendor-jszip.js");
 SERVABLE.add("vendor-zxing.js");
@@ -1627,21 +1629,42 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  // Despacho por dia para a página do histórico: pedidos e peças da planilha de Entrega, enviados junto da foto quando o atraso é
+  // exportado no SC9. Ficam em atraso-expedicao-AAAA-MM.json; a página só muda quando o atraso é exportado.
+  const expedicaoDoMes = async (mes) => {
+    const dado = await objLoad("atraso-expedicao-" + mes + ".json", { fresh: true }).catch(() => null);
+    return (dado && dado.dias) || {};
+  };
+  async function guardarDespacho(AtrasoHistorico, despachados) {
+    const porMes = {};
+    for (const [dia, v] of Object.entries(despachados)) (porMes[dia.slice(0, 7)] = porMes[dia.slice(0, 7)] || {})[dia] = v;
+    for (const [mes, novos] of Object.entries(porMes)) {
+      const nome = "atraso-expedicao-" + mes + ".json";
+      await comFila(nome, async () => {
+        const atual = await objLoad(nome, { fresh: true }).catch(() => null);
+        await objSave(nome, { mes, dias: AtrasoHistorico.mesclarDespachados(atual && atual.dias, novos) });
+      });
+    }
+  }
+
   // Histórico de atraso do Relatório Geral: uma foto por dia, guardada por mês (arquivos atraso-historico-AAAA-MM.json).
   // Gravar um dia troca só aquele dia. GET devolve os últimos N meses (padrão 6) para o Excel montar uma aba por mês.
   if (pathname === "/api/atraso-historico" && (method === "GET" || method === "POST")) {
-    if (!(await exigir(req, res, ["admin"]))) return;
+    // gravar a foto do dia: só o administrador. Ler (a página /historico-atraso.html): administrador ou perfil "geral".
+    if (!(await (method === "GET" ? exigir(req, res, ["admin", "operador"], "geral") : exigir(req, res, ["admin"])))) return;
     const AtrasoHistorico = require("./atraso-historico.js");
     res.setHeader("Cache-Control", "no-store");
     try {
       if (method === "GET") {
         const n = Math.min(24, Math.max(1, Math.round(Number(new URL(req.url, "http://x").searchParams.get("meses"))) || 6));
-        const meses = {};
+        const meses = {}, expedicao = {};
         for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
           const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
           if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
+          const exp = await expedicaoDoMes(mes).catch(() => null);
+          if (exp && Object.keys(exp).length) expedicao[mes] = exp;
         }
-        return sendJson(res, 200, { meses });
+        return sendJson(res, 200, { meses, expedicao });
       }
       let corpo;
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
@@ -1654,7 +1677,9 @@ async function handleApi(req, res, pathname) {
         const atual = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
         await objSave(AtrasoHistorico.nomeDoMes(mes), AtrasoHistorico.mesclarDia(atual, registro));
       });
-      return sendJson(res, 200, { ok: true, dia: registro.dia, pedidos: registro.itens.length });
+      const despachados = AtrasoHistorico.normalizarDespachados(corpo.despachados);
+      await guardarDespacho(AtrasoHistorico, despachados);
+      return sendJson(res, 200, { ok: true, dia: registro.dia, pedidos: registro.itens.length, diasDespacho: Object.keys(despachados).length });
     } catch (e) {
       console.error("Erro no histórico de atraso:", e);
       return sendJson(res, 500, erroPublico(e, "erro no histórico de atraso"));
