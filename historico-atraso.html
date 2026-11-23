@@ -59,6 +59,8 @@
   .ord { font:inherit; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:inherit; background:none; border:none; padding:0; cursor:pointer; }
   .ped { font-weight:800; font-variant-numeric:tabular-nums; } .forte { color:var(--red); font-weight:800; }
   .tag { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; font-weight:700; white-space:nowrap; }
+  .tag.exp { background:#e3edff; color:#173d86; } .tag.desp { background:#dff5e8; color:#14693a; } .tag.saiu { background:#eceff4; color:#46536b; }
+  .resumo-status { margin:8px 0; padding:9px 12px; border-radius:9px; background:#effaf3; color:#14532d; font-size:13px; font-weight:600; }
   .tag.est { background:#e8efff; color:#173d86; } .tag.fat { background:#fff1d6; color:#8a5a00; } .tag.atr { background:#fde4e0; color:#a62a1c; } .tag.proc { background:#e7f5ec; color:#1b6b3d; }
   tr.detalhe td { background:#f6f9ff; border-top:none; padding:14px; }
   .det-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px 18px; } .cd { display:flex; flex-direction:column; } .cd span { font-size:11px; color:var(--mute); text-transform:uppercase; font-weight:700; } .cd b { font-size:14px; }
@@ -72,6 +74,7 @@
   .barra .col { flex:none; width:100%; border-radius:4px 4px 0 0; display:block; min-height:3px; opacity:.85; } .barra:hover .col { opacity:1; } .barra.ativa .col { opacity:1; outline:2px solid var(--ink); }
   .barra .val { font-size:10px; font-weight:700; color:var(--ink); white-space:nowrap; visibility:hidden; } .barra.ativa .val,.barra:hover .val,.barras.todos .val { visibility:visible; } .barra .lab { font-size:10px; color:var(--mute); }
   @media (max-width:560px) { h1 { font-size:23px; } .kv { font-size:25px; } .barra .val { font-size:9px; } }
+  td[data-l=Status] .tag { white-space:normal; }
   @media (max-width:640px) {
     /* tabelas viram cartões no celular: nada fica escondido na rolagem lateral */
     .rolagem { border:none; overflow:visible; }

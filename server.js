@@ -1635,6 +1635,32 @@ async function handleApi(req, res, pathname) {
     const dado = await objLoad("atraso-expedicao-" + mes + ".json", { fresh: true }).catch(() => null);
     return (dado && dado.dias) || {};
   };
+  // Onde cada pedido das fotos aparece na Saída p/ Expedição (1º registro): { pedido: ISO }. Fica guardado em atraso-saidas.json
+  // para não se perder quando o administrador exporta e apaga dias antigos da saída.
+  async function saidasDosPedidos(meses) {
+    const procurados = new Set();
+    for (const m of Object.values(meses)) for (const r of Object.values(m.dias || {})) for (const it of r.itens || []) { const n = normalizarPedido(it[0]); if (n) procurados.add(n); }
+    if (!procurados.size) return {};
+    return comFila("atraso-saidas", async () => {
+      const dado = await objLoad("atraso-saidas.json", { fresh: true }).catch(() => null);
+      const guardado = Object.assign({}, (dado && dado.pedidos) || {});
+      let mudou = false;
+      for (const dia of await saidaDiasCarregar()) {
+        const d = await saidaCarregar(dia);
+        for (const e of d.entries) {
+          const n = normalizarPedido(e && e.pedido);
+          if (!n || !procurados.has(n) || !e.registradoEm) continue;
+          if (!guardado[n] || e.registradoEm < guardado[n]) { guardado[n] = e.registradoEm; mudou = true; }
+        }
+      }
+      const limite = new Date(Date.now() - 120 * 24 * 3600 * 1000).toISOString();
+      for (const k of Object.keys(guardado)) if (guardado[k] < limite) { delete guardado[k]; mudou = true; }
+      if (mudou) await objSave("atraso-saidas.json", { pedidos: guardado });
+      const saida = {};
+      for (const n of procurados) if (guardado[n]) saida[n] = guardado[n];
+      return saida;
+    });
+  }
   async function guardarDespacho(AtrasoHistorico, despachados) {
     const porMes = {};
     for (const [dia, v] of Object.entries(despachados)) (porMes[dia.slice(0, 7)] = porMes[dia.slice(0, 7)] || {})[dia] = v;
@@ -1656,15 +1682,26 @@ async function handleApi(req, res, pathname) {
     res.setHeader("Cache-Control", "no-store");
     try {
       if (method === "GET") {
-        const n = Math.min(24, Math.max(1, Math.round(Number(new URL(req.url, "http://x").searchParams.get("meses"))) || 6));
+        const consulta = new URL(req.url, "http://x").searchParams;
+        const n = Math.min(24, Math.max(1, Math.round(Number(consulta.get("meses"))) || 6));
         const meses = {}, expedicao = {};
+        if (consulta.get("so") === "saidas") {
+          // atualização em tempo real da página: só o cruzamento com a Saída p/ Expedição (barato; não mexe nas fotos)
+          for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
+            const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
+            if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
+          }
+          return sendJson(res, 200, { saidas: await saidasDosPedidos(meses).catch(() => ({})) });
+        }
         for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
           const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
           if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
           const exp = await expedicaoDoMes(mes).catch(() => null);
           if (exp && Object.keys(exp).length) expedicao[mes] = exp;
         }
-        return sendJson(res, 200, { meses, expedicao });
+        const dadoEntregues = await objLoad("atraso-entregues.json", { fresh: true }).catch(() => null);
+        const saidas = await saidasDosPedidos(meses).catch(() => ({}));
+        return sendJson(res, 200, { meses, expedicao, entregues: (dadoEntregues && dadoEntregues.pedidos) || {}, saidas });
       }
       let corpo;
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
@@ -1679,6 +1716,13 @@ async function handleApi(req, res, pathname) {
       });
       const despachados = AtrasoHistorico.normalizarDespachados(corpo.despachados);
       await guardarDespacho(AtrasoHistorico, despachados);
+      const entregues = AtrasoHistorico.normalizarEntregues(corpo.entregues);
+      if (Object.keys(entregues).length) {
+        await comFila("atraso-entregues", async () => {
+          const atual = await objLoad("atraso-entregues.json", { fresh: true }).catch(() => null);
+          await objSave("atraso-entregues.json", { pedidos: AtrasoHistorico.mesclarEntregues(atual && atual.pedidos, entregues, diaSP()) });
+        });
+      }
       return sendJson(res, 200, { ok: true, dia: registro.dia, pedidos: registro.itens.length, diasDespacho: Object.keys(despachados).length });
     } catch (e) {
       console.error("Erro no histórico de atraso:", e);
