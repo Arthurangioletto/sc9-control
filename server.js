@@ -1629,6 +1629,16 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  // Link do Histórico de Atraso para ver sem senha: um código longo e aleatório (guardado em atraso-link.json) vai no endereço
+  // (/historico-atraso.html?k=CÓDIGO). Só dá leitura. O administrador gera, troca (o antigo para de valer) ou desativa.
+  async function linkAtrasoValido(req) {
+    const k = String(new URL(req.url, "http://x").searchParams.get("k") || "");
+    if (!k) return false;
+    // (o código tem 192 bits: adivinhar é inviável, e o limite de requisições por IP já vale para tudo)
+    const dado = await objLoad("atraso-link.json", { fresh: true }).catch(() => null);
+    return Boolean(dado && dado.token && k.length === String(dado.token).length && timingSafeEqualStr(k, String(dado.token)));
+  }
+
   // Despacho por dia para a página do histórico: pedidos e peças da planilha de Entrega, enviados junto da foto quando o atraso é
   // exportado no SC9. Ficam em atraso-expedicao-AAAA-MM.json; a página só muda quando o atraso é exportado.
   const expedicaoDoMes = async (mes) => {
@@ -1673,11 +1683,35 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  // Administrador: ver / gerar / desativar o link sem senha da página do histórico.
+  if (pathname === "/api/atraso-historico-link" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      if (method === "GET") {
+        const dado = await objLoad("atraso-link.json", { fresh: true }).catch(() => null);
+        return sendJson(res, 200, { token: (dado && dado.token) || null, criadoEm: (dado && dado.criadoEm) || null });
+      }
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      const acao = corpo && corpo.acao;
+      if (acao !== "gerar" && acao !== "desativar") return sendJson(res, 400, { error: "ação inválida" });
+      const novo = acao === "gerar" ? { token: crypto.randomBytes(24).toString("base64url"), criadoEm: new Date().toISOString(), criadoPor: sess.usuario } : { token: null, criadoEm: null, desativadoEm: new Date().toISOString(), desativadoPor: sess.usuario };
+      await comFila("atraso-link", async () => { await objSave("atraso-link.json", novo); });
+      return sendJson(res, 200, { token: novo.token, criadoEm: novo.criadoEm });
+    } catch (e) {
+      console.error("Erro no link do histórico de atraso:", e);
+      return sendJson(res, 500, erroPublico(e, "erro no link do histórico de atraso"));
+    }
+  }
+
   // Histórico de atraso do Relatório Geral: uma foto por dia, guardada por mês (arquivos atraso-historico-AAAA-MM.json).
   // Gravar um dia troca só aquele dia. GET devolve os últimos N meses (padrão 6) para o Excel montar uma aba por mês.
   if (pathname === "/api/atraso-historico" && (method === "GET" || method === "POST")) {
-    // gravar a foto do dia: só o administrador. Ler (a página /historico-atraso.html): administrador ou perfil "geral".
-    if (!(await (method === "GET" ? exigir(req, res, ["admin", "operador"], "geral") : exigir(req, res, ["admin"])))) return;
+    // gravar a foto do dia: só o administrador. Ler (a página /historico-atraso.html): administrador, perfil "geral" ou quem tem o
+    // link com código (?k=...), que só consegue LER (nada de gravar).
+    if (method === "GET" && (await linkAtrasoValido(req))) { /* leitura liberada pelo link com código */ }
+    else if (!(await (method === "GET" ? exigir(req, res, ["admin", "operador"], "geral") : exigir(req, res, ["admin"])))) return;
     const AtrasoHistorico = require("./atraso-historico.js");
     res.setHeader("Cache-Control", "no-store");
     try {
