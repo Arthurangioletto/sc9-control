@@ -50,6 +50,7 @@
         h('select', { value: atual ? atual.id : '', onChange: ev => { setEscolha(ev.target.value); setErro(''); }, 'aria-label': 'Mês', style: { width: '100%', padding: '7px 8px', fontSize: 13, borderRadius: 8, border: '1px solid ' + cor.border, background: cor.soft, color: cor.ink } },
           meses.map(m => h('option', { key: m.id, value: m.id }, m.label + (m.dias ? ' · ' + m.dias + (m.dias === 1 ? ' dia gravado' : ' dias gravados') : '')))),
         h('button', { type: 'button', onClick: baixar, disabled: gerando, style: { marginTop: 12, width: '100%', padding: '8px 12px', fontSize: 13, fontWeight: 700, borderRadius: 8, border: 'none', cursor: gerando ? 'not-allowed' : 'pointer', background: cor.accent, color: '#fff', opacity: gerando ? .5 : 1 } }, gerando ? 'Gerando…' : 'Baixar Excel'),
+        h('a', { href: '/historico-atraso.html', target: '_blank', rel: 'noopener', style: { display: 'block', marginTop: 10, textAlign: 'center', fontSize: 12, fontWeight: 700, color: cor.accent, textDecoration: 'underline' }, title: 'Página com link fixo: escolha um dia e veja todos os pedidos em atraso, o comparativo e os despachos por dia' }, 'Abrir a página do histórico (link para acompanhar)'),
         erro && h('div', { role: 'alert', style: { marginTop: 8, fontSize: 11, color: cor.red } }, erro)
       )
     );
