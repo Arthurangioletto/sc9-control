@@ -304,7 +304,7 @@ Ao lado dele fica o botão **Histórico de Atraso** (`atraso-historico-ui.js`, E
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
 
 - Lê somente o saldo do armazém **59** no SB8 e soma as linhas do mesmo produto e lote.
-- Mostra o endereço de destino a partir da aba ZZ2 do **armazém de destino escolhido**, cruzando filial, produto e lote quando disponível. A origem é sempre o **59**; o destino (padrão 02) é escolhido na própria tela de bipagem, no bloco **Armazéns da transferência** (botões 01/02, os armazéns que existem na ZZ2 ou qualquer código digitado em *Outro*). Ao trocar, o endereço, a tabela, a busca e a exportação passam a usar o novo destino. O 59 não é aceito como destino.
+- Mostra o endereço a partir da aba ZZ2 do armazém **01**, sempre (tabela, busca, bipagem e exportação), cruzando filial, produto e lote quando disponível. A origem é sempre o **59**; o armazém de destino da transferência (padrão 02) é escolhido na própria tela de bipagem, no bloco **Armazéns da transferência** (botões 01/02/03, os armazéns que existem na ZZ2 ou qualquer código digitado em *Outro*) e vai para o arquivo de transferência; o 59 não é aceito como destino.
 - A bipagem mostra o saldo do 59 e avisa quando a contagem excede esse saldo.
 - A quantidade conferida pode ser **editada direto** na tabela.
 - A exportação soma as quantidades por filial, produto, lote e armazém de origem nas duas abas. O destino é escolhido na tela de bipagem (e também na tela Documentos; padrão 02; quem já tinha salvo 01 nesse navegador escolhe 02 uma vez).
