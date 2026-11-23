@@ -9,7 +9,7 @@ const xlsx = { utils: { sheet_to_json: rows => rows } };
 const book = sheets => ({ SheetNames: Object.keys(sheets), Sheets: sheets });
 const sb1 = [['Filial', 'Codigo', 'Descricao', 'Unidade', 'Cod Barras'], ['', 'P01', 'Produto', 'UN', '7891234567890']];
 
-test('Transferência lê somente o saldo do 59 e mostra o endereço de destino no 01', () => {
+test('Transferência lê somente o saldo do 59 e mostra o endereço de destino no 02', () => {
   const lots = read(book({
     SB8: [
       ['Filial', 'Produto', 'Armazem', 'Data Validad', 'Saldo Lote', 'Lote'],
@@ -20,7 +20,7 @@ test('Transferência lê somente o saldo do 59 e mostra o endereço de destino n
     ],
     ZZ2: [['Filial', 'Armazem', 'Endereco', 'Produto', 'Lote'],
       [1, 59, 'A59', 'P01'], [1, 'ES', 'EE01', 'P01'],
-      [1, 1, 'G01', 'P01'], ['01', '01', 'D01', 'P01', '000123'], [2, 1, 'OUTRA-FILIAL', 'P01', '000123']],
+      [1, 1, 'G01', 'P01'], ['01', '02', 'D01', 'P01', '000123'], [2, 2, 'OUTRA-FILIAL', 'P01', '000123']],
     SB1: sb1
   }), xlsx);
   assert.equal(lots.length, 1);
@@ -95,8 +95,8 @@ test('a página da Transferência exporta a origem de cada peça e deixa a quant
     { ...row, arm: 'es', conferido: 1 },
     { ...row, arm: '59', lote: '000124', conferido: 0 }
   ] };
-  assert.deepEqual(transferRows(document, { destino: '01' }).map(row => row.importador), [
-    'P01;59;000123;P01;01;000123;5', 'P01;ES;000123;P01;01;000123;3'
+  assert.deepEqual(transferRows(document, { destino: '02' }).map(row => row.importador), [
+    'P01;59;000123;P01;02;000123;5', 'P01;ES;000123;P01;02;000123;3'
   ]);
   assert.deepEqual(inventory.aggregateExportRecords(document.registros).map(row => [row.lote, row.arm, row.conferido]), [
     ['000123', '59', 5], ['000123', 'ES', 3], ['000124', '59', 0]
