@@ -255,7 +255,27 @@
     const nome = C && C.nomeTransportadora ? C.nomeTransportadora(codigo) : String(codigo == null ? '' : codigo).trim();
     return nome || '(não definida)';
   }
-  function registroDoDia(pedidos, agora, dia, sc5) {
+  // Pedidos e peças despachados por dia = pedidos do painel que estão na planilha de Entrega (entrega: Map pedido → {data}).
+  // Cada pedido conta uma vez no dia da data de Entrega; peças = soma das peças dos itens desse pedido na base.
+  function despachadosPorDia(pedidos, entrega) {
+    const dias = {};
+    if (!entrega || typeof entrega.get !== 'function') return dias;
+    const pedidosDoDia = {}, vistos = new Set();
+    for (const o of pedidos || []) {
+      const e = entrega.get(o.pedido), dia = e ? chaveDia(e.data) : '';
+      if (!dia) continue;
+      const k = (o.armazem || '') + '|' + o.pedido;
+      if (vistos.has(k)) continue;
+      vistos.add(k);
+      (pedidosDoDia[dia] = pedidosDoDia[dia] || new Set()).add(String(o.pedido));
+      dias[dia] = dias[dia] || { pedidos: 0, pecas: 0 };
+      dias[dia].pecas += Number(o.qt) || 0;
+    }
+    for (const dia of Object.keys(dias)) { dias[dia].pedidos = pedidosDoDia[dia].size; dias[dia].pecas = Math.round(dias[dia].pecas * 100) / 100; }
+    return dias;
+  }
+
+  function registroDoDia(pedidos, agora, dia, sc5, entrega) {
     const itens = [];
     let pecas = 0;
     const texto = v => (v == null ? '' : String(v)).trim();
@@ -269,7 +289,7 @@
       const dias = o.dt && agora ? Math.max(0, Math.round((agora - o.dt) / 864e5)) : 0;
       itens.push([texto(o.pedido), o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem), o.dayKey || chaveDia(o.dt), Math.round((Number(o.qt) || 0) * 100) / 100, tipo, o.status === 'Atrasado' ? 'A' : 'P', dias, transportadoraDe(o, sc5)]);
     }
-    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens };
+    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens, despachados: despachadosPorDia(pedidos, entrega) };
   }
 
   // junta o registro de hoje no histórico lido do servidor (vale o de hoje se o servidor não respondeu)
@@ -332,7 +352,7 @@
     return (await r.json()).meses || {};
   }
 
-  // Grava a foto de hoje sem baixar nada (chamado quando o SC9 é carregado); erros não atrapalham ninguém.
+  // Grava a foto de hoje sem baixar nada. Não é mais chamado ao carregar o SC9: o histórico só é atualizado quando o atraso é exportado.
   async function registrarSilencioso(pedidos, agora, sc5) {
     try {
       const reg = registroDoDia(pedidos, agora, undefined, sc5);
@@ -356,7 +376,7 @@
 
   // blocos de estilo e utilidades para o Excel do Histórico de Atraso
   const base = { COR, MESES, solido, bordas, fonte, letra, ref, faixa, banner, secao, legenda, cabecalho, celula, barras, brData, injetar, nomeAba, carregarScript, baixarBytes, gravar, ler, diaDeHoje };
-  const api = { gerar, baixar, registrarSilencioso, registroDoDia, mesclarLocal, base };
+  const api = { gerar, baixar, registrarSilencioso, registroDoDia, despachadosPorDia, mesclarLocal, base };
   root.SC9RelatorioGeralXlsx = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);

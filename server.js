@@ -1629,26 +1629,22 @@ async function handleApi(req, res, pathname) {
     }
   }
 
-  // Despacho por dia para a página do histórico: pedidos (sem repetir o mesmo pedido) e peças da "Saída p/ Expedição" de cada dia.
-  // O resumo de cada dia fica guardado (atraso-expedicao-AAAA-MM.json) para não se perder quando o administrador apaga dias antigos da saída.
-  async function expedicaoDoMes(mes) {
-    const nome = "atraso-expedicao-" + mes + ".json";
-    return comFila(nome, async () => {
-      const guardado = await objLoad(nome, { fresh: true }).catch(() => null);
-      const dias = Object.assign({}, (guardado && guardado.dias) || {});
-      let mudou = false;
-      for (const dia of (await saidaDiasCarregar()).filter((d) => d.startsWith(mes + "-"))) {
-        const d = await saidaCarregar(dia);
-        const vistos = new Map();
-        for (const e of d.entries) if (e && e.pedido && !vistos.has(e.pedido)) vistos.set(e.pedido, e);
-        let pecas = 0;
-        for (const e of vistos.values()) pecas += Number(e.info && e.info.pecas) || 0;
-        const novo = { pedidos: vistos.size, pecas: Math.round(pecas * 100) / 100 };
-        if (!dias[dia] || dias[dia].pedidos !== novo.pedidos || dias[dia].pecas !== novo.pecas) { dias[dia] = novo; mudou = true; }
-      }
-      if (mudou) await objSave(nome, { mes, dias });
-      return dias;
-    });
+  // Despacho por dia para a página do histórico: pedidos e peças da planilha de Entrega, enviados junto da foto quando o atraso é
+  // exportado no SC9. Ficam em atraso-expedicao-AAAA-MM.json; a página só muda quando o atraso é exportado.
+  const expedicaoDoMes = async (mes) => {
+    const dado = await objLoad("atraso-expedicao-" + mes + ".json", { fresh: true }).catch(() => null);
+    return (dado && dado.dias) || {};
+  };
+  async function guardarDespacho(AtrasoHistorico, despachados) {
+    const porMes = {};
+    for (const [dia, v] of Object.entries(despachados)) (porMes[dia.slice(0, 7)] = porMes[dia.slice(0, 7)] || {})[dia] = v;
+    for (const [mes, novos] of Object.entries(porMes)) {
+      const nome = "atraso-expedicao-" + mes + ".json";
+      await comFila(nome, async () => {
+        const atual = await objLoad(nome, { fresh: true }).catch(() => null);
+        await objSave(nome, { mes, dias: AtrasoHistorico.mesclarDespachados(atual && atual.dias, novos) });
+      });
+    }
   }
 
   // Histórico de atraso do Relatório Geral: uma foto por dia, guardada por mês (arquivos atraso-historico-AAAA-MM.json).
@@ -1681,7 +1677,9 @@ async function handleApi(req, res, pathname) {
         const atual = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
         await objSave(AtrasoHistorico.nomeDoMes(mes), AtrasoHistorico.mesclarDia(atual, registro));
       });
-      return sendJson(res, 200, { ok: true, dia: registro.dia, pedidos: registro.itens.length });
+      const despachados = AtrasoHistorico.normalizarDespachados(corpo.despachados);
+      await guardarDespacho(AtrasoHistorico, despachados);
+      return sendJson(res, 200, { ok: true, dia: registro.dia, pedidos: registro.itens.length, diasDespacho: Object.keys(despachados).length });
     } catch (e) {
       console.error("Erro no histórico de atraso:", e);
       return sendJson(res, 500, erroPublico(e, "erro no histórico de atraso"));

@@ -305,7 +305,8 @@ Ao lado dele fica o botão **Histórico de Atraso** (`atraso-historico-ui.js`, E
 
 - **Escolha o dia:** faixa com todos os dias do mês (dias sem foto aparecem apagados). `#AAAA-MM-DD` no endereço abre um dia específico; "Copiar link deste dia" gera esse endereço.
 - **Detalhe do dia:** frase do comparativo com o dia anterior, cartões (em atraso, estoque, faturamento, peças em atraso, pedidos e peças despachados) com a variação, e a lista de pedidos em três abas: Em atraso, Entraram e Saíram do atraso. Filtros por tipo, situação, armazém, transportadora e busca; colunas ordenáveis; "Baixar lista (CSV)". Clicar num pedido abre todos os dados dele e os dias em que apareceu no atraso.
-- **Despacho por dia:** `GET /api/atraso-historico` agora também devolve `expedicao` com, por dia, os pedidos (sem repetir o mesmo pedido) e as peças da Saída p/ Expedição. O resumo de cada dia fica em `atraso-expedicao-AAAA-MM.json` para não se perder quando o administrador exporta e apaga dias antigos da saída.
+- **Despacho por dia:** vem da **planilha de Entrega**. Quando o Histórico de Atraso é exportado no SC9, a foto leva junto os pedidos (cada pedido uma vez) e as peças (itens do pedido na base) por data de entrega, e o servidor guarda em `atraso-expedicao-AAAA-MM.json`; `GET /api/atraso-historico` devolve isso em `expedicao`. Um dia só cresce (vale o maior número de pedidos, porque a ponta da planilha pode vir cortada).
+- **A página só muda quando o atraso é exportado.** O SC9 não grava mais a foto ao carregar a base; só o botão Histórico de Atraso grava. A página mostra a data e hora da última exportação.
 - A gravação da foto continua só do administrador; a leitura passou a aceitar também o perfil `geral`.
 - No painel, o botão **Histórico de Atraso** ganhou o atalho "Abrir a página do histórico".
 

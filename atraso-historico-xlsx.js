@@ -253,11 +253,11 @@
 
   const nomeArquivo = mes => 'SC9_Historico_Atraso_' + mes + '.xlsx';
 
-  // dados = { orders, agora, sc5, mes }: grava a foto de hoje, lê o histórico e baixa o mês escolhido
+  // dados = { orders, agora, sc5, entrega, mes }: grava a foto de hoje (e os despachados por dia da planilha de Entrega), lê o histórico e baixa o mês escolhido
   async function baixar(dados) {
     const B = base(), R = RG();
     await Promise.all([B.carregarScript('/vendor-exceljs.js', () => !!root.ExcelJS), B.carregarScript('/vendor-jszip.js', () => !!root.JSZip)]);
-    const registro = R.registroDoDia(dados.orders, dados.agora, undefined, dados.sc5);
+    const registro = R.registroDoDia(dados.orders, dados.agora, undefined, dados.sc5, dados.entrega);
     let salvo = false, meses = {};
     if (registro.total) { try { await B.gravar(registro); salvo = true; } catch (e) { if (root.console) root.console.warn(e); } }
     try { meses = await B.ler(24); } catch (e) { if (root.console) root.console.warn(e); }

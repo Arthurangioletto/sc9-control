@@ -73,24 +73,33 @@ test('csv sai com BOM, ponto e vírgula, aspas escapadas e nomes legíveis', () 
   assert.equal(linhas[1], '"1001";"Cambuci ""A""";"10/11/2026";"5,5";"Faturamento";"Em processo";"9";""');
 });
 
-test('a página é servida, a rota devolve despacho por dia sem repetir pedido e guarda o resumo', async () => {
+test('registroDoDia leva os despachados por dia da planilha de Entrega (pedido conta uma vez; peças somam as linhas do pedido, sem repetir a mesma linha)', () => {
+  const RG = require('../relatorio-geral-xlsx.js');
+  const dia = (d) => new Date(2026, 10, d, 14, 30);
+  const entrega = new Map([['9001', { data: dia(19) }], ['9002', { data: dia(19) }], ['9003', { data: dia(20) }], ['9004', { data: null }]]);
+  const pedidos = [
+    { pedido: '9001', armazem: 'Cambuci', qt: 10, status: 'Enviado' }, { pedido: '9001', armazem: 'BH', qt: 5 }, { pedido: '9001', armazem: 'Cambuci', qt: 99 },
+    { pedido: '9002', armazem: 'BH', qt: 4.5 }, { pedido: '9003', armazem: 'CE', qt: 7 }, { pedido: '9004', armazem: 'CE', qt: 1 }, { pedido: '9005', armazem: 'RJ', qt: 9 }
+  ];
+  assert.deepEqual(RG.despachadosPorDia(pedidos, entrega), {
+    '2026-11-19': { pedidos: 2, pecas: 19.5 },
+    '2026-11-20': { pedidos: 1, pecas: 7 }
+  });
+  assert.deepEqual(RG.despachadosPorDia(pedidos, null), {}, 'sem planilha de Entrega carregada');
+  assert.deepEqual(RG.registroDoDia(pedidos, new Date(2026, 10, 20), '2026-11-20', null, entrega).despachados['2026-11-19'], { pedidos: 2, pecas: 19.5 });
+});
+
+test('o servidor guarda os despachados que chegam com a foto e só deixa o dia crescer', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-histpag-'));
   for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'historico-atraso.html', 'historico-atraso.js', 'atraso-historico-xlsx.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
-  const data = path.join(dir, 'data');
-  fs.mkdirSync(data);
-  const mes = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7);
-  const d1 = mes + '-03', d2 = mes + '-04', antigo = mes + '-02';
-  const entrada = (pedido, pecas) => ({ id: 'e' + pedido + pecas, pedido, registradoEm: d1 + 'T15:00:00Z', info: pecas == null ? null : { pecas } });
-  fs.writeFileSync(path.join(data, 'saida-dias.json'), JSON.stringify({ dias: [d1, d2], exportados: {}, pendentes: {} }));
-  fs.writeFileSync(path.join(data, 'saida-pv-' + d1 + '.json'), JSON.stringify({ dia: d1, versao: 1, removidos: [], entries: [entrada('5001', 10), entrada('5002', 4.5), entrada('5001', 99), entrada('5003', null)] }));
-  fs.writeFileSync(path.join(data, 'saida-pv-' + d2 + '.json'), JSON.stringify({ dia: d2, versao: 1, removidos: [], entries: [entrada('6001', 7)] }));
-  // um dia cujo arquivo de saída já foi exportado e apagado: o resumo guardado continua valendo
-  fs.writeFileSync(path.join(data, 'atraso-expedicao-' + mes + '.json'), JSON.stringify({ mes, dias: { [antigo]: { pedidos: 30, pecas: 800 } } }));
+  fs.mkdirSync(path.join(dir, 'data'));
   delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
   process.env.PORT = '0'; process.env.APP_PASSWORD = crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomUUID(); process.env.NODE_ENV = 'test';
   const server = require(path.join(dir, 'server.js'));
   if (!server.listening) await new Promise(resolve => server.once('listening', resolve));
   const base = 'http://127.0.0.1:' + server.address().port;
+  const hoje = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const mes = hoje.slice(0, 7), d1 = mes + '-03', d2 = mes + '-04';
   try {
     const pagina = await fetch(base + '/historico-atraso.html');
     assert.equal(pagina.status, 200);
@@ -99,13 +108,21 @@ test('a página é servida, a rota devolve despacho por dia sem repetir pedido e
     assert.equal((await fetch(base + '/api/atraso-historico')).status, 401, 'sem login a página não lê dados');
     const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1' }, body: JSON.stringify({ password: process.env.APP_PASSWORD }) });
     const cookie = login.headers.get('set-cookie').split(';')[0];
-    const r = await fetch(base + '/api/atraso-historico', { headers: { Cookie: cookie } });
-    const j = await r.json();
-    assert.deepEqual(j.expedicao[mes][d1], { pedidos: 3, pecas: 14.5 }, 'pedido repetido conta uma vez; sem dados do SC9 conta 0 peça');
-    assert.deepEqual(j.expedicao[mes][d2], { pedidos: 1, pecas: 7 });
-    assert.deepEqual(j.expedicao[mes][antigo], { pedidos: 30, pecas: 800 }, 'resumo de dia apagado da saída continua');
-    const guardado = JSON.parse(fs.readFileSync(path.join(data, 'atraso-expedicao-' + mes + '.json'), 'utf8'));
-    assert.equal(Object.keys(guardado.dias).length, 3, 'os dias somados ficam guardados');
+    const post = (corpo) => fetch(base + '/api/atraso-historico', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1', Cookie: cookie }, body: JSON.stringify(corpo) });
+    const ler = async () => (await (await fetch(base + '/api/atraso-historico', { headers: { Cookie: cookie } })).json());
+    assert.deepEqual((await ler()).expedicao, {}, 'nada exportado ainda: a página não inventa despacho');
+    const r = await post({ dia: hoje, total: 5, pecas: 10, itens: [['P1', 'BH', hoje, 3, 'E', 'A', 2, 'TCS']], despachados: { [d1]: { pedidos: 80, pecas: 5000 }, [d2]: { pedidos: 10, pecas: 300.456 }, '2026-02-31': { pedidos: 9, pecas: 1 }, [mes + '-05']: { pedidos: 0, pecas: 0 }, [mes + '-06']: 'lixo' } });
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).diasDespacho, 2, 'dia inexistente, vazio ou lixo são ignorados');
+    let exp = (await ler()).expedicao[mes];
+    assert.deepEqual(exp, { [d1]: { pedidos: 80, pecas: 5000 }, [d2]: { pedidos: 10, pecas: 300.46 } });
+    // nova exportação com a ponta da planilha cortada: o dia não encolhe; com mais pedidos, cresce
+    await post({ dia: hoje, total: 5, pecas: 10, itens: [['P1', 'BH', hoje, 3, 'E', 'A', 2, 'TCS']], despachados: { [d1]: { pedidos: 20, pecas: 1000 }, [d2]: { pedidos: 12, pecas: 350 } } });
+    exp = (await ler()).expedicao[mes];
+    assert.deepEqual(exp[d1], { pedidos: 80, pecas: 5000 });
+    assert.deepEqual(exp[d2], { pedidos: 12, pecas: 350 });
+    const guardado = JSON.parse(fs.readFileSync(path.join(dir, 'data', 'atraso-expedicao-' + mes + '.json'), 'utf8'));
+    assert.equal(Object.keys(guardado.dias).length, 2);
   } finally {
     await new Promise(resolve => server.close(resolve));
   }

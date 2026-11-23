@@ -184,7 +184,8 @@
       h('div', null,
         h('p', { class: 'sobre', text: 'SC9 Control' }),
         h('h1', { text: 'Histórico de Atraso' }),
-        h('p', { class: 'mudo', text: 'Foto diária dos pedidos em atraso (estoque e faturamento), com o que mudou em relação ao dia anterior e o que foi despachado.' })),
+        h('p', { class: 'mudo', text: 'Foto diária dos pedidos em atraso (estoque e faturamento), com o que mudou em relação ao dia anterior e o que foi despachado (planilha de Entrega).' }),
+        h('p', { class: 'atualizado', text: ultimaAtualizacao() })),
       h('div', { class: 'acoes' },
         h('button', { class: 'btn', onclick: () => i < meses.length - 1 && trocarMes(meses[i + 1]), disabled: i >= meses.length - 1, 'aria-label': 'Mês anterior', text: '◀' }),
         sel,
@@ -192,11 +193,20 @@
         h('a', { class: 'btn', href: '/', text: 'Voltar ao SC9' })));
   }
 
+  // Esta página só muda quando alguém exporta o Histórico de Atraso no SC9; mostra quando foi a última vez.
+  function ultimaAtualizacao() {
+    let ultimo = '';
+    for (const a of estado.p.analises) if (a.reg.atualizadoEm && a.reg.atualizadoEm > ultimo) ultimo = a.reg.atualizadoEm;
+    if (!ultimo) return 'Atualizada sempre que o Histórico de Atraso é exportado no SC9.';
+    const q = new Date(ultimo);
+    return 'Atualizada em ' + q.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) + ' às ' + q.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) + ', na última exportação do Histórico de Atraso. Ela só muda quando o atraso é exportado de novo.';
+  }
+
   function faixaDeDias() {
     const dias = diasDoMes(estado.mes);
     return h('section', { class: 'cartao', 'aria-label': 'Dias do mês' },
       h('h2', { text: 'Escolha o dia' }),
-      h('p', { class: 'mudo', text: 'Clique em um dia para ver todos os pedidos em atraso daquela foto. Dias sem foto aparecem apagados (o histórico só é gravado quando alguém exporta o Histórico de Atraso no SC9).' }),
+      h('p', { class: 'mudo', text: 'Clique em um dia para ver todos os pedidos em atraso daquela foto. Dias sem foto aparecem apagados (o histórico só é gravado quando o Histórico de Atraso é exportado no SC9).' }),
       h('div', { class: 'dias' }, dias.map((d) => {
         const a = estado.p.porDia.get(d), ex = estado.p.exp[d];
         const tem = Boolean(a || ex);
@@ -227,10 +237,10 @@
     const pecas = dias.filter((d) => estado.p.exp[d]).map((d) => ({ dia: d, v: estado.p.exp[d].pecas }));
     return h('section', { class: 'cartao', 'aria-label': 'Gráficos do mês' },
       h('h2', { text: 'O mês em números' }),
-      h('p', { class: 'mudo', text: 'Cada barra é um dia (clique para destacar o dia; o número aparece na barra escolhida ou ao passar o mouse). Em atraso: quantos pedidos estavam atrasados na foto. Despachados: pedidos que saíram na Saída p/ Expedição naquele dia.' }),
+      h('p', { class: 'mudo', text: 'Cada barra é um dia (clique para destacar o dia; o número aparece na barra escolhida ou ao passar o mouse). Em atraso: quantos pedidos estavam atrasados na foto. Despachados: pedidos da planilha de Entrega com a data daquele dia.' }),
       h('div', { class: 'graficos' },
         barras('Pedidos em atraso por dia', 'Estoque + faturamento', atraso, '#c63828', (v) => fmtN(v)),
-        barras('Pedidos despachados por dia', 'Saídas registradas no dia', desp, '#1f8a4c', (v) => fmtN(v)),
+        barras('Pedidos despachados por dia', 'Pedidos da planilha de Entrega', desp, '#1f8a4c', (v) => fmtN(v)),
         barras('Peças despachadas por dia', 'Soma das peças desses pedidos', pecas, '#123b7a', (v) => (v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil' : fmtN(v)))));
   }
 
@@ -267,7 +277,7 @@
 
   function detalheDoDia() {
     const dia = estado.dia;
-    if (!dia) return h('section', { class: 'cartao centro', id: 'dia-detalhe' }, h('h2', { text: 'Nenhuma foto gravada neste mês' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Ele grava a foto do dia e baixa o Excel.' }));
+    if (!dia) return h('section', { class: 'cartao centro', id: 'dia-detalhe' }, h('h2', { text: 'Nenhuma foto gravada neste mês' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Ao exportar, ele grava a foto do dia aqui.' }));
     const a = estado.p.porDia.get(dia), dp = despacho(estado.p, dia);
     const caixa = h('section', { class: 'cartao', id: 'dia-detalhe', 'aria-label': 'Detalhe do dia' });
     const hora = a && a.reg.atualizadoEm ? new Date(a.reg.atualizadoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) : '';
@@ -287,8 +297,8 @@
         cartaoKpi('Peças em atraso', fmtN(r.pecas), 'estoque + faturamento', ra ? h('span', { class: 'ks' }, seta(r.pecas, ra.pecas, true), refTxt) : null, '', 'Soma das peças dos pedidos em atraso.'));
     }
     kpis.append(
-      cartaoKpi('Pedidos despachados', dp.atual ? fmtN(dp.atual.pedidos) : '—', dp.atual ? 'saíram neste dia' : 'sem registro de saída', dp.atual && dp.ref ? h('span', { class: 'ks' }, seta(dp.atual.pedidos, dp.ref.pedidos, false), ' vs ' + ddmm(dp.refDia)) : null, 'ok', 'Pedidos registrados na Saída p/ Expedição neste dia (sem repetir o mesmo pedido).'),
-      cartaoKpi('Peças despachadas', dp.atual ? fmtN(dp.atual.pecas) : '—', dp.atual ? 'peças desses pedidos' : '', dp.atual && dp.ref ? h('span', { class: 'ks' }, seta(dp.atual.pecas, dp.ref.pecas, false), ' vs ' + ddmm(dp.refDia)) : null, 'ok', 'Soma das peças dos pedidos despachados neste dia.'));
+      cartaoKpi('Pedidos despachados', dp.atual ? fmtN(dp.atual.pedidos) : '—', dp.atual ? 'na planilha de Entrega neste dia' : 'sem pedidos na planilha de Entrega', dp.atual && dp.ref ? h('span', { class: 'ks' }, seta(dp.atual.pedidos, dp.ref.pedidos, false), ' vs ' + ddmm(dp.refDia)) : null, 'ok', 'Pedidos da planilha de Entrega com a data deste dia (cada pedido conta uma vez).'),
+      cartaoKpi('Peças despachadas', dp.atual ? fmtN(dp.atual.pecas) : '—', dp.atual ? 'peças desses pedidos' : '', dp.atual && dp.ref ? h('span', { class: 'ks' }, seta(dp.atual.pecas, dp.ref.pecas, false), ' vs ' + ddmm(dp.refDia)) : null, 'ok', 'Soma das peças dos pedidos despachados neste dia (itens do pedido na base do SC9).'));
     caixa.appendChild(kpis);
     caixa.appendChild(h('details', { class: 'ajuda', open: estado.ajuda, ontoggle: (ev) => { estado.ajuda = ev.target.open; } },
       h('summary', { text: 'Como ler esta página' }),
@@ -298,7 +308,7 @@
         h('li', null, h('b', { text: 'Atrasado / Em processo: ' }), '"Atrasado" já passou do prazo; "Em processo" está dentro do atraso do dia mas ainda andando.'),
         h('li', null, h('b', { text: 'Dias de atraso: ' }), 'há quantos dias o pedido foi liberado além do prazo.'),
         h('li', null, h('b', { text: 'Saíram / Continuam / Entraram: ' }), 'comparação com a foto gravada imediatamente antes (pode ser de mais de um dia atrás, se algum dia não foi gravado).'),
-        h('li', null, h('b', { text: 'Despachados: ' }), 'vêm da Saída p/ Expedição: cada pedido conta uma vez por dia.'))));
+        h('li', null, h('b', { text: 'Despachados: ' }), 'pedidos que estão na planilha de Entrega, no dia da data de entrega; cada pedido conta uma vez. As peças são a soma dos itens desse pedido na base do SC9.'))));
     if (a) caixa.appendChild(listaDePedidos(a));
     return caixa;
   }
@@ -383,7 +393,7 @@
     const y = root.scrollY;
     const foco = document.activeElement && document.activeElement.id ? document.activeElement.id : '';
     const vazio = !estado.p.porDia.size && !Object.keys(estado.p.exp).length;
-    const blocos = vazio ? [h('section', { class: 'cartao centro' }, h('h2', { text: 'Ainda não há histórico gravado' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Cada vez que ele é usado, a foto do dia fica guardada aqui.' }))]
+    const blocos = vazio ? [h('section', { class: 'cartao centro' }, h('h2', { text: 'Ainda não há histórico gravado' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Cada vez que o atraso é exportado, a foto do dia fica guardada aqui.' }))]
       : [faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()];
     $app.replaceChildren(cabecalho(), ...blocos.filter(Boolean));
     root.scrollTo(0, y);
