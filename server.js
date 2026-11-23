@@ -404,6 +404,7 @@ SERVABLE.add("consolidado-xlsx.js");
 SERVABLE.add("relatorio-geral-xlsx.js");
 SERVABLE.add("atraso-historico-xlsx.js");
 SERVABLE.add("atraso-historico-ui.js");
+SERVABLE.add("pedidos-fixados.js");
 SERVABLE.add("historico-atraso.html");
 SERVABLE.add("historico-atraso.js");
 SERVABLE.add("vendor-exceljs.js");
@@ -1680,6 +1681,38 @@ async function handleApi(req, res, pathname) {
         const atual = await objLoad(nome, { fresh: true }).catch(() => null);
         await objSave(nome, { mes, dias: AtrasoHistorico.mesclarDespachados(atual && atual.dias, novos) });
       });
+    }
+  }
+
+  // Pedidos fixados (acompanhamento no painel inicial): lista compartilhada pela equipe (administrador e perfil "geral") +
+  // onde cada um aparece na Saída p/ Expedição. A Saída reaproveita o cache de atraso-saidas.json (primeiro registro do pedido).
+  if (pathname === "/api/pedidos-fixados" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin", "operador"], "geral"); if (!sess) return;
+    const Fixados = require("./pedidos-fixados-store.js");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const responder = async (itens) => {
+        const meses = { fixados: { dias: { hoje: { itens: itens.map((x) => [x.pedido]) } } } };
+        const saidas = itens.length ? await saidasDosPedidos(meses).catch(() => ({})) : {};
+        return sendJson(res, 200, { itens, saidas, agora: new Date().toISOString() });
+      };
+      if (method === "GET") {
+        const dado = await objLoad("pedidos-fixados.json", { fresh: true }).catch(() => null);
+        return responder(Fixados.normalizarLista(dado));
+      }
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      let resultado;
+      await comFila("pedidos-fixados", async () => {
+        const dado = await objLoad("pedidos-fixados.json", { fresh: true }).catch(() => null);
+        resultado = Fixados.aplicar(Fixados.normalizarLista(dado), corpo, sess.usuario, Date.now());
+        if (!resultado.erro) await objSave("pedidos-fixados.json", { itens: resultado.itens });
+      });
+      if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
+      return responder(resultado.itens);
+    } catch (e) {
+      console.error("Erro nos pedidos fixados:", e);
+      return sendJson(res, 500, erroPublico(e, "erro nos pedidos fixados"));
     }
   }
 

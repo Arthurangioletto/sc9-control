@@ -299,6 +299,16 @@ Ao lado dele fica o botão **Histórico de Atraso** (`atraso-historico-ui.js`, E
 - **Só passa a existir daqui para frente:** dias anteriores à primeira foto gravada depois desta versão não existem; o primeiro dia sai sem comparativo.
 - **Validação:** com a base real de 17/11 no navegador, o Resumo bate com a aba do dia (Atrasados 144 = 142 de estoque + 2 de faturamento), as transportadoras aparecem e dias gravados antes continuam no arquivo. Testes em `tests/relatorio-geral-xlsx.test.cjs`, `tests/atraso-historico-xlsx.test.cjs` e `tests/atraso-historico-server.test.cjs`.
 
+## Pedidos fixados (painel inicial)
+
+No **Resumo da operação** (painel inicial) há o quadro **📌 Pedidos fixados**: digite o número do pedido (atrasado ou não) e, se quiser, uma observação, e clique em **Fixar pedido**. A lista é **compartilhada pela equipe** (administrador e perfil `geral`), fica guardada no servidor (`pedidos-fixados.json`) e cada pedido mostra cliente, armazém, transportadora, nota, etapa (separado → conferido → faturado → Saída p/ Expedição → despachado) e a situação em relação ao horário.
+
+- **Atrasados entram sozinhos**: logo abaixo, a lista "Em atraso" traz todos os pedidos com status Atrasado da base (com busca e botão **Fixar**).
+- **Horário limite** para sair p/ Expedição (hora de Brasília, só em dias úteis): **Retira 02, 03 e 04 até 16h; Brasil e São Paulo até 17h** (por transportadora). Sem estar na Saída p/ Expedição até lá o pedido fica **VENCIDO**.
+- **Saída p/ Expedição**: o servidor procura o pedido fixado nas bipagens da Saída (ignora zeros à esquerda); ao aparecer, o pedido passa a "Saiu p/ Expedição" e gera um aviso. Despachado (planilha de Entrega) fica como concluído.
+- **Alarme** (enquanto o SC9 estiver aberto, em qualquer aba): resumo do dia ao abrir; aviso 60 min e 15 min antes do limite; ao vencer, repete a cada 30 min; aviso quando o pedido sai p/ Expedição. Aparece na tela (faixa vermelha + avisos), toca um som e, se você clicar em **Ativar avisos do navegador**, também usa a notificação do sistema. O som pode ser desligado no próprio quadro. O alarme **não roda com o SC9 fechado**.
+- A lógica está em `pedidos-fixados.js` (regras testadas em `tests/pedidos-fixados.test.cjs`) e a lista no servidor em `pedidos-fixados-store.js`; os horários ficam em `limiteDaTransportadora`.
+
 ## Página do Histórico de Atraso (link fixo)
 
 `/historico-atraso.html` (arquivos `historico-atraso.html` e `historico-atraso.js`) mostra, no navegador, tudo o que o Histórico de Atraso já grava por dia no servidor, sem baixar Excel. Quem abre o link já logado no SC9 (administrador ou perfil `geral`) entra direto; se não, a própria página pede usuário e senha.
