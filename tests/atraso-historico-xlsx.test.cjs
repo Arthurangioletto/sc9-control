@@ -5,13 +5,14 @@ const ExcelJS = require('../vendor-exceljs.js');
 const JSZip = require('../vendor-jszip.js');
 
 // pedido, armazém, liberado em, peças, tipo, situação, dias, transportadora
-const it = (p, arm, tipo, pecas, dias, transp) => [p, arm, '2026-11-10', pecas, tipo, 'A', dias, transp || 'TCS'];
+const it = (p, arm, tipo, pecas, dias, transp, extra) => [p, arm, '2026-11-10', pecas, tipo, 'A', dias, transp || 'TCS'].concat(extra ? [extra] : []);
+const CLI = { n: 'FUNDACAO EXEMPLO', c: '1', nf: '884285', v: 1234.5, e: 'D' };
 const dia = (d, total, itens) => ({ dia: d, total, pecas: total * 5, atualizadoEm: d + 'T20:00:00Z', itens });
 const meses = () => ({
   '2026-10': { dias: { '2026-10-30': dia('2026-10-30', 100, [it('A1', 'Cambuci', 'E', 5, 3), it('A2', 'BH', 'E', 2, 9)]) } },
   '2026-11': { dias: {
     '2026-11-03': dia('2026-11-03', 110, [it('A1', 'Cambuci', 'E', 5, 7), it('A3', 'RJ', 'F', 8, 1, 'Brasil'), it('A4', 'Cambuci', 'E', 1, 1)]),
-    '2026-11-04': dia('2026-11-04', 120, [it('A1', 'Cambuci', 'F', 5, 8), it('A5', 'Cambuci', 'E', 4, 2)])
+    '2026-11-04': dia('2026-11-04', 120, [it('A1', 'Cambuci', 'F', 5, 8, 'TCS', CLI), it('A5', 'Cambuci', 'E', 4, 2)])
   } }
 });
 
@@ -49,11 +50,12 @@ test('Excel do histórico: resumo do mês + uma aba por dia, com peças, transpo
   assert.match(String(d4.getCell('A1').value), /ATRASO DO DIA — 04\/11\/2026/);
   assert.match(String(d4.getCell('A9').value), /COMPARATIVO COM 03\/11\/2026/);
   assert.match(String(d4.getCell('A10').value), /^Melhorou/);
-  const todas = []; d4.eachRow(row => todas.push([1, 2, 3, 4, 5, 6, 7, 8, 9].map(c => row.getCell(c).value)));
+  const todas = []; d4.eachRow(row => todas.push([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map(c => row.getCell(c).value)));
   const a1 = todas.find(l => l[0] === 'A1'), a5 = todas.find(l => l[0] === 'A5');
-  assert.deepEqual([a1[4], a1[5], a1[6], a1[8]], [5, 'TCS', 'Faturamento', 'Passou de Estoque p/ Faturamento']);
-  assert.deepEqual([a5[4], a5[8]], [4, 'Novo (não estava em 03/11)']);
-  const saiu = []; d4.eachRow(row => { if (['A3', 'A4'].includes(row.getCell(11).value)) saiu.push([row.getCell(11).value, row.getCell(13).value, row.getCell(14).value]); });
+  assert.deepEqual([a1[5], a1[6], a1[7], a1[12]], [5, 'TCS', 'Faturamento', 'Passou de Estoque p/ Faturamento']);
+  assert.deepEqual([a1[1], a1[9], a1[10], a1[11]], ['FUNDACAO EXEMPLO', 'Despacho (já tem nota)', '884285', 1234.5], 'cliente, etapa, nota e valor');
+  assert.deepEqual([a5[1], a5[5], a5[12]], ['-', 4, 'Novo (não estava em 03/11)'], 'sem dados do cliente aparece como traço');
+  const saiu = []; d4.eachRow(row => { if (['A3', 'A4'].includes(row.getCell(15).value)) saiu.push([row.getCell(15).value, row.getCell(18).value, row.getCell(19).value]); });
   assert.deepEqual(saiu, [['A4', 1, 'TCS'], ['A3', 8, 'Brasil']], 'saíram do atraso, com peças e transportadora');
 
   const d3 = wb.getWorksheet('03-11-2026');
@@ -72,4 +74,15 @@ test('primeiro dia gravado sai sem comparativo e mês sem dias dá erro claro', 
   assert.match(String(d.getCell('A10').value), /Primeiro dia gravado/);
   await assert.rejects(() => H.gerar(so, '2026-09', {}, { ExcelJS, JSZip }), /Não há dias gravados em 2026-09/);
   await assert.rejects(() => H.gerar(so, '2026-11', {}, {}), /bibliotecas/);
+});
+
+test('aviso "sem dia anterior" não cobre a primeira linha da lista de pedidos', async () => {
+  const so = { '2026-11': { dias: { '2026-11-03': dia('2026-11-03', 10, [it('Z1', 'Cambuci', 'E', 3, 2, 'TCS', { n: 'CLIENTE Z' })]) } } };
+  const bytes = await H.gerar(so, '2026-11', {}, { ExcelJS, JSZip });
+  const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(bytes));
+  const ws = wb.getWorksheet('03-11-2026');
+  let linha = null; ws.eachRow(row => { if (row.getCell(1).value === 'Z1') linha = row; });
+  assert.ok(linha, 'o pedido Z1 continua na lista');
+  assert.equal(linha.getCell(2).value, 'CLIENTE Z');
+  assert.match(String(linha.getCell(15).value), /^Sem dia anterior gravado/);
 });

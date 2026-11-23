@@ -315,7 +315,7 @@ Ao lado dele fica o botão **Histórico de Atraso** (`atraso-historico-ui.js`, E
 
 ### Dados do pedido na foto (cliente, nota, valor, etapa)
 
-Cada pedido em atraso gravado na exportação leva também (campo extra da linha, só chaves conhecidas, limpas no servidor): nome e código do cliente, nota fiscal, valor da nota (aba SF2), linhas do pedido, etapa em que parou (separação, conferência, faturamento ou despacho), separador, conferente, fim da separação/conferência, faturado em e liberado às. A página mostra o cliente na tabela, os detalhes ao abrir o pedido, o "Valor em atraso" (só pedidos já com nota), busca por cliente/nota/código, filtro por etapa e as colunas novas no CSV. Fotos gravadas antes dessa versão não têm esses dados (aparecem com "—"); valem a partir da próxima exportação do Histórico de Atraso.
+Cada pedido em atraso gravado na exportação leva também (campo extra da linha, só chaves conhecidas, limpas no servidor): nome e código do cliente, nota fiscal, valor da nota (aba SF2), linhas do pedido, etapa em que parou (separação, conferência, faturamento ou despacho), separador, conferente, fim da separação/conferência, faturado em e liberado às. A página mostra o cliente na tabela, os detalhes ao abrir o pedido, o "Valor em atraso" (só pedidos já com nota), busca por cliente/nota/código, filtro por etapa e as colunas novas no CSV. O Excel do Histórico de Atraso também traz, em cada aba de dia, as colunas Cliente, Etapa em que parou, Nota fiscal e Valor da nota. Fotos gravadas antes dessa versão não têm esses dados (aparecem com "—"); valem a partir da próxima exportação do Histórico de Atraso.
 
 ## Transferência (aba por perfil)
 
