@@ -1,7 +1,7 @@
 /* Pedidos de prioridade das vendedoras: lista compartilhada, guardada em prioridades-vendedoras.json.
  * A vendedora CRIA o pedido (nasce "recebida", com protocolo); só a equipe (logada) muda o status, assume, comenta e responde.
  * Cada linha: { id, protocolo, pedido, nivel, motivo, observacao, pedidoPor, filial, status, resposta, responsavel, respondidoPor, naoAchado,
- *               criadoEm, atualizadoEm, historico[] }. O histórico só cresce (cada mudança: quem, quando, o quê).
+ *               conta (login da vendedora, quando ela criou acesso; vazio se enviou só com o nome), criadoEm, atualizadoEm, historico[] }. O histórico só cresce (cada mudança: quem, quando, o quê).
  * Só validação e mesclagem, sem acesso a disco. */
 'use strict';
 
@@ -40,13 +40,13 @@ function normalizarLinha(x) {
     id, pedido, protocolo: texto(x.protocolo, 30),
     nivel: NIVEIS.includes(x.nivel) ? x.nivel : 'normal',
     motivo: MOTIVOS.includes(x.motivo) ? x.motivo : 'outro',
-    observacao: texto(x.observacao, 300), pedidoPor: texto(x.pedidoPor, 60), filial: texto(x.filial, 40),
+    observacao: texto(x.observacao, 300), pedidoPor: texto(x.pedidoPor, 60), conta: texto(x.conta, 24), filial: texto(x.filial, 40),
     status: statusDe(x.status) || 'recebida',
     resposta: texto(x.resposta, 300), responsavel: texto(x.responsavel, 60), respondidoPor: texto(x.respondidoPor, 60),
     naoAchado: Boolean(x.naoAchado),
     criadoEm: dataHora(x.criadoEm), atualizadoEm: dataHora(x.atualizadoEm),
     historico: (Array.isArray(x.historico) ? x.historico : []).slice(-MAX_HISTORICO).map((h) => ({
-      em: dataHora(h && h.em), acao: ACOES_HIST.includes(h && h.acao) ? h.acao : 'status', por: texto(h && h.por, 60), texto: texto(h && h.texto, 300),
+      em: dataHora(h && h.em), acao: ACOES_HIST.includes(h && h.acao) ? h.acao : 'status', por: texto(h && h.por, 60), conta: texto(h && h.conta, 24), texto: texto(h && h.texto, 300),
       nivel: NIVEIS.includes(h && h.nivel) ? h.nivel : '', status: statusDe(h && h.status)
     }))
   };
@@ -105,7 +105,7 @@ function aplicar(linhasAtuais, corpo, quem, agora) {
     if (ativa) {
       // já está na fila: não cria outro, reforça o existente (sobe o nível se for maior) e registra a observação
       if (PESO_NIVEL[nivel] > PESO_NIVEL[ativa.nivel]) ativa.nivel = nivel;
-      add(ativa, { em: quando, acao: 'reforco', por: pedidoPor, texto: observacao, nivel, status: '' });
+      add(ativa, { em: quando, acao: 'reforco', por: pedidoPor, conta: texto(corpo.conta, 24), texto: observacao, nivel, status: '' });
       ativa.atualizadoEm = quando;
       return { linhas, resultado: { id: ativa.id, duplicado: true } };
     }
@@ -113,7 +113,7 @@ function aplicar(linhasAtuais, corpo, quem, agora) {
     if (linhas.filter((l) => l.pedidoPor.toLowerCase() === quemPediu && Date.parse(l.criadoEm) >= desde).length >= LIMITE_POR_DIA) return { linhas, erro: 'Você já fez ' + LIMITE_POR_DIA + ' pedidos de prioridade hoje. Fale direto com a equipe da expedição.' };
     if (linhas.length >= MAX_LINHAS) return { linhas, erro: 'A fila está cheia no momento. Fale com a equipe da expedição.' };
     const nova = {
-      id: novoId(agora), protocolo: novoProtocolo(linhas, agora), pedido, nivel, motivo, observacao, pedidoPor, filial: texto(corpo.filial, 40), status: 'recebida', resposta: '', responsavel: '', respondidoPor: '', naoAchado: Boolean(corpo.naoAchado),
+      id: novoId(agora), protocolo: novoProtocolo(linhas, agora), pedido, nivel, motivo, observacao, pedidoPor, conta: texto(corpo.conta, 24), filial: texto(corpo.filial, 40), status: 'recebida', resposta: '', responsavel: '', respondidoPor: '', naoAchado: Boolean(corpo.naoAchado),
       criadoEm: quando, atualizadoEm: quando, historico: [{ em: quando, acao: 'criado', por: pedidoPor, texto: observacao, nivel, status: 'recebida' }]
     };
     linhas.unshift(nova);
@@ -153,6 +153,15 @@ function aplicar(linhasAtuais, corpo, quem, agora) {
   return { linhas, erro: 'ação inválida' };
 }
 
+// Liga ao login da vendedora as solicitações que ela já tinha feito neste aparelho (só as sem conta e com o mesmo nome).
+function vincularConta(linhasAtuais, ids, nome, login) {
+  const linhas = normalizarLista({ linhas: linhasAtuais });
+  const quero = new Set((Array.isArray(ids) ? ids : []).map((x) => texto(x, 40)).filter(Boolean).slice(0, 100)), n = texto(nome, 60).toLowerCase();
+  let mudou = 0;
+  for (const l of linhas) if (quero.has(l.id) && !l.conta && l.pedidoPor.toLowerCase() === n) { l.conta = login; mudou++; }
+  return { linhas, mudou };
+}
+
 // Pedidos que já foram despachados deixam de precisar de prioridade: o sistema conclui sozinho (registrado como "Sistema").
 function fecharDespachados(linhasAtuais, despachados, agora) {
   const linhas = normalizarLista({ linhas: linhasAtuais });
@@ -179,8 +188,13 @@ function historicoPublico(l) {
   return saida;
 }
 
-// O que a vendedora vê. "meu" = pedido que ela mesma enviou (neste aparelho): mostra motivo, observação, resposta e histórico; a fila geral só o essencial.
-const visaoMeu = (l) => ({ id: l.id, protocolo: l.protocolo, pedido: l.pedido, nivel: l.nivel, motivo: l.motivo, status: l.status, observacao: l.observacao, pedidoPor: l.pedidoPor, resposta: l.resposta, criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l) });
+// Cada vendedora vê só o que é dela. "Dela" = criou a solicitação (pelo login, ou pelo nome quando não tem login) ou reforçou uma que já existia.
+// Dono vê motivo, observação e nome; quem só reforçou o pedido de outra pessoa vê status, nível e resposta, sem a observação nem o nome de quem pediu.
+const mesmoNome = (a, b) => Boolean(a) && Boolean(b) && String(a).toLowerCase() === String(b).toLowerCase();
+const ehDono = (l, quem) => (l.conta ? Boolean(quem && quem.login) && l.conta === quem.login : mesmoNome(l.pedidoPor, quem && quem.nome));
+const reforcou = (l, login) => Boolean(login) && l.historico.some((h) => h.acao === 'reforco' && h.conta === login);
+const ehDela = (l, login) => Boolean(login) && (l.conta === login || reforcou(l, login));
+const visaoMeu = (l, dono) => ({ id: l.id, protocolo: l.protocolo, pedido: l.pedido, nivel: l.nivel, motivo: dono === false ? '' : l.motivo, status: l.status, observacao: dono === false ? '' : l.observacao, pedidoPor: dono === false ? '' : l.pedidoPor, resposta: l.resposta, reforco: dono === false, criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l) });
 const visaoFila = (l) => ({ pedido: l.pedido, nivel: l.nivel, status: l.status, criadoEm: l.criadoEm });
 
 // Fila ordenada: urgente primeiro, depois a mais antiga.
@@ -188,4 +202,4 @@ function ordenarFila(linhas) {
   return linhas.slice().sort((a, b) => (PESO_NIVEL[b.nivel] - PESO_NIVEL[a.nivel]) || String(a.criadoEm).localeCompare(String(b.criadoEm)));
 }
 
-module.exports = { MAX_LINHAS, LIMITE_POR_DIA, NIVEIS, STATUS, ATIVOS, MOTIVOS, numeroDoPedido, normalizarLinha, normalizarLista, limpar, novoProtocolo, aplicar, fecharDespachados, historicoPublico, visaoMeu, visaoFila, ordenarFila };
+module.exports = { MAX_LINHAS, LIMITE_POR_DIA, NIVEIS, STATUS, ATIVOS, MOTIVOS, numeroDoPedido, normalizarLinha, normalizarLista, limpar, novoProtocolo, aplicar, fecharDespachados, vincularConta, ehDono, ehDela, historicoPublico, visaoMeu, visaoFila, ordenarFila };

@@ -9,7 +9,7 @@
   const ACAO = { criado: 'Pedido criado', reforco: 'Pedido reforçado', status: 'Status', assumir: 'Assumiu', interno: 'Comentário interno' };
   const VAZIO = { nivel: '', status: '', vendedora: '', filial: '', de: '', ate: '' };
   const ATIVOS = ['recebida', 'em_analise', 'aprovada', 'em_atendimento'];
-  const estado = { sessao: null, login: { usuario: '', senha: '', erro: '', entrando: false }, dados: null, erro: '', respostas: {}, internos: {}, filtro: Object.assign({}, VAZIO), aberta: null, gavAnim: null, salvando: '', vistos: null, novos: new Set(), link: null, linkErro: '', mostraLink: false, carregando: true };
+  const estado = { sessao: null, login: { usuario: '', senha: '', erro: '', entrando: false }, dados: null, erro: '', respostas: {}, internos: {}, filtro: Object.assign({}, VAZIO), aberta: null, gavAnim: null, salvando: '', vistos: null, novos: new Set(), link: null, linkErro: '', mostraLink: false, carregando: true, aba: 'fila', contas: null, contasErro: '', codigoTemp: null, consultas: null, filtroConta: '' };
 
   async function pedir(url, opcoes) {
     const r = await root.fetch(url, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, opcoes, { headers: CAB }));
@@ -46,6 +46,21 @@
     if (acao === 'gerar' && estado.link && estado.link.token && !root.confirm('Gerar um link novo faz o link antigo parar de funcionar. As vendedoras vão precisar do novo link. Continuar?')) return;
     if (acao === 'desativar' && !root.confirm('Desativar o link das vendedoras? Ninguém consegue abrir até gerar outro.')) return;
     try { estado.link = await pedir('/api/vendedoras-link', { method: 'POST', body: JSON.stringify({ acao }) }); estado.linkErro = ''; C.toast(acao === 'gerar' ? 'Link gerado.' : 'Link desativado.'); } catch (e) { estado.linkErro = e.message; }
+    desenhar();
+  }
+  async function carregarContas() {
+    if (!estado.sessao || !estado.sessao.admin) return;
+    try { estado.contas = (await pedir('/api/vendedoras-contas')).contas; estado.contasErro = ''; estado.consultas = (await pedir('/api/vendedoras-consultas?max=2000')).consultas; } catch (e) { estado.contasErro = e.message; }
+    desenhar();
+  }
+  async function acaoConta(c, acao) {
+    if (acao === 'redefinir' && !root.confirm('Redefinir o código de ' + c.nome + '? Ela é desconectada de todos os aparelhos e precisa entrar com o código temporário que vai aparecer aqui (só uma vez).')) return;
+    if (acao === 'desativar' && !root.confirm('Desativar o acesso de ' + c.nome + '? Ela não consegue mais entrar. As solicitações já feitas continuam na fila.')) return;
+    try {
+      const j = await pedir('/api/vendedoras-contas', { method: 'POST', body: JSON.stringify({ acao, id: c.id }) });
+      estado.contas = j.contas; estado.contasErro = ''; estado.codigoTemp = j.codigoTemporario ? { nome: c.nome, login: c.login, codigo: j.codigoTemporario } : null;
+      C.toast(acao === 'redefinir' ? 'Código redefinido. Copie o código temporário e passe para ela.' : acao === 'desativar' ? 'Acesso desativado.' : 'Acesso ativado.');
+    } catch (e) { C.toast(e.message, 'erro'); }
     desenhar();
   }
   const urlDoLink = () => (estado.link && estado.link.token ? root.location.origin + '/vendedoras.html?k=' + estado.link.token : '');
@@ -106,6 +121,58 @@
       .concat(l.filter((x) => !ATIVOS.includes(x.status)).sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))));
   };
 
+  /* ---------- exportar (CSV para Excel) ---------- */
+  const txtSituacao = (l) => (l.situacao ? [l.situacao.texto, l.situacao.cliente, l.situacao.transportadora].filter(Boolean).join(' · ') : '');
+  function exportarSolicitacoes() {
+    C.baixarCsv(C.nomeArquivo('solicitacoes-de-prioridade'), ['Protocolo', 'Pedido', 'Prioridade', 'Status', 'Motivo', 'Vendedora', 'Login da vendedora', 'Filial', 'Solicitado em', 'Atualizado em', 'Responsável', 'Resposta para a vendedora', 'Observação', 'Situação do pedido (ativas)', 'Reforços'],
+      ordenadas().map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.STATUS[l.status], C.MOTIVO[l.motivo] || '', l.pedidoPor, l.conta || '', filialDe(l), C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.responsavel, l.resposta, l.observacao, txtSituacao(l), (l.historico || []).filter((x) => x.acao === 'reforco').length]));
+  }
+  function exportarHistorico() {
+    const linhas = [];
+    for (const l of ordenadas()) for (const x of (l.historico || [])) linhas.push([l.protocolo, l.pedido, C.dataHoraCsv(x.em), ACAO[x.acao] || x.acao, x.status ? C.STATUS[x.status] || x.status : '', x.por, x.acao === 'interno' ? 'Sim' : 'Não', x.texto]);
+    C.baixarCsv(C.nomeArquivo('historico-de-prioridades'), ['Protocolo', 'Pedido', 'Quando', 'Evento', 'Status', 'Quem', 'Comentário interno', 'Texto'], linhas);
+  }
+  function telaExportar(linhas) {
+    const n = linhas.length, ev = linhas.reduce((t, l) => t + (l.historico || []).length, 0);
+    const bloco = (icone, titulo, texto, rotulo, fn, qtd) => h('div', { class: 'cartao-exportar', style: 'padding:14px 0;border-top:1px solid var(--linha)' }, h('div', { class: 'bola' }, ic(icone)), h('div', { class: 'meio' }, h('h3', { style: 'font-size:15px;font-weight:800', text: titulo }), h('p', { class: 'mudo peq', text: texto }), h('p', { class: 'peq', style: 'margin-top:2px', text: qtd + (qtd === 1 ? ' linha' : ' linhas') })),
+      h('button', { class: 'btn primario', type: 'button', disabled: !qtd, onclick: fn }, ic('baixar'), rotulo));
+    return h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('div', null, h('h2', { text: 'Exportar para planilha' }), h('p', { class: 'mudo peq', text: 'Arquivo CSV, abre direto no Excel. Vale o que está nos filtros abaixo (sem filtro: tudo que o painel carregou).' }))), barraFiltros(),
+      h('p', { class: 'dica', style: 'margin:10px 0 4px', text: 'As solicitações em andamento entram todas; das já finalizadas entram as 300 mais recentes.' }),
+      bloco('lista', 'Solicitações', 'Uma linha por solicitação: protocolo, pedido, prioridade, status, motivo, vendedora (e login), filial, datas, responsável, resposta e situação do pedido.', 'Baixar solicitações', exportarSolicitacoes, n),
+      bloco('comentario', 'Histórico completo', 'Uma linha por acontecimento (criou, reforçou, assumiu, mudou o status, comentário interno). Serve para auditar quem fez o quê e quando. Contém os comentários internos: não compartilhe com as vendedoras.', 'Baixar histórico', exportarHistorico, ev));
+  }
+
+  /* ---------- acessos das vendedoras (só administrador) ---------- */
+  const consultasFiltradas = () => (estado.consultas || []).filter((x) => !estado.filtroConta || x.conta === estado.filtroConta);
+  function exportarConsultas() {
+    C.baixarCsv(C.nomeArquivo('consultas-das-vendedoras'), ['Consultado em', 'Vendedora', 'Login', 'Pedido', 'Situação na hora', 'Filial', 'Cliente'], consultasFiltradas().map((x) => [C.dataHoraCsv(x.em), x.nome, x.conta, x.pedido, x.situacao, x.filial, x.cliente]));
+  }
+  function cartaoConsultas() {
+    const lista = consultasFiltradas(), contas = estado.contas || [];
+    return h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('div', null, h('h2', { text: 'Pedidos consultados pelas vendedoras' }), h('p', { class: 'mudo peq', text: 'Só de quem entrou com login (quem usa só o link não é identificada). Cada vendedora vê apenas as próprias consultas; aqui você vê todas. Guarda 90 dias.' })),
+      h('button', { class: 'btn peq primario', type: 'button', disabled: !lista.length, onclick: exportarConsultas }, ic('baixar'), 'Baixar consultas (CSV)')),
+      h('div', { class: 'filtros', style: 'margin-bottom:12px' }, h('div', null, h('label', { class: 'rotulo', for: 'f-conta', text: 'Vendedora' }), h('select', { id: 'f-conta', class: 'entrada', onchange: (ev) => { estado.filtroConta = ev.target.value; desenhar(); } }, h('option', { value: '', text: 'Todas' }), contas.map((c) => h('option', { value: c.login, text: c.nome + ' (' + c.login + ')', selected: estado.filtroConta === c.login }))))),
+      !estado.consultas ? C.esqueleto(2) : !lista.length ? C.vazio('busca', 'Nenhuma consulta registrada ainda', 'Aparece aqui quando uma vendedora com login consultar um pedido.')
+        : h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' }, h('thead', null, h('tr', null, ['Quando', 'Vendedora', 'Pedido', 'Situação na hora', 'Filial'].map((t) => h('th', { scope: 'col', text: t })))),
+          h('tbody', null, lista.slice(0, 200).map((x) => h('tr', null, h('td', { text: C.dataHora(x.em) }), h('td', null, x.nome, h('span', { class: 'sub', text: 'login ' + x.conta })), h('td', null, h('span', { class: 'pedido', text: x.pedido })), h('td', { text: x.situacao || '—' }), h('td', { text: x.filial || '—' })))))),
+      lista.length > 200 ? h('p', { class: 'dica', text: 'Mostrando as 200 mais recentes de ' + lista.length + '. O CSV leva todas.' }) : null);
+  }
+  function telaAcessos() {
+    const cs = estado.contas;
+    return h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('div', null, h('h2', { text: 'Acessos das vendedoras' }), h('p', { class: 'mudo peq', text: 'Login e código que elas criam (opcional) para acompanhar o que pediram em qualquer aparelho. O código ninguém vê, nem você: se esquecerem, redefina.' })), h('button', { class: 'btn peq', type: 'button', onclick: carregarContas }, ic('atualizar'), 'Atualizar')),
+      estado.contasErro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.contasErro) : null,
+      estado.codigoTemp ? h('div', { class: 'aviso', style: 'flex-direction:column;align-items:stretch;margin-bottom:14px', role: 'status' }, h('div', null, h('b', { text: 'Código temporário de ' + estado.codigoTemp.nome + ' (login ' + estado.codigoTemp.login + '). ' }), 'Aparece só agora. Passe para ela (não por e-mail): ela entra com ele e depois troca em "Seu acesso".'),
+        h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' }, h('span', { class: 'cx-codigo', text: estado.codigoTemp.codigo }), h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(estado.codigoTemp.codigo, 'Código copiado.') }, ic('copiar'), 'Copiar'), h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.codigoTemp = null; desenhar(); } }, 'Já passei, fechar'))) : null,
+      !cs ? C.esqueleto(2) : !cs.length ? C.vazio('usuario', 'Nenhuma vendedora criou acesso ainda', 'Elas encontram a opção "Entrar" no alto da página do link das vendedoras.')
+        : h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' }, h('thead', null, h('tr', null, ['Nome', 'Login', 'Solicitações', 'Consultas', 'Criado em', 'Último acesso', 'Situação', ''].map((t) => h('th', { scope: 'col', text: t })))),
+          h('tbody', null, cs.map((c) => h('tr', null, h('td', { text: c.nome }), h('td', { text: c.login }), h('td', { text: String(c.solicitacoes) }), h('td', { text: String(c.consultas || 0) }), h('td', { text: C.dataHora(c.criadoEm) }), h('td', { text: c.ultimoAcesso ? C.dataHora(c.ultimoAcesso) : '—' }), h('td', null, C.selo(c.ativo ? 'Ativo' : 'Desativado', c.ativo ? 'concluida' : 'nao_aprovada')),
+            h('td', null, h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' }, h('button', { class: 'btn peq', type: 'button', onclick: () => acaoConta(c, 'redefinir') }, 'Redefinir código'), h('button', { class: 'btn peq' + (c.ativo ? ' perigo' : ''), type: 'button', onclick: () => acaoConta(c, c.ativo ? 'desativar' : 'ativar') }, c.ativo ? 'Desativar' : 'Ativar')))))))));
+  }
+  function abas() {
+    const lista = [['fila', 'lista', 'Solicitações'], ['exportar', 'baixar', 'Exportar']].concat(estado.sessao.admin ? [['acessos', 'usuarioCheck', 'Acessos das vendedoras']] : []);
+    return h('div', { class: 'cx-abas', role: 'group', 'aria-label': 'Seções do painel' }, lista.map(([id, i, nome]) => h('button', { type: 'button', 'aria-pressed': String(estado.aba === id), onclick: () => { estado.aba = id; estado.aberta = null; if (id === 'acessos' && !estado.contas) carregarContas(); desenhar(); } }, ic(i), nome)));
+  }
+
   /* ---------- peças da tela ---------- */
   function indicadores() {
     const l = todas(), d = hoje();
@@ -139,7 +206,7 @@
       h('thead', null, h('tr', null, ['Pedido', 'Vendedora', 'Filial', 'Prioridade', 'Motivo', 'Solicitado', 'Status', 'Responsável'].map((t) => h('th', { scope: 'col', text: t })))),
       h('tbody', null, linhas.map((l) => h('tr', { class: 'linha ' + (ATIVOS.includes(l.status) ? l.nivel : '') + (estado.aberta === l.id ? ' sel' : '') + (estado.novos.has(l.id) ? ' novo-fio' : ''), tabindex: '0', role: 'button', 'aria-label': 'Abrir solicitação do pedido ' + l.pedido, onclick: () => abrir(l), onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abrir(l); } } },
         h('td', null, h('span', { class: 'pedido', text: l.pedido }), h('span', { class: 'sub', text: l.protocolo || '' })),
-        h('td', { text: l.pedidoPor || '—' }), h('td', { text: filialDe(l) || '—' }), h('td', null, C.selo(C.NIVEL[l.nivel], l.nivel)), h('td', { text: C.MOTIVO[l.motivo] ? C.MOTIVO[l.motivo].replace(' (explique na observação)', '') : '—' }),
+        h('td', null, l.pedidoPor || '—', l.conta ? h('span', { class: 'sub', text: 'login ' + l.conta }) : null), h('td', { text: filialDe(l) || '—' }), h('td', null, C.selo(C.NIVEL[l.nivel], l.nivel)), h('td', { text: C.MOTIVO[l.motivo] ? C.MOTIVO[l.motivo].replace(' (explique na observação)', '') : '—' }),
         h('td', null, C.dataHora(l.criadoEm), h('span', { class: 'sub', text: 'há ' + C.duracao(l.criadoEm) })), h('td', null, C.selo(C.STATUS[l.status], l.status)), h('td', { text: l.responsavel || '—', class: l.responsavel ? '' : 'mudo' }))))));
   }
   function gaveta(l) {
@@ -154,7 +221,7 @@
         h('div', { class: 'gaveta-corpo' },
           ativo ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Situação do pedido agora' }), s ? h('div', { class: 'cx-situacao' }, h('b', { text: s.texto }), h('div', { class: 'mudo peq', style: 'margin-top:4px', text: [s.cliente, s.armazem, s.transportadora, s.dias != null ? s.dias + ' dias desde a liberação' : ''].filter(Boolean).join(' · ') }), s.ocorrencia ? h('div', { class: 'peq', style: 'margin-top:4px;color:#8a4207', text: 'Ocorrência: ' + s.ocorrencia }) : null) : h('div', { class: 'aviso' }, ic('alerta'), l.naoAchado ? 'Pedido não encontrado na base do SC9. Confira o número.' : 'Pedido não encontrado na base atual do SC9.')) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Solicitação' }), h('div', { class: 'resumo-lista', style: 'margin-top:0' },
-            [['Vendedora', l.pedidoPor || '—'], ['Filial', filialDe(l) || '—'], ['Solicitado', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Motivo', C.MOTIVO[l.motivo] || '—'], ['Observação', l.observacao || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
+            [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', filialDe(l) || '—'], ['Solicitado', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Motivo', C.MOTIVO[l.motivo] || '—'], ['Observação', l.observacao || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
             (l.historico || []).filter((x) => x.acao === 'reforco').map((x) => h('p', { class: 'mudo peq', style: 'margin-top:8px', text: 'Reforço de ' + (x.por || '—') + ' (' + C.dataHora(x.em) + ')' + (x.texto ? ': ' + x.texto : '') }))),
           l.resposta ? h('div', { class: 'cx-situacao', style: 'background:var(--azul-claro);color:var(--azul-escuro)' }, h('b', { text: 'Última resposta para a vendedora: ' }), l.resposta) : null,
           ativo ? h('div', { style: 'display:flex;flex-direction:column;gap:14px' },
@@ -198,10 +265,12 @@
       corpo = h('main', { class: 'pagina' },
         h('div', { class: 'card-titulo', style: 'margin:0' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Solicitações de prioridade' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Quem decide é a logística: analise, aprove e responda. Atualiza sozinho a cada 20 segundos.' })),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.carregando = true; carregar(); } }, ic('atualizar'), 'Atualizar agora')),
+        abas(),
         estado.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro) : null,
         estado.mostraLink && estado.sessao.admin ? cartaoLink() : null,
-        d ? indicadores() : C.esqueleto(2),
-        d ? h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Solicitações' }), h('span', { class: 'mudo peq', text: linhas.length + (algumFiltro() ? ' de ' + todas().length : '') + (todas().length === 1 ? ' solicitação' : ' solicitações') })), barraFiltros(), h('div', { style: 'margin-top:14px' }, tabela(linhas))) : null);
+        estado.aba === 'exportar' ? (d ? telaExportar(linhas) : C.esqueleto(2)) : estado.aba === 'acessos' && estado.sessao.admin ? [telaAcessos(), cartaoConsultas()] : null,
+        estado.aba !== 'fila' ? null : d ? indicadores() : C.esqueleto(2),
+        estado.aba !== 'fila' ? null : d ? h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Solicitações' }), h('span', { class: 'mudo peq', text: linhas.length + (algumFiltro() ? ' de ' + todas().length : '') + (todas().length === 1 ? ' solicitação' : ' solicitações') })), barraFiltros(), h('div', { style: 'margin-top:14px' }, tabela(linhas))) : null);
     }
     const ab = logado && estado.dados && estado.aberta ? todas().find((x) => x.id === estado.aberta) : null;
     $raiz.replaceChildren(topo, corpo, ...(ab ? gaveta(ab) : []));

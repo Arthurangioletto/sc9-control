@@ -48,7 +48,11 @@
     link: [['p', 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7'], ['p', 'M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7']],
     sair: [['p', 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4'], ['p', 'm16 17 5-5-5-5'], ['p', 'M21 12H9']],
     painel: [['r', 3, 3, 7, 9, 1], ['r', 14, 3, 7, 5, 1], ['r', 14, 12, 7, 9, 1], ['r', 3, 16, 7, 5, 1]],
-    usuarioCheck: [['p', 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'], ['c', 9, 7, 4], ['p', 'm16 11 2 2 4-4']]
+    usuarioCheck: [['p', 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'], ['c', 9, 7, 4], ['p', 'm16 11 2 2 4-4']],
+    baixar: [['p', 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'], ['p', 'm7 10 5 5 5-5'], ['p', 'M12 15V3']],
+    usuario: [['p', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'], ['c', 12, 7, 4]],
+    cadeado: [['r', 3, 11, 18, 11, 2], ['p', 'M7 11V7a5 5 0 0 1 10 0v4']],
+    info: [['c', 12, 12, 10], ['p', 'M12 16v-4'], ['p', 'M12 8h.01']]
   };
   const NS = 'http://www.w3.org/2000/svg';
   function icone(nome, extra) {
@@ -100,6 +104,26 @@
   const vazio = (nomeIcone, titulo, texto) => h('div', { class: 'vazio' }, h('div', { class: 'bola' }, icone(nomeIcone)), h('b', { text: titulo }), texto ? h('p', { text: texto }) : null);
   const esqueleto = (n) => h('div', { 'aria-label': 'Carregando', role: 'status', style: 'display:flex;flex-direction:column;gap:12px' }, Array.from({ length: n || 3 }, (_, i) => h('div', { class: 'esqueleto', style: 'height:' + (i === 0 ? 120 : 64) + 'px' })));
 
+  /* ---------- exportar (CSV que abre direto no Excel em português) ---------- */
+  // ";" como separador, BOM no começo (acentos certos) e CRLF. Texto que começaria com = + - @ ganha um apóstrofo na frente
+  // para o Excel não tratar como fórmula (o texto vem de gente digitando).
+  const celulaCsv = (v) => {
+    let t = v == null ? '' : String(v);
+    if (/^[=+\-@\t\r]/.test(t) && !/^-?\d+([.,]\d+)?$/.test(t)) t = "'" + t;
+    return /[";\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  };
+  const montarCsv = (cabecalho, linhas) => [cabecalho].concat(linhas).map((l) => l.map(celulaCsv).join(';')).join('\r\n');
+  const dataHoraCsv = (iso) => (iso ? dataBR(iso) + ' ' + horaBR(iso) : '');
+  function baixarCsv(nomeArquivo, cabecalho, linhas) {
+    const blob = new root.Blob(['\ufeff' + montarCsv(cabecalho, linhas)], { type: 'text/csv;charset=utf-8' });
+    const url = root.URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: nomeArquivo, style: 'display:none' });
+    root.document.body.appendChild(a); a.click(); a.remove();
+    root.setTimeout(() => root.URL.revokeObjectURL(url), 4000);
+    toast('Arquivo ' + nomeArquivo + ' baixado.');
+  }
+  const nomeArquivo = (base) => base + '-' + diaSP(new Date().toISOString()) + '.csv';
+
   let caixaToasts = null;
   function toast(texto, tipo) {
     if (!caixaToasts) { caixaToasts = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' }); root.document.body.appendChild(caixaToasts); }
@@ -111,5 +135,5 @@
     try { await root.navigator.clipboard.writeText(texto); toast(aviso || 'Copiado.'); } catch (e) { toast('Não consegui copiar. Selecione o texto e copie.', 'erro'); }
   }
 
-  root.Central = { NOME, FUSO, h, icone, marca, NIVEL, NIVEL_DICA, STATUS, MOTIVO, ICONE_ETAPA, dataBR, curta, horaBR, dataHora, diaSP, duracao, selo, fato, vazio, esqueleto, toast, copiar };
+  root.Central = { NOME, FUSO, h, icone, marca, NIVEL, NIVEL_DICA, STATUS, MOTIVO, ICONE_ETAPA, dataBR, curta, horaBR, dataHora, diaSP, duracao, selo, fato, vazio, esqueleto, toast, copiar, montarCsv, baixarCsv, dataHoraCsv, nomeArquivo };
 })(window);
