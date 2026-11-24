@@ -329,6 +329,8 @@ const LIMITES_CORPO = {
   "/api/save": MAX_BODY_BYTES, "/api/cadastro-achados": MAX_BODY_BYTES, "/api/movimentacao-analise": MAX_BODY_BYTES,
   "/api/recebimento/entrega": 10 * 1024 * 1024, "/api/controle": 8 * 1024 * 1024, "/api/controle-sd3": 4 * 1024 * 1024, "/api/cadastro-saldos": 8 * 1024 * 1024,
   "/api/entradas-tdc/sd1": MAX_BODY_BYTES, "/api/indicador-i09": MAX_BODY_BYTES, "/api/atraso-historico": 8 * 1024 * 1024, // planilhas/fotos do dia (só admin/estoque)
+  // Transferência e Retém: o documento grava a base e os registros juntos; acima de ~1.200 itens passava de 1 MB e o servidor recusava (413) sem salvar
+  "/api/transferencia-documentos": 10 * 1024 * 1024, "/api/retem-documentos": 10 * 1024 * 1024,
   "/api/entradas-tdc/fotos": 2 * 1024 * 1024, // foto já reduzida (a rota barra > 900 KB; em base64 ≈ 1,2 MB)
 };
 const limiteDaRota = (pathname) => LIMITES_CORPO[pathname] || LIMITE_CORPO_PADRAO;
