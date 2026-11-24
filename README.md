@@ -340,6 +340,8 @@ No **Resumo da operação** (painel inicial) há o quadro **📌 Pedidos fixados
 
 Cada pedido em atraso gravado na exportação leva também (campo extra da linha, só chaves conhecidas, limpas no servidor): nome e código do cliente, nota fiscal, valor da nota (aba SF2), linhas do pedido, etapa em que parou (separação, conferência, faturamento ou despacho), separador, conferente, fim da separação/conferência, faturado em e liberado às. A página mostra o cliente na tabela, os detalhes ao abrir o pedido, o "Valor em atraso" (só pedidos já com nota), busca por cliente/nota/código, filtro por etapa e as colunas novas no CSV. O Excel do Histórico de Atraso também traz, em cada aba de dia, as colunas Cliente, Etapa em que parou, Nota fiscal e Valor da nota. Fotos gravadas antes dessa versão não têm esses dados (aparecem com "—"); valem a partir da próxima exportação do Histórico de Atraso.
 
+**Excel de atrasados autoexplicativo.** O Excel passa a usar as mesmas regras da página (reclassificação pela Saída p/ Expedição, status do pedido, ocorrências da expedição pela nota fiscal): nova aba **Como ler** (glossário, colunas e cores), bloco **O que fazer agora** na aba do dia mais recente e três colunas por pedido — Status do pedido, Ocorrência (situação atual) e O que fazer (traço nos dias antigos). Ao baixar, o botão lê o histórico completo do servidor (`/api/atraso-historico`); se a leitura falhar, gera o Excel básico como antes.
+
 ## Transferência (aba por perfil)
 
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
