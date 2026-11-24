@@ -1844,6 +1844,26 @@ async function handleApi(req, res, pathname) {
     return Rastreio.montarRastreio(snap, pedido, { saidaIso: saidas[pedido] || "", ocorrencias: linhasOcorrencias || [], agora: new Date(), nomeTransportadora: nomeTransp });
   };
 
+  // Acesso opcional das vendedoras (login + código, vendedoras-contas.js): a sessão vem no cabeçalho X-Vend-Token.
+  const contasLinhas = async () => require("./vendedoras-contas.js").normalizarLista(await objLoad("vendedoras-contas.json", { fresh: true }).catch(() => null));
+  const contaDoToken = async (req) => {
+    const V = require("./vendedoras-contas.js");
+    const sessao = V.lerSessao(SESSION_SECRET, req.headers["x-vend-token"]);
+    return sessao ? V.contaDaSessao(await contasLinhas(), sessao) : null;
+  };
+  const nomeLimpo = (v) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+  // Liga à conta as solicitações que a vendedora já tinha feito neste aparelho (mesmo nome, ainda sem conta).
+  const vincularSolicitacoes = async (ids, conta) => {
+    if (!Array.isArray(ids) || !ids.length) return;
+    try {
+      const P = require("./prioridades-store.js");
+      await comFila("prioridades-vendedoras", async () => {
+        const feito = P.vincularConta(P.normalizarLista(await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null)), ids, conta.nome, conta.login);
+        if (feito.mudou) await objSave("prioridades-vendedoras.json", { linhas: feito.linhas });
+      });
+    } catch (e) { console.error("Erro ao ligar solicitações à conta:", e); }
+  };
+
   if (pathname.startsWith("/api/vendedoras/")) {
     const ip = ipDe(req);
     if (bloqueado("vend|" + ip)) return sendJson(res, 429, { error: "Muitas tentativas com código errado. Aguarde alguns minutos." });
@@ -1862,15 +1882,84 @@ async function handleApi(req, res, pathname) {
         if (!r.achado && limiteVendedoras("vn|" + ip, 15, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas sem resultado. Confira os números e tente de novo em alguns minutos." });
         return sendJson(res, 200, r);
       }
+      if (pathname === "/api/vendedoras/conta") {
+        const V = require("./vendedoras-contas.js");
+        if (method === "GET") { const c = await contaDoToken(req); return sendJson(res, 200, { conta: c ? V.visaoPublica(c) : null }); }
+        if (method !== "POST") return sendJson(res, 404, { error: "não encontrado" });
+        let corpo;
+        try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const acao = corpo && corpo.acao;
+        const ids = Array.isArray(corpo && corpo.ids) ? corpo.ids.map(String).slice(0, 100) : [];
+        if (acao === "criar") {
+          const login = V.normalizarLogin(corpo.login), nome = nomeLimpo(corpo.nome);
+          if (!login) return sendJson(res, 400, { error: "Login: de 3 a 24 caracteres, só letras, números, ponto, hífen ou sublinhado." });
+          if (nome.length < 2) return sendJson(res, 400, { error: "Diga seu nome para a equipe saber quem pediu." });
+          const erroCodigo = V.validarCodigo(corpo.codigo, login);
+          if (erroCodigo) return sendJson(res, 400, { error: erroCodigo });
+          if (limiteVendedoras("vcc|" + ip, 5, 60 * 60 * 1000) || limiteVendedoras("vcc-total", 60, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitos acessos criados em pouco tempo. Aguarde um pouco ou fale com a expedição." });
+          const cred = await V.criarHash(corpo.codigo);
+          let resultado;
+          await comFila("vendedoras-contas", async () => {
+            const contas = await contasLinhas();
+            if (contas.some((c) => c.login === login)) { resultado = { erro: "Esse login já existe. Escolha outro, ou entre se ele é seu.", status: 409 }; return; }
+            if (contas.length >= V.MAX_CONTAS) { resultado = { erro: "Limite de acessos atingido. Fale com a expedição.", status: 400 }; return; }
+            const agora = new Date().toISOString();
+            const conta = { id: "c" + crypto.randomBytes(8).toString("hex"), login, nome, salt: cred.salt, hash: cred.hash, sv: 0, ativo: true, criadoEm: agora, ultimoAcesso: agora };
+            await objSave("vendedoras-contas.json", { contas: contas.concat([conta]) });
+            resultado = { conta };
+          });
+          if (resultado.erro) return sendJson(res, resultado.status, { error: resultado.erro });
+          await vincularSolicitacoes(ids, resultado.conta);
+          return sendJson(res, 200, { ok: true, token: V.emitirSessao(SESSION_SECRET, resultado.conta), conta: V.visaoPublica(resultado.conta) });
+        }
+        if (acao === "entrar" || acao === "trocar-codigo") {
+          if (limiteVendedoras("vl|" + ip, 20, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas tentativas. Aguarde alguns minutos." });
+          const logado = acao === "trocar-codigo" ? await contaDoToken(req) : null;
+          if (acao === "trocar-codigo" && !logado) return sendJson(res, 401, { error: "Sua sessão acabou. Entre de novo." });
+          const login = logado ? logado.login : V.normalizarLogin(corpo.login), chave = "vlogin|" + (login || "?");
+          if (bloqueadoN(chave, 8)) return sendJson(res, 429, { error: "Muitas tentativas neste login. Aguarde 10 minutos." });
+          const atual = logado || (await contasLinhas()).find((c) => c.login === login);
+          const certo = await V.conferirCodigo(atual, acao === "entrar" ? corpo.codigo : corpo.codigoAtual);
+          if (!atual || !atual.ativo || !certo) { registraFalha(chave); return sendJson(res, 401, { error: acao === "entrar" ? "Login ou código incorreto." : "O código atual está incorreto." }); }
+          let conta = atual;
+          if (acao === "trocar-codigo") {
+            const erroCodigo = V.validarCodigo(corpo.codigoNovo, atual.login);
+            if (erroCodigo) return sendJson(res, 400, { error: erroCodigo });
+            const cred = await V.criarHash(corpo.codigoNovo);
+            await comFila("vendedoras-contas", async () => {
+              const contas = await contasLinhas(), i = contas.findIndex((c) => c.id === atual.id);
+              if (i < 0) return;
+              contas[i] = Object.assign({}, contas[i], { salt: cred.salt, hash: cred.hash, sv: contas[i].sv + 1 });
+              conta = contas[i];
+              await objSave("vendedoras-contas.json", { contas });
+            });
+          } else {
+            await comFila("vendedoras-contas", async () => {
+              const contas = await contasLinhas(), i = contas.findIndex((c) => c.id === atual.id);
+              if (i < 0) return;
+              contas[i] = Object.assign({}, contas[i], { ultimoAcesso: new Date().toISOString() });
+              conta = contas[i];
+              await objSave("vendedoras-contas.json", { contas });
+            });
+            await vincularSolicitacoes(ids, conta);
+          }
+          return sendJson(res, 200, { ok: true, token: V.emitirSessao(SESSION_SECRET, conta), conta: V.visaoPublica(conta) });
+        }
+        return sendJson(res, 400, { error: "ação inválida" });
+      }
       if (pathname === "/api/vendedoras/prioridades" && method === "GET") {
         if (limiteVendedoras("vc|" + ip, 40, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
-        const P = require("./prioridades-store.js");
+        const P = require("./prioridades-store.js"), V = require("./vendedoras-contas.js");
         await fecharPrioridadesDespachadas();
         const linhas = await prioridadesLinhas();
+        const conta = await contaDoToken(req);
         const meus = new Set(String(consulta.get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 100));
+        const snap = await loadSnapshot().catch(() => null);
         return sendJson(res, 200, {
-          meus: linhas.filter((l) => meus.has(l.id)).map(P.visaoMeu),
+          meus: linhas.filter((l) => meus.has(l.id) || (conta && l.conta === conta.login)).map(P.visaoMeu),
           fila: P.ordenarFila(linhas.filter((l) => P.ATIVOS.includes(l.status))).slice(0, 200).map(P.visaoFila),
+          conta: conta ? V.visaoPublica(conta) : null, sessaoRecusada: Boolean(req.headers["x-vend-token"] && !conta),
+          baseEm: snap && snap.savedAt ? new Date(snap.savedAt).toISOString() : null,
           agora: new Date().toISOString()
         });
       }
@@ -1883,10 +1972,11 @@ async function handleApi(req, res, pathname) {
         if (!pedido) return sendJson(res, 400, { error: "Número do pedido inválido (só números, de 4 a 10 dígitos)." });
         const r = await rastrearPedido(pedido, []);
         if (r.achado && r.resumo.nivel === "concluido") return sendJson(res, 400, { error: "Este pedido já foi despachado. " + r.resumo.texto });
+        const contaPedido = await contaDoToken(req); // com acesso, o nome e o login vêm da conta (não do que foi digitado)
         let resultado, linhas;
         await comFila("prioridades-vendedoras", async () => {
           const atual = await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null);
-          const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: corpo.pedidoPor, motivo: corpo.motivo, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, corpo && corpo.pedidoPor, Date.now());
+          const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: contaPedido ? contaPedido.nome : corpo.pedidoPor, conta: contaPedido ? contaPedido.login : "", motivo: corpo.motivo, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, corpo && corpo.pedidoPor, Date.now());
           if (feito.erro) { resultado = { erro: feito.erro }; return; }
           resultado = feito.resultado; linhas = feito.linhas;
           await objSave("prioridades-vendedoras.json", { linhas });
@@ -1921,6 +2011,41 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       console.error("Erro no link das vendedoras:", e);
       return sendJson(res, 500, erroPublico(e, "erro no link das vendedoras"));
+    }
+  }
+
+  // Administrador: ver os acessos (login + código) que as vendedoras criaram, redefinir um código esquecido e ativar/desativar.
+  // O código nunca é guardado nem mostrado; a redefinição gera um código temporário que aparece UMA vez e derruba as sessões dela.
+  if (pathname === "/api/vendedoras-contas" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    const V = require("./vendedoras-contas.js");
+    const lista = async () => {
+      const linhas = await prioridadesLinhas();
+      return { contas: (await contasLinhas()).map((c) => Object.assign(V.visaoAdmin(c), { solicitacoes: linhas.filter((l) => l.conta === c.login).length })) };
+    };
+    try {
+      if (method === "GET") return sendJson(res, 200, await lista());
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      const acao = corpo && corpo.acao, id = String((corpo && corpo.id) || "");
+      if (!["redefinir", "ativar", "desativar"].includes(acao)) return sendJson(res, 400, { error: "ação inválida" });
+      const temp = acao === "redefinir" ? V.codigoTemporario() : "";
+      const cred = temp ? await V.criarHash(temp) : null;
+      let achou = false;
+      await comFila("vendedoras-contas", async () => {
+        const contas = await contasLinhas(), i = contas.findIndex((c) => c.id === id);
+        if (i < 0) return;
+        achou = true;
+        contas[i] = acao === "redefinir" ? Object.assign({}, contas[i], { salt: cred.salt, hash: cred.hash, sv: contas[i].sv + 1, ativo: true }) : Object.assign({}, contas[i], { ativo: acao === "ativar", sv: contas[i].sv + (acao === "desativar" ? 1 : 0) });
+        await objSave("vendedoras-contas.json", { contas });
+      });
+      if (!achou) return sendJson(res, 404, { error: "Acesso não encontrado." });
+      console.log("[vendedoras] " + acao + " acesso id=" + id + " por=" + sess.usuario);
+      return sendJson(res, 200, Object.assign(await lista(), temp ? { codigoTemporario: temp } : {}));
+    } catch (e) {
+      console.error("Erro nos acessos das vendedoras:", e);
+      return sendJson(res, 500, erroPublico(e, "erro nos acessos das vendedoras"));
     }
   }
 

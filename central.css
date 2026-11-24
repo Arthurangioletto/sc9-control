@@ -202,4 +202,29 @@ table.tabela { width: 100%; border-collapse: separate; border-spacing: 0; font-s
   .tabela-rolagem { margin: 0 -16px; padding: 0 16px; }
   .toasts { left: 12px; right: 12px; bottom: 12px; }
 }
+/* ---- aviso do processo (base do SC9 + análise pela equipe), exportar e acesso da vendedora ---- */
+.processo { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; border-radius: var(--raio); background: var(--azul-claro); border: 1px solid var(--azul-borda); color: var(--azul-escuro); }
+.processo .bola { width: 40px; height: 40px; border-radius: 12px; background: #fff; color: var(--azul); display: grid; place-items: center; font-size: 20px; flex: 0 0 auto; }
+.processo h2 { font-size: 16px; font-weight: 800; margin-bottom: 6px; }
+.processo ul { margin: 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.45; }
+.processo li b { font-weight: 800; } .processo .velha { color: #8a3a05; font-weight: 700; }
+.processo.compacta { align-items: center; gap: 10px; padding: 10px 14px; font-size: 13.5px; }
+.processo.compacta .ic { width: 20px; height: 20px; flex: 0 0 auto; color: var(--azul); } .processo.compacta p { line-height: 1.4; }
+.processo.forte { background: var(--laranja-claro); border-color: #f6d3a8; color: #6e3706; width: 100%; text-align: left; } .processo.forte .ic { color: var(--laranja); }
+.aguarde { color: var(--laranja); font-weight: 700; }
+.cartao-exportar { display: flex; gap: 14px; align-items: center; } .cartao-exportar .bola { width: 44px; height: 44px; border-radius: 12px; background: var(--azul-claro); color: var(--azul); display: grid; place-items: center; font-size: 22px; flex: 0 0 auto; }
+.cartao-exportar .meio { flex: 1 1 auto; min-width: 0; } .cartao-exportar h2 { font-size: 16px; font-weight: 800; } .cartao-exportar .peq { font-size: 12.5px; color: var(--tinta-2); font-weight: 700; }
+.conta-botao { margin-left: 8px; flex: 0 0 auto; } .conta-botao.ativo { background: var(--azul-claro); border-color: var(--azul-borda); color: var(--azul); } .conta-nome { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-botao { border: 0; background: none; padding: 0; color: var(--azul); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.cx-abas { display: flex; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+.cx-abas button { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 1px solid var(--linha); border-radius: 999px; background: #fff; color: var(--tinta-2); font-weight: 700; font-size: 14px; cursor: pointer; }
+.cx-abas button[aria-pressed="true"] { background: var(--azul-claro); border-color: var(--azul-borda); color: var(--azul); }
+.cx-codigo { font: 700 22px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .08em; padding: 12px 14px; background: var(--suave); border-radius: 12px; user-select: all; }
+@media (max-width: 640px) {
+  .processo { padding: 14px; gap: 10px; } .processo .bola { width: 34px; height: 34px; font-size: 18px; }
+  .cartao-exportar { flex-wrap: wrap; } .cartao-exportar .btn { width: 100%; justify-content: center; }
+  .conta-botao { margin-left: auto; } .conta-nome { max-width: 64px; }
+  .nav button { padding: 8px 6px; gap: 5px; font-size: 13px; } .nav .ic { width: 16px; height: 16px; }
+}
+@media (max-width: 400px) { .nav .ic { display: none; } .nav button { padding: 8px 4px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
