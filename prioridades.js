@@ -7,7 +7,7 @@
   const $raiz = root.document.getElementById('raiz');
   const CAB = { 'Content-Type': 'application/json', 'X-SC9-App': '1' };
   const ACAO = { criado: 'Pedido criado', reforco: 'Pedido reforçado', status: 'Status', assumir: 'Assumiu', interno: 'Comentário interno' };
-  const VAZIO = { nivel: '', status: '', vendedora: '', filial: '', de: '', ate: '' };
+  const VAZIO = { nivel: '', status: '', vendedora: '', filial: '', de: '', ate: '', fora: '' };
   const ATIVOS = ['recebida', 'em_analise', 'aprovada', 'em_atendimento'];
   const estado = { sessao: null, login: { usuario: '', senha: '', erro: '', entrando: false }, dados: null, erro: '', respostas: {}, internos: {}, filtro: Object.assign({}, VAZIO), aberta: null, gavAnim: null, salvando: '', vistos: null, novos: new Set(), link: null, linkErro: '', mostraLink: false, carregando: true, aba: 'fila', contas: null, contasErro: '', codigoTemp: null, consultas: null, filtroConta: '' };
 
@@ -31,7 +31,8 @@
       const ids = new Set(j.ativos.map((l) => l.id));
       if (estado.vistos) estado.novos = new Set([...ids].filter((i) => !estado.vistos.has(i)).concat([...estado.novos].filter((i) => ids.has(i))));
       estado.vistos = ids; estado.dados = j; estado.erro = '';
-      root.document.title = (j.ativos.length ? '(' + j.ativos.length + ') ' : '') + 'Painel da logística · ' + C.NOME;
+      const fora = j.ativos.filter((l) => l.situacao === null).length;
+      root.document.title = (fora ? '⚠ ' + fora + ' fora do SC9 · ' : '') + (j.ativos.length ? '(' + j.ativos.length + ') ' : '') + 'Painel da logística · ' + C.NOME;
     } catch (e) { estado.erro = e.message; }
     estado.carregando = false;
     const ativo = root.document.activeElement;
@@ -108,6 +109,7 @@
     if (f.status && l.status !== f.status) return false;
     if (f.vendedora && String(l.pedidoPor || '').toLowerCase() !== f.vendedora) return false;
     if (f.filial && filialDe(l) !== f.filial) return false;
+    if (f.fora && l.situacao !== null) return false; // só as ativas cujo pedido não está na carga do SC9
     const dia = C.diaSP(l.criadoEm);
     if (f.de && dia < f.de) return false;
     if (f.ate && dia > f.ate) return false;
@@ -124,8 +126,8 @@
   /* ---------- exportar (CSV para Excel) ---------- */
   const txtSituacao = (l) => (l.situacao ? [l.situacao.texto, l.situacao.cliente, l.situacao.transportadora].filter(Boolean).join(' · ') : '');
   function exportarSolicitacoes() {
-    C.baixarCsv(C.nomeArquivo('solicitacoes-de-prioridade'), ['Protocolo', 'Pedido', 'Prioridade', 'Status', 'Motivo', 'Vendedora', 'Login da vendedora', 'Filial', 'Solicitado em', 'Atualizado em', 'Responsável', 'Resposta para a vendedora', 'Observação', 'Situação do pedido (ativas)', 'Reforços'],
-      ordenadas().map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.STATUS[l.status], C.MOTIVO[l.motivo] || '', l.pedidoPor, l.conta || '', filialDe(l), C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.responsavel, l.resposta, l.observacao, txtSituacao(l), (l.historico || []).filter((x) => x.acao === 'reforco').length]));
+    C.baixarCsv(C.nomeArquivo('solicitacoes-de-prioridade'), ['Protocolo', 'Pedido', 'Prioridade', 'Status', 'Motivo', 'Vendedora', 'Login da vendedora', 'Filial', 'Solicitado em', 'Atualizado em', 'Responsável', 'Resposta para a vendedora', 'Observação', 'Situação do pedido (ativas)', 'Está no SC9? (ativas)', 'Reforços'],
+      ordenadas().map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.STATUS[l.status], C.MOTIVO[l.motivo] || '', l.pedidoPor, l.conta || '', filialDe(l), C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.responsavel, l.resposta, l.observacao, txtSituacao(l), l.situacao === null ? 'Não' : l.situacao ? 'Sim' : '', (l.historico || []).filter((x) => x.acao === 'reforco').length]));
   }
   function exportarHistorico() {
     const linhas = [];
@@ -173,6 +175,23 @@
     return h('div', { class: 'cx-abas', role: 'group', 'aria-label': 'Seções do painel' }, lista.map(([id, i, nome]) => h('button', { type: 'button', 'aria-pressed': String(estado.aba === id), onclick: () => { estado.aba = id; estado.aberta = null; if (id === 'acessos' && !estado.contas) carregarContas(); desenhar(); } }, ic(i), nome)));
   }
 
+  /* ---------- aviso: pedidos pedidos pelas vendedoras que ainda não estão no SC9 ---------- */
+  // Calculado ao vivo: some sozinho quando o SC9 é recarregado e o pedido entra na base.
+  // Se o pedido foi pedido DEPOIS da última carga, é só recarregar; se já era mais velho que a carga e continua fora, o número deve estar errado.
+  function faixaSc9() {
+    const d = estado.dados; if (!d) return null;
+    const fora = d.ativos.filter((l) => l.situacao === null);
+    if (!fora.length) return null;
+    const base = d.baseEm ? Date.parse(d.baseEm) : 0;
+    const esperando = fora.filter((l) => !(Date.parse(l.criadoEm) <= base)), conferir = fora.filter((l) => Date.parse(l.criadoEm) <= base);
+    const lista = (ls) => ls.map((l) => l.pedido + (l.pedidoPor ? ' (' + l.pedidoPor + ')' : '')).join(', ');
+    const verEsses = h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.aba = 'fila'; estado.filtro = Object.assign({}, VAZIO, { fora: '1' }); desenhar(); } }, ic('lista'), 'Ver esses pedidos');
+    return h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+      esperando.length ? h('section', { class: 'alerta-sc9', role: 'alert' }, h('div', { class: 'bola' }, ic('atualizar')), h('div', { class: 'meio' }, h('h2', { text: 'Recarregue o SC9' }),
+        h('p', { text: (esperando.length === 1 ? '1 pedido com prioridade solicitada pelas vendedoras ainda não está no SC9' : esperando.length + ' pedidos com prioridade solicitada pelas vendedoras ainda não estão no SC9') + (d.baseEm ? ' (última carga em ' + C.dataHora(d.baseEm) + ')' : '') + ': ' + lista(esperando) + '. Carregue o SC9 de novo para mostrar as informações. Este aviso some sozinho quando eles entrarem na base.' })), verEsses) : null,
+      conferir.length ? h('section', { class: 'aviso', role: 'status', style: 'align-items:center' }, ic('alerta'), h('div', { style: 'flex:1' }, h('b', { text: 'Conferir o número: ' }), 'mesmo depois da última carga (' + C.dataHora(d.baseEm) + ') não aparecem: ' + lista(conferir) + '. Pode ser número errado: confirme com a vendedora.'), esperando.length ? null : verEsses) : null);
+  }
+
   /* ---------- peças da tela ---------- */
   function indicadores() {
     const l = todas(), d = hoje();
@@ -197,6 +216,7 @@
       sel('f-nivel', 'Prioridade', 'nivel', Object.entries(C.NIVEL)), sel('f-status', 'Status', 'status', Object.entries(C.STATUS)), sel('f-vend', 'Vendedora', 'vendedora', vend), sel('f-filial', 'Filial', 'filial', fils.map((x) => [x, x])),
       h('div', null, h('label', { class: 'rotulo', for: 'f-de', text: 'De' }), h('input', { id: 'f-de', class: 'entrada', type: 'date', value: estado.filtro.de, onchange: (ev) => { estado.filtro.de = ev.target.value; desenhar(); } })),
       h('div', null, h('label', { class: 'rotulo', for: 'f-ate', text: 'Até' }), h('input', { id: 'f-ate', class: 'entrada', type: 'date', value: estado.filtro.ate, onchange: (ev) => { estado.filtro.ate = ev.target.value; desenhar(); } })),
+      estado.filtro.fora ? C.selo('Só pedidos fora do SC9', 'alta') : null,
       algumFiltro() ? h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.filtro = Object.assign({}, VAZIO); desenhar(); } }, ic('fechar'), 'Limpar filtros') : null);
   }
   function tabela(linhas) {
@@ -205,7 +225,7 @@
     return h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' },
       h('thead', null, h('tr', null, ['Pedido', 'Vendedora', 'Filial', 'Prioridade', 'Motivo', 'Solicitado', 'Status', 'Responsável'].map((t) => h('th', { scope: 'col', text: t })))),
       h('tbody', null, linhas.map((l) => h('tr', { class: 'linha ' + (ATIVOS.includes(l.status) ? l.nivel : '') + (estado.aberta === l.id ? ' sel' : '') + (estado.novos.has(l.id) ? ' novo-fio' : ''), tabindex: '0', role: 'button', 'aria-label': 'Abrir solicitação do pedido ' + l.pedido, onclick: () => abrir(l), onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abrir(l); } } },
-        h('td', null, h('span', { class: 'pedido', text: l.pedido }), h('span', { class: 'sub', text: l.protocolo || '' })),
+        h('td', null, h('span', { class: 'pedido', text: l.pedido }), h('span', { class: 'sub', text: l.protocolo || '' }), l.situacao === null ? C.selo('Fora do SC9', 'alta') : null),
         h('td', null, l.pedidoPor || '—', l.conta ? h('span', { class: 'sub', text: 'login ' + l.conta }) : null), h('td', { text: filialDe(l) || '—' }), h('td', null, C.selo(C.NIVEL[l.nivel], l.nivel)), h('td', { text: C.MOTIVO[l.motivo] ? C.MOTIVO[l.motivo].replace(' (explique na observação)', '') : '—' }),
         h('td', null, C.dataHora(l.criadoEm), h('span', { class: 'sub', text: 'há ' + C.duracao(l.criadoEm) })), h('td', null, C.selo(C.STATUS[l.status], l.status)), h('td', { text: l.responsavel || '—', class: l.responsavel ? '' : 'mudo' }))))));
   }
@@ -219,7 +239,7 @@
         h('div', { class: 'gaveta-cab' }, h('div', null, h('p', { class: 'mudo peq', text: l.protocolo || 'Solicitação de prioridade' }), h('h3', { class: 'num', text: 'Pedido ' + l.pedido }), h('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' }, C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status))),
           h('button', { class: 'btn peq fantasma', type: 'button', 'aria-label': 'Fechar', onclick: fecha }, ic('fechar'))),
         h('div', { class: 'gaveta-corpo' },
-          ativo ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Situação do pedido agora' }), s ? h('div', { class: 'cx-situacao' }, h('b', { text: s.texto }), h('div', { class: 'mudo peq', style: 'margin-top:4px', text: [s.cliente, s.armazem, s.transportadora, s.dias != null ? s.dias + ' dias desde a liberação' : ''].filter(Boolean).join(' · ') }), s.ocorrencia ? h('div', { class: 'peq', style: 'margin-top:4px;color:#8a4207', text: 'Ocorrência: ' + s.ocorrencia }) : null) : h('div', { class: 'aviso' }, ic('alerta'), l.naoAchado ? 'Pedido não encontrado na base do SC9. Confira o número.' : 'Pedido não encontrado na base atual do SC9.')) : null,
+          ativo ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Situação do pedido agora' }), s ? h('div', { class: 'cx-situacao' }, h('b', { text: s.texto }), h('div', { class: 'mudo peq', style: 'margin-top:4px', text: [s.cliente, s.armazem, s.transportadora, s.dias != null ? s.dias + ' dias desde a liberação' : ''].filter(Boolean).join(' · ') }), s.ocorrencia ? h('div', { class: 'peq', style: 'margin-top:4px;color:#8a4207', text: 'Ocorrência: ' + s.ocorrencia }) : null) : h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), estado.dados && estado.dados.baseEm && Date.parse(l.criadoEm) <= Date.parse(estado.dados.baseEm) ? 'Mesmo depois da última carga ele não aparece: confira o número com a vendedora.' : 'Recarregue o SC9 para mostrar a situação dele (a vendedora já foi avisada de que a equipe vai recarregar).'))) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Solicitação' }), h('div', { class: 'resumo-lista', style: 'margin-top:0' },
             [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', filialDe(l) || '—'], ['Solicitado', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Motivo', C.MOTIVO[l.motivo] || '—'], ['Observação', l.observacao || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
             (l.historico || []).filter((x) => x.acao === 'reforco').map((x) => h('p', { class: 'mudo peq', style: 'margin-top:8px', text: 'Reforço de ' + (x.por || '—') + ' (' + C.dataHora(x.em) + ')' + (x.texto ? ': ' + x.texto : '') }))),
@@ -265,6 +285,7 @@
       corpo = h('main', { class: 'pagina' },
         h('div', { class: 'card-titulo', style: 'margin:0' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Solicitações de prioridade' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Quem decide é a logística: analise, aprove e responda. Atualiza sozinho a cada 20 segundos.' })),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.carregando = true; carregar(); } }, ic('atualizar'), 'Atualizar agora')),
+        faixaSc9(),
         abas(),
         estado.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro) : null,
         estado.mostraLink && estado.sessao.admin ? cartaoLink() : null,

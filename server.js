@@ -1994,9 +1994,11 @@ async function handleApi(req, res, pathname) {
         const meus = new Set(String(consulta.get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 100));
         const snap = await loadSnapshot().catch(() => null);
         const quem = { login: conta && conta.login, nome: conta ? conta.nome : String(consulta.get("nome") || "") };
+        const Rastreio = require("./rastreio.js");
+        const foraDoSc9 = (l) => P.ATIVOS.includes(l.status) && !Rastreio.montarRastreio(snap, l.pedido, { agora: new Date() }).achado; // pedido ainda não chegou na carga do SC9
         // Cada vendedora só recebe o que é dela (o que criou ou reforçou); não existe mais lista geral para elas.
         return sendJson(res, 200, {
-          meus: linhas.filter((l) => meus.has(l.id) || P.ehDela(l, conta && conta.login)).map((l) => P.visaoMeu(l, P.ehDono(l, quem))),
+          meus: linhas.filter((l) => meus.has(l.id) || P.ehDela(l, conta && conta.login)).map((l) => Object.assign(P.visaoMeu(l, P.ehDono(l, quem)), { foraDoSc9: foraDoSc9(l) })),
           conta: conta ? V.visaoPublica(conta) : null, sessaoRecusada: Boolean(req.headers["x-vend-token"] && !conta),
           baseEm: snap && snap.savedAt ? new Date(snap.savedAt).toISOString() : null,
           agora: new Date().toISOString()
@@ -2023,7 +2025,7 @@ async function handleApi(req, res, pathname) {
         if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
         const linha = linhas.find((l) => l.id === resultado.id);
         const quemPediu = { login: contaPedido && contaPedido.login, nome: contaPedido ? contaPedido.nome : corpo.pedidoPor };
-        return sendJson(res, 200, { ok: true, duplicado: resultado.duplicado, naoAchado: !r.achado, linha: P.visaoMeu(linha, P.ehDono(linha, quemPediu)) });
+        return sendJson(res, 200, { ok: true, duplicado: resultado.duplicado, naoAchado: !r.achado, linha: Object.assign(P.visaoMeu(linha, P.ehDono(linha, quemPediu)), { foraDoSc9: !r.achado }) });
       }
       return sendJson(res, 404, { error: "não encontrado" });
     } catch (e) {
@@ -2121,7 +2123,7 @@ async function handleApi(req, res, pathname) {
         const saidas = await saidasDosPedidos({ p: { dias: { hoje: { itens: ativos.map((l) => [l.pedido]) } } } }).catch(() => ({}));
         const ocs = await ocorrenciasLinhas().catch(() => []);
         const situacao = (l) => { const r = Rastreio.montarRastreio(snap, l.pedido, { saidaIso: saidas[l.pedido] || "", ocorrencias: ocs, agora: new Date(), nomeTransportadora: nomeTransp }); return r.achado ? { texto: r.resumo.texto, nivel: r.resumo.nivel, cliente: r.detalhes.cliente, armazem: r.detalhes.armazem, transportadora: r.detalhes.transportadora, dias: r.detalhes.diasDesdeLiberacao, ocorrencia: r.ocorrencia ? r.ocorrencia.status : "" } : null; };
-        return sendJson(res, 200, { ativos: ativos.map((l) => Object.assign({}, l, { situacao: situacao(l) })), demais, agora: new Date().toISOString() });
+        return sendJson(res, 200, { ativos: ativos.map((l) => Object.assign({}, l, { situacao: situacao(l) })), demais, baseEm: snap && snap.savedAt ? new Date(snap.savedAt).toISOString() : null, agora: new Date().toISOString() });
       };
       if (method === "GET") { await fecharPrioridadesDespachadas(); return responder(await prioridadesLinhas()); }
       let corpo;
