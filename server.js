@@ -2359,20 +2359,25 @@ async function handleApi(req, res, pathname) {
         const meses = {}, expedicao = {}, faturados = {};
         if (consulta.get("so") === "saidas") {
           // atualização em tempo real da página: só o cruzamento com a Saída p/ Expedição (barato; não mexe nas fotos)
-          for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
-            const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
-            if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
-          }
+          const listaMesesSaidas = AtrasoHistorico.ultimosMeses(mesSP(), n);
+          const lidosSaidas = await Promise.all(listaMesesSaidas.map((mes) => objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null)));
+          listaMesesSaidas.forEach((mes, i) => { const dado = lidosSaidas[i]; if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado; });
           return sendJson(res, 200, { saidas: await saidasDosPedidos(meses).catch(() => ({})), ocorrencias: await ocorrenciasParaPagina() });
         }
-        for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
-          const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
+        // cada mês: a foto e o arquivo de despacho (lido UMA vez; dele saem os despachados e os faturados). Os meses são lidos em paralelo.
+        const listaMeses = AtrasoHistorico.ultimosMeses(mesSP(), n);
+        const lidos = await Promise.all(listaMeses.map(async (mes) => ({
+          dado: await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null),
+          desp: await objLoad("atraso-expedicao-" + mes + ".json", { fresh: true }).catch(() => null)
+        })));
+        listaMeses.forEach((mes, i) => {
+          const { dado, desp } = lidos[i];
           if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
-          const exp = await expedicaoDoMes(mes).catch(() => null);
-          if (exp && Object.keys(exp).length) expedicao[mes] = exp;
-          const fat = await faturadosDoMes(mes).catch(() => null);
-          if (fat && Object.keys(fat).length) faturados[mes] = fat;
-        }
+          const exp = (desp && desp.dias) || {};
+          if (Object.keys(exp).length) expedicao[mes] = exp;
+          const fat = (desp && desp.faturados) || {};
+          if (Object.keys(fat).length) faturados[mes] = fat;
+        });
         const dadoEntregues = await objLoad("atraso-entregues.json", { fresh: true }).catch(() => null);
         const saidas = await saidasDosPedidos(meses).catch(() => ({}));
         return sendJson(res, 200, { meses, expedicao, faturados, entregues: (dadoEntregues && dadoEntregues.pedidos) || {}, saidas, ocorrencias: await ocorrenciasParaPagina() });
