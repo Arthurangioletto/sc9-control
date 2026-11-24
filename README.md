@@ -346,6 +346,16 @@ Cada pedido em atraso gravado na exportação leva também (campo extra da linha
 
 **Excel de atrasados autoexplicativo.** O Excel passa a usar as mesmas regras da página (reclassificação pela Saída p/ Expedição, status do pedido, ocorrências da expedição pela nota fiscal): nova aba **Como ler** (glossário, colunas e cores), bloco **O que fazer agora** na aba do dia mais recente e três colunas por pedido — Status do pedido, Ocorrência (situação atual) e O que fazer (traço nos dias antigos). Ao baixar, o botão lê o histórico completo do servidor (`/api/atraso-historico`); se a leitura falhar, gera o Excel básico como antes.
 
+### Painel executivo do Histórico de Atraso (`?painel=1`)
+
+Abra `/historico-atraso.html?painel=1` (com login ou com o link `?k=`). O painel aparece **acima** da página de sempre; nada foi removido e a tela atual continua igual sem o `?painel=1`. Ele só lê o histórico já gravado: não grava nem apaga nada.
+
+- Barra de controle: período (7, 15, 30 dias, mês atual, personalizado, podendo cruzar meses), armazém e transportadora (ficam na URL: `p`, `arm`, `tr`, `de`, `ate`), selo de atualização e Imprimir.
+- Cartões com valor, variação contra a posição anterior, % e melhora/piora (cor + seta + texto); clicar abre os pedidos na lista. Despachados e faturados são sempre o total da empresa (o dado não tem armazém) e o cartão avisa quando há filtro.
+- Gráficos em SVG puro, cada um com "Ver como tabela": evolução (estoque + faturamento, média de 5 dias, dias sem posição como lacuna, fluxo entraram/saíram), produtividade (pedidos ou peças, nunca juntos; média por dia da semana), gargalos por etapa, armazéns e faixas de dias de atraso.
+- Definições: em atraso = o que está na posição do dia; 5+ dias = dias de atraso >= 5; aguardando despacho = próxima ação "levar" ou "despachar"; ocorrência aberta = estado de agora (o SC9 não guarda histórico de ocorrências); valor = só pedidos já faturados.
+- Código: `atraso-painel.js` (cálculo puro, testado em `tests/atraso-painel.test.cjs`) e `atraso-painel-ui.js` (tela). `historico-atraso.js` ganhou só o ponto de entrada, o filtro `diasMin` e a lista de ações separada por vírgula no `filtrar`.
+
 ## Central das vendedoras: rastreio do pedido e pedido de prioridade (link à parte)
 
 Uma área separada do SC9, para as vendedoras acompanharem os pedidos sem perguntar à expedição e pedirem prioridade. Dados vêm da mesma carga do SC9 que a equipe já faz (2 a 3 vezes por dia); não há conexão direta com o Protheus e nada é gravado nele.

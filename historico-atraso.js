@@ -193,12 +193,13 @@
     let lista = itens.filter((it) => {
       if (precisaAvaliar) {
         const v = avaliarPedido(ctx.p, it, ctx.dia, ctx.agora);
-        if (f.acao && v.acao.cod !== f.acao) return false;
+        if (f.acao && !String(f.acao).split(',').includes(v.acao.cod)) return false;
         if (f.ocorr === 'com' && !v.ocor) return false;
         if (f.ocorr === 'aberta' && !(v.ocor && !v.ocor.av.resolvida)) return false;
         if (f.ocorr === 'sem' && v.ocor) return false;
         if (f.ocorr === 'sem5' && (v.ocor || it[6] < 5 || v.st.tipo === 'desp')) return false;
       }
+      if (f.diasMin && !(it[6] >= f.diasMin)) return false;
       return (!f.status || (f.status === 'desp') === Boolean(entregaDe(entregues, it[0]))) && (!f.etapa || extra(it).e === f.etapa) && (!f.tipo || it[4] === f.tipo) && (!f.sit || it[5] === f.sit) && (!f.arm || it[1] === f.arm) && (!f.transp || (it[7] || '') === f.transp)
       && (!busca || String(it[0]).toLowerCase().includes(busca) || String(it[7] || '').toLowerCase().includes(busca) || String(extra(it).n || '').toLowerCase().includes(busca) || String(extra(it).nf || '').includes(busca) || String(extra(it).c || '').toLowerCase().includes(busca));
     });
@@ -664,7 +665,7 @@
         h('button', { class: 'btn', disabled: !lista.length, onclick: () => baixarCsv(lista, aba.nome, aba.id), text: 'Baixar lista (CSV)' })),
       resumoDeStatus(aba, desp),
       h('p', { class: 'mudo peq' }, 'Cores: "Dias de atraso" vermelho = 5 dias ou mais · ocorrência vermelha = aberta há 3 dias ou mais.', h('span', { class: 'so-desk', text: ' Clique no título da coluna para ordenar.' })),
-      h('p', { class: 'contagem', 'aria-live': 'polite', text: 'Mostrando ' + fmtN(Math.min(mostrados.length, lista.length)) + ' de ' + fmtN(lista.length) + ' pedidos · ' + fmtN(pecas) + ' peças' }),
+      h('p', { class: 'contagem', 'aria-live': 'polite', text: 'Mostrando ' + fmtN(Math.min(mostrados.length, lista.length)) + ' de ' + fmtN(lista.length) + ' pedidos · ' + fmtN(pecas) + ' peças' + (f.diasMin ? ' · só com ' + f.diasMin + ' ou mais dias de atraso' : '') + (f.acao && String(f.acao).includes(',') ? ' · só os que aguardam despacho' : '') }),
       lista.length ? h('div', { class: 'rolagem' }, tabela) : h('p', { class: 'vazio-msg', text: aba.itens.length ? 'Nenhum pedido com esses filtros.' : 'Nenhum pedido nesta lista.' }),
       lista.length > estado.limite ? h('button', { class: 'btn primario', onclick: () => { estado.limite += 200; desenhar(); }, text: 'Mostrar mais ' + Math.min(200, lista.length - estado.limite) }) : null);
   }
@@ -722,12 +723,23 @@
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // Painel executivo (?painel=1): arquivos atraso-painel.js e atraso-painel-ui.js. Fica acima do conteúdo de sempre; nada foi removido.
+  const painelLigado = new URLSearchParams(location.search).get('painel') === '1';
+  function painelExecutivo() { return painelLigado && root.SC9AtrasoPainelUI && estado.p ? root.SC9AtrasoPainelUI.montar() : null; }
+  function irParaLista(filtro) {
+    estado.aba = 'atraso'; estado.aberto = ''; estado.limite = 100;
+    estado.filtro = Object.assign(FILTRO_VAZIO(), filtro || {});
+    desenhar();
+    const alvo = document.getElementById('f-busca'); if (alvo) alvo.scrollIntoView({ block: 'center' });
+  }
+  root.SC9HistAtrasoTela = { get estado() { return estado; }, escolherDia, irParaLista, desenhar: () => desenhar(), temDia: (d) => Boolean(estado.p && estado.p.porDia.has(d)) };
+
   function desenhar() {
     const y = root.scrollY;
     const foco = document.activeElement && document.activeElement.id ? document.activeElement.id : '';
     const vazio = !estado.p.porDia.size && !Object.keys(estado.p.exp).length;
     const blocos = vazio ? [h('section', { class: 'cartao centro' }, h('h2', { text: 'Ainda não há histórico gravado' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Cada vez que o atraso é exportado, a foto do dia fica guardada aqui.' }))]
-      : [faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()];
+      : [painelExecutivo(), faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()];
     $app.replaceChildren(cabecalho(), ...blocos.filter(Boolean));
     montarOcorrencias();
     root.scrollTo(0, y);
