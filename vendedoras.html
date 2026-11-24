@@ -5,72 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>Cadê o meu pedido? · SC9</title>
-<style>
-  :root { --ink:#14233d; --mute:#526079; --line:#dde4ef; --soft:#f3f6fb; --accent:#123b7a; --red:#c63828; --green:#1f8a4c; --amber:#8a5a00; --bg:#eef2f8; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  p { margin:0; } .mudo { color:var(--mute); } .peq { font-size:13px; }
-  #app { max-width:720px; margin:0 auto; padding:16px 14px 60px; display:flex; flex-direction:column; gap:14px; }
-  .sobre { font-size:12px; font-weight:800; letter-spacing:.08em; color:var(--accent); text-transform:uppercase; }
-  h1 { margin:2px 0 4px; font-size:26px; line-height:1.15; } h2 { margin:0; font-size:18px; } h3 { margin:0; font-size:15px; }
-  .cartao { background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px; box-shadow:0 1px 2px rgba(20,35,61,.04); }
-  .abas { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; }
-  .aba { flex:1 0 auto; min-height:44px; padding:8px 14px; font:inherit; font-size:14px; font-weight:700; color:var(--accent); background:#fff; border:1px solid var(--line); border-radius:999px; cursor:pointer; white-space:nowrap; }
-  .aba[aria-selected="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
-  label { display:block; font-size:13px; font-weight:700; color:var(--mute); margin:0 0 4px; }
-  input,textarea,select { width:100%; font:inherit; font-size:16px; color:var(--ink); background:#fff; border:1px solid #c5cfe0; border-radius:10px; padding:11px 12px; min-height:48px; }
-  textarea { min-height:84px; resize:vertical; }
-  :focus-visible { outline:3px solid #7aa2e3; outline-offset:2px; }
-  .btn { min-height:48px; padding:10px 16px; font:inherit; font-size:15px; font-weight:800; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--accent); cursor:pointer; }
-  .btn.primario { background:var(--accent); border-color:var(--accent); color:#fff; } .btn:disabled { opacity:.55; cursor:default; }
-  .btn.peq { min-height:40px; padding:6px 12px; font-size:13px; }
-  .linha-busca { display:flex; gap:8px; } .linha-busca input { flex:1; } .linha-busca .btn { flex:0 0 auto; }
-  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; } .chip { min-height:36px; padding:4px 12px; font:inherit; font-size:13px; font-weight:700; border-radius:999px; border:1px solid var(--line); background:var(--soft); color:var(--accent); cursor:pointer; }
-  .tag { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:800; }
-  .tag.atraso { background:#fde4e0; color:#a62a1c; } .tag.concluido { background:#e2f3e8; color:#14693a; } .tag.andamento { background:#e3edff; color:var(--accent); }
-  .tag.recebida { background:#e3edff; color:var(--accent); } .tag.em_analise { background:#fff1d6; color:var(--amber); } .tag.aprovada { background:#e0f0fb; color:#0b5a8a; } .tag.em_atendimento { background:#ede6fb; color:#4b2a9a; } .tag.concluida { background:#e2f3e8; color:#14693a; } .tag.nao_aprovada { background:#fde4e0; color:#a62a1c; }
-  .tag.urgente { background:#fde4e0; color:#a62a1c; } .tag.media { background:#e8f1fb; color:#245a99; } .tag.alta { background:#fff1d6; color:var(--amber); } .tag.normal { background:#eceff4; color:var(--mute); }
-  .topo-ped { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap; }
-  .resumo { margin-top:6px; font-size:17px; font-weight:700; }
-  ol.linha { list-style:none; margin:14px 0 0; padding:0; }
-  ol.linha li { position:relative; padding:0 0 18px 44px; min-height:34px; }
-  ol.linha li::before { content:""; position:absolute; left:5px; top:0; width:24px; height:24px; border-radius:50%; border:2px solid var(--line); background:#fff; }
-  ol.linha li::after { content:""; position:absolute; left:16px; top:26px; bottom:0; width:2px; background:var(--line); }
-  ol.linha li:last-child { padding-bottom:0; } ol.linha li:last-child::after { display:none; }
-  ol.linha li.feita::before { content:"✓"; background:var(--green); border-color:var(--green); color:#fff; text-align:center; font-size:14px; line-height:20px; font-weight:800; }
-  ol.linha li.feita::after { background:var(--green); }
-  ol.linha li.atual::before { background:var(--accent); border-color:var(--accent); box-shadow:0 0 0 5px #e3edff; }
-  ol.linha li.pendente { color:var(--mute); }
-  .et-t { font-weight:700; } li.pendente .et-t { font-weight:600; } .et-q { font-size:14px; color:var(--mute); }
-  .atual-cartao { margin-top:4px; padding:8px 10px; background:var(--soft); border-radius:10px; font-size:14px; }
-  .grade { display:grid; grid-template-columns:1fr 1fr; gap:12px 14px; margin-top:12px; }
-  .cd span { display:block; font-size:12px; color:var(--mute); font-weight:700; } .cd b { font-size:15px; word-break:break-word; }
-  .caixa-oc { margin-top:12px; padding:10px 12px; border-radius:10px; background:#fff4e0; border:1px solid #f0d29a; font-size:14px; }
-  .acoes { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
-  .aviso { padding:10px 12px; border-radius:10px; background:#fff4e0; border:1px solid #f0d29a; color:#6b4600; font-size:14px; }
-  .ok { padding:10px 12px; border-radius:10px; background:#e2f3e8; border:1px solid #9bd0b0; color:#14693a; font-size:14px; font-weight:700; }
-  .erro { padding:10px 12px; border-radius:10px; background:#fde4e0; border:1px solid #f0b5ad; color:#a62a1c; font-size:14px; font-weight:700; }
-  .niveis { display:flex; gap:8px; } .niveis label { flex:1; margin:0; } .niveis input { position:absolute; opacity:0; width:1px; height:1px; min-height:0; }
-  .niveis span { display:flex; align-items:center; justify-content:center; min-height:48px; border:1px solid #c5cfe0; border-radius:10px; font-weight:800; color:var(--ink); background:#fff; cursor:pointer; }
-  .niveis input:checked + span { background:var(--accent); border-color:var(--accent); color:#fff; } .niveis input:focus-visible + span { outline:3px solid #7aa2e3; outline-offset:2px; }
-  form { display:flex; flex-direction:column; gap:12px; }
-  .item { display:flex; flex-direction:column; gap:4px; padding:10px 0; border-bottom:1px solid var(--line); } .item:last-child { border-bottom:0; }
-  .item .l1 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .resp { margin-top:2px; padding:8px 10px; background:var(--soft); border-left:3px solid var(--accent); border-radius:6px; font-size:14px; }
-  .esq { background:linear-gradient(90deg,#eef2f8,#f8fafd,#eef2f8); border-radius:10px; height:120px; }
-  .carregando { color:var(--mute); }
-  .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
-  .previa { padding:12px; background:var(--soft); border-radius:12px; margin-bottom:12px; }
-  .resumo-pedido { display:flex; flex-direction:column; gap:6px; padding:10px 0; }
-  ol.hist { list-style:none; margin:6px 0 0; padding:0 0 0 2px; border-left:2px solid var(--line); } ol.hist li { padding:0 0 6px 10px; font-size:13px; color:var(--mute); } ol.hist .hora { font-weight:800; color:var(--ink); }
-  .velha { color:#8a5a00; font-weight:700; }
-  @media (prefers-reduced-motion: no-preference) { .esq { animation:pisca 1.2s infinite alternate; } @keyframes pisca { from { opacity:.5 } to { opacity:1 } } }
-  @media (min-width:720px) { .grade { grid-template-columns:repeat(3,1fr); } }
-</style>
+<meta name="theme-color" content="#1d4ed8">
+<title>Acompanhe seus pedidos · Central de Pedidos</title>
+<link rel="stylesheet" href="/central.css">
 </head>
 <body>
-<main id="app"><p class="carregando">Carregando…</p></main>
+<div id="raiz"><p style="padding:24px;font-family:system-ui;color:#66728f">Carregando…</p></div>
+<script src="/central-ui.js"></script>
 <script src="/vendedoras.js"></script>
 </body>
 </html>
