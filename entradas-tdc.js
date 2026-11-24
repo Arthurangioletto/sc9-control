@@ -168,7 +168,7 @@
   const TIPOS_MANUAL=Object.keys(TIPOS);
   const idFinding=(l,tipo)=>[l.nota,l.serie||'',l.produto,l.lote,tipo].join('|');
   /* sd1: linhas normalizadas; sd3: registros {tp,produto,qt,armazem,doc,lote,usuario,dia,cf,estornado} */
-  function analisar(sd1,sd3,opt={}){
+  function analisarCompleto(sd1,sd3,opt){
     const ARM=normArm(opt.armazemTDC||'59'),JANELA=opt.janelaDias==null?30:opt.janelaDias,SEM_SUBIR=opt.diasSemSubir==null?2:opt.diasSemSubir,HOJE=opt.hoje||hojeISO();
     const linhas=sd1.filter(l=>!l.armazem||l.armazem===ARM).map((l,i)=>({...l,_i:i}));
     const keyPL=(p,l)=>p+'|'+l;
@@ -274,19 +274,33 @@
       const ve=ev.get(l._i)||{manIn:[],manOut:[]},vistoE=new Set();
       const eventos=[...subs.map(info),...ve.manIn.map(info),...ve.manOut.map(info),...fa.flatMap(f=>f.movimentos)].filter(m=>{const k=[m.dia,m.doc,m.cf,m.dir,m.qt,m.lote,m.armazem].join('|');if(vistoE.has(k))return false;vistoE.add(k);return true;}).sort((a,b)=>a.dia.localeCompare(b.dia));
       const outrasNotas=(grupos.get(keyPL(l.produto,l.lote))||[]).filter(x=>x._i!==l._i&&(x.nota!==l.nota||x.serie!==l.serie)).map(x=>({nota:x.nota,serie:x.serie,dtDigit:x.dtDigit,qt:x.qt}));
-      return {nota:l.nota,serie:l.serie,fornecedor:l.fornecedor,tipo:l.tipo||'',cfop:l.cfop||'',produto:l.produto,lote:l.lote,qtNota:l.qt,dtEntrada:l.dtDigit,hora:l.hora,usuarioTDC:l.usuario,subiu,eventos,outrasNotas,
+      return {nota:l.nota,serie:l.serie,fornecedor:l.fornecedor,armazem:l.armazem||ARM,tipo:l.tipo||'',cfop:l.cfop||'',produto:l.produto,lote:l.lote,qtNota:l.qt,dtEntrada:l.dtDigit,hora:l.hora,usuarioTDC:l.usuario,subiu,eventos,outrasNotas,
         diasAteSubir:pri?diasEntre(l.dtDigit,pri):null,diasAteConcluir:ult&&subiu>=l.qt?diasEntre(l.dtDigit,ult):null,erroForte:fs.length>0,erro:fa.length>0,tipos:[...new Set(fa.map(f=>f.tipo))],
         semCobertura,depoisSD3,diasAteCorrigir:dtCorr?diasEntre(l.dtDigit,dtCorr):null,aguardandoSubir:aguardando&&diasSemSubir!==null&&diasSemSubir>SEM_SUBIR,diasSemSubir};
     });
     /* "item fora da nota" não tem nota (por definição): vira candidato para a pessoa vincular à nota certa */
     const candidatos=findings.filter(f=>!f.nota);
+    return {findings,itens,ativos,candidatos,linhas,
+      cobertura:{sd1De:dataMin,sd1Ate:linhas.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),linhasSD1:linhas.length,movimentosSD3:noTDC.length,sd3De,sd3Ate}};
+  }
+  /* A análise completa (SD1 x SD3) é a parte cara (~1 s com 30 mil linhas). Ela não depende de quais notas a pessoa está conferindo, só do SD1, do SD3 e das fichas
+   * descartadas: fica guardada por (SD1, SD3, ignorar, parâmetros) e o recorte por notas é só um filtro barato. Assim, adicionar/tirar nota não refaz a análise. */
+  const CACHE_ANALISE=new WeakMap(),SEM_IGNORAR=new Set();
+  function analisar(sd1,sd3,opt={}){
+    const chaveOpt=[opt.armazemTDC||'59',opt.janelaDias==null?30:opt.janelaDias,opt.diasSemSubir==null?2:opt.diasSemSubir,opt.hoje||hojeISO()].join('|');
+    let porSd3=CACHE_ANALISE.get(sd1);if(!porSd3){porSd3=new WeakMap();CACHE_ANALISE.set(sd1,porSd3);}
+    let porIgn=porSd3.get(sd3);if(!porIgn){porIgn=new WeakMap();porSd3.set(sd3,porIgn);}
+    const ign=opt.ignorar||SEM_IGNORAR;
+    let porOpt=porIgn.get(ign);if(!porOpt){porOpt=new Map();porIgn.set(ign,porOpt);}
+    let base=porOpt.get(chaveOpt);
+    if(!base){base=analisarCompleto(sd1,sd3,opt);porOpt.clear();porOpt.set(chaveOpt,base);}
+    const {findings,itens,ativos,candidatos,linhas,cobertura}=base;
     let fin=findings,itn=itens,atv=ativos;
     if(Array.isArray(opt.notas)){
       const regs=opt.notas;
       fin=findings.filter(f=>f.nota&&combinaNota(f,regs));itn=itens.filter(i=>combinaNota(i,regs));atv=ativos.filter(f=>f.nota&&combinaNota(f,regs));
     }
-    return {findings:fin.sort((a,b)=>(b.dtEntrada||'').localeCompare(a.dtEntrada||'')||String(a.nota).localeCompare(String(b.nota))),itens:itn,candidatos,resumo:resumir(itn,atv,linhas),
-      cobertura:{sd1De:dataMin,sd1Ate:linhas.reduce((m,l)=>l.dtDigit>m?l.dtDigit:m,''),linhasSD1:linhas.length,movimentosSD3:noTDC.length,sd3De,sd3Ate}};
+    return {findings:fin.slice().sort((a,b)=>(b.dtEntrada||'').localeCompare(a.dtEntrada||'')||String(a.nota).localeCompare(String(b.nota))),itens:itn,candidatos,resumo:resumir(itn,atv,linhas),cobertura};
   }
   const media=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
   function resumir(itens,findings,linhas){
@@ -353,8 +367,10 @@
 
   const chaveConferenciaFisica=item=>JSON.stringify([normProd(item.produto),normLote(item.lote)]);
 
+  const DESTINO_TRANSFERENCIA='01';
+  const armazemDeOrigem=v=>{const t=String(v==null?'':v).trim();return !t?'59':/^\d+$/.test(t)?t.padStart(2,'0'):t.toUpperCase();};
   function conferenciaParaTransferencia(itens,quantidades){
-    const registros=[],porProdutoLote=new Map();
+    const registros=[],porProdutoLote=new Map(),jaNoDestino=[];
     for(const [index,item] of itens.entries()){
       const quantidade=quantidadeConferida(quantidades[index]);
       if(quantidade===null)throw Error('Informe a quantidade física válida do item '+(index+1)+'. Digite 0 se não houver saldo.');
@@ -362,12 +378,15 @@
       if(quantidade>0&&(!produto||!lote||/[;\r\n]/.test(produto+lote)))throw Error('O item '+(index+1)+' precisa de produto e lote válidos para gerar a transferência.');
       registros.push({produto,lote,quantidade});
       if(quantidade===0)continue;
-      const chave=chaveConferenciaFisica({produto,lote});
+      /* a peça sai do armazém em que o SD1 lançou a nota (59 quando o SD1 não diz); se já foi lançada no 01 (destino), não há o que transferir */
+      const origem=armazemDeOrigem(item.armazem);
+      if(origem===DESTINO_TRANSFERENCIA){jaNoDestino.push({produto,lote,quantidade});continue;}
+      const chave=chaveConferenciaFisica({produto,lote})+'|'+origem;
       const existing=porProdutoLote.get(chave);
       if(existing)existing.qtde=Number((existing.qtde+quantidade).toPrecision(15));
-      else porProdutoLote.set(chave,{produto,origem:'59',lote,produtoDestino:produto,armDestino:'01',loteDestino:lote,qtde:quantidade});
+      else porProdutoLote.set(chave,{produto,origem,lote,produtoDestino:produto,armDestino:'01',loteDestino:lote,qtde:quantidade});
     }
-    return {registros,transferencias:[...porProdutoLote.values()]};
+    return {registros,transferencias:[...porProdutoLote.values()],jaNoDestino};
   }
 
   function localizarTransferenciasSD3(movimentos,documento){
@@ -406,7 +425,7 @@
     });
   }
 
-  const api={infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,dataRelatorio,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding,quantidadeConferida,chaveConferenciaFisica,conferenciaParaTransferencia,localizarTransferenciasSD3,compararConferenciaSD3};
+  const api={armazemDeOrigem,infoCFOP,GRUPOS,normNota,combinaNota,buscarNota,norm,normProd,normLote,normArm,paraISO,paraHora,diasEntre,detectarColunasSD1,lerSD1,compactarSD1,expandirSD1,expandirSD3,CAMPOS_SD3,ROTULO_SD3,OBRIGATORIOS_SD3,detectarColunasSD3,lerSD3,compactarSD3,analisar,resumir,aplicarRevisoes,dataRelatorio,fichaManualParaFinding,linhasSumula,TIPOS,TIPOS_MANUAL,ROTULO_CAMPO,OBRIGATORIOS,idFinding,quantidadeConferida,chaveConferenciaFisica,conferenciaParaTransferencia,localizarTransferenciasSD3,compararConferenciaSD3};
   if(typeof module==='object'&&module.exports)module.exports=api;
   root.SC9EntradasTDC=api;
   if(root.document&&root.React&&typeof root.SC9EntradasTDCMount==='undefined'&&typeof require==='undefined'){/* a tela é carregada por entradas-tdc-ui.js */}
