@@ -49,6 +49,40 @@ test('rastreio: ocorrência da expedição entra sem o nome do responsável; ped
   assert.ok(!JSON.stringify(r).includes('Daniela'));
 });
 
+test('rastreio: já desceu para a expedição + nota emitida e ainda não despachado = pronto para despacho, saída provável na coleta após as 18h', () => {
+  const base = { nf: '885234', status: 'Liberado', pickEnd: '2026-11-24T13:00:00.000Z', confEnd: '2026-11-24T14:00:00.000Z' };
+  const s = snap([linha(base)], { faturamento: [['885234', '2026-11-24T14:30:00.000Z']] });
+  const saida = '2026-11-24T14:40:00.000Z'; // 11:40 em São Paulo, hoje
+  // de manhã/tarde: provável saída hoje na coleta
+  let r = R.montarRastreio(s, '355386', { saidaIso: saida, agora: new Date('2026-11-24T15:00:00.000Z') });
+  assert.equal(r.resumo.nivel, 'pronto'); assert.equal(r.resumo.texto, 'Pronto para despacho. Provável saída hoje, na coleta (após as 18h).');
+  assert.deepEqual(titulos(r).slice(3), ['Faturado (nota fiscal):feita', 'Saída para expedição:feita', 'Pronto para despacho:atual']);
+  assert.match(r.etapas[5].nota, /após as 18h/);
+  // já passou das 18h: ainda hoje
+  r = R.montarRastreio(s, '355386', { saidaIso: saida, agora: new Date('2026-11-24T22:00:00.000Z') });
+  assert.equal(r.resumo.nivel, 'pronto'); assert.match(r.resumo.texto, /coleta de hoje é após as 18h: provável saída ainda hoje/);
+  // desceu em outro dia e continua sem sair: não promete "hoje", pede para confirmar
+  r = R.montarRastreio(s, '355386', { saidaIso: '2026-11-23T14:40:00.000Z', agora: new Date('2026-11-24T15:00:00.000Z') });
+  assert.equal(r.resumo.nivel, 'pronto'); assert.match(r.resumo.texto, /desde 23\/11, aguardando a coleta \(após as 18h\).*confirme com a expedição/);
+  assert.equal(r.resumo.nivel === 'pronto' && R.HORA_COLETA, 18);
+  // pedido antigo (muitos dias) que agora ficou pronto: mostra pronto, mas guarda o atraso
+  r = R.montarRastreio(snap([linha(Object.assign({ dt: '2026-11-10', dtLiberacaoHora: '2026-11-10T12:00:00.000Z' }, base))], { faturamento: [['885234', '2026-11-24T14:30:00.000Z']] }), '355386', { saidaIso: saida, agora: new Date('2026-11-24T15:00:00.000Z') });
+  assert.equal(r.resumo.nivel, 'pronto'); assert.equal(r.resumo.atrasado, true);
+  // despachado: vira concluído e não fala mais de coleta
+  r = R.montarRastreio(snap([linha(Object.assign({ status: 'Enviado' }, base))], { faturamento: [['885234', '2026-11-24T14:30:00.000Z']], entregaInfo: [['355386', { data: '2026-11-24T21:00:00.000Z' }]] }), '355386', { saidaIso: saida, agora: new Date('2026-11-25T15:00:00.000Z') });
+  assert.equal(r.resumo.nivel, 'concluido'); assert.ok(!/coleta/.test(r.resumo.texto));
+  // na expedição mas SEM nota fiscal: não está pronto, diz que falta a nota
+  r = R.montarRastreio(snap([linha({ pickEnd: base.pickEnd, confEnd: base.confEnd })]), '355386', { saidaIso: saida, agora: new Date('2026-11-24T15:00:00.000Z') });
+  assert.notEqual(r.resumo.nivel, 'pronto'); assert.match(r.resumo.texto, /aguardando nota fiscal/);
+  assert.match(r.etapas.find((e) => e.cod === 'fat').nota, /falta a nota fiscal/);
+  // não passou pela planilha de saída: não está pronto
+  r = R.montarRastreio(s, '355386', { agora: new Date('2026-11-24T15:00:00.000Z') });
+  assert.notEqual(r.resumo.nivel, 'pronto');
+  // armazém de fora de Cambuci: o despacho não é registrado aqui, então não promete saída
+  r = R.montarRastreio(snap([linha(Object.assign({ armazem: 'BH' }, base))], { faturamento: [['885234', '2026-11-24T14:30:00.000Z']] }), '355386', { saidaIso: saida, agora: new Date('2026-11-24T15:00:00.000Z') });
+  assert.notEqual(r.resumo.nivel, 'pronto');
+});
+
 test('prioridades: protocolo, motivo, 4 níveis, não duplica, assume, comenta, histórico público sem nomes da equipe, limite por dia e limpeza', () => {
   const t0 = Date.UTC(2026, 10, 24, 15);
   const base = { acao: 'criar', pedido: '0355386', nivel: 'alta', motivo: 'cliente_aguardando', observacao: '  cliente  retira hoje ', pedidoPor: 'Ana', filial: 'Cambuci' };

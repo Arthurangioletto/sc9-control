@@ -7,6 +7,7 @@
 
   const OC = () => root.SC9Ocorrencias || require('./ocorrencias.js');
   const FUSO = 'America/Sao_Paulo';
+  const HORA_COLETA = 18; // a transportadora coleta depois das 18h: pedido que já desceu para a expedição, com nota, sai nessa coleta
   const LIMITE_ATRASO_DIAS = 5;
 
   // Número do pedido: só dígitos, sem zeros à esquerda (4 a 10 dígitos), igual ao do servidor.
@@ -22,6 +23,8 @@
     const d = v instanceof Date ? v : new Date(v);
     return Number.isNaN(d.getTime()) ? '' : d.toISOString();
   };
+  const horaSP = (d) => Number(new Date(d).toLocaleTimeString('en-GB', { timeZone: FUSO, hour: '2-digit', hour12: false }).slice(0, 2));
+  const diaMes = (v) => diaSP(v).split('-').reverse().slice(0, 2).join('/');
   const diaSP = (v) => { const s = iso(v); return s ? new Date(s).toLocaleDateString('sv-SE', { timeZone: FUSO }) : ''; };
   const diasEntre = (de, ate) => Math.round((Date.UTC(+ate.slice(0, 4), +ate.slice(5, 7) - 1, +ate.slice(8, 10)) - Date.UTC(+de.slice(0, 4), +de.slice(5, 7) - 1, +de.slice(8, 10))) / 864e5);
   const texto = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max || 80);
@@ -97,6 +100,13 @@
     // a nota pode sair depois de o pedido sair do estoque (falta só a nota): nesse caso a Saída vem antes
     const ordem = ev.saida.feita && !ev.fat.feita ? ['liberado', 'sep', 'conf', 'saida', 'fat', 'desp'] : ['liberado', 'sep', 'conf', 'fat', 'saida', 'desp'];
     const TITULO = { liberado: 'Pedido liberado', sep: 'Separação', conf: 'Conferência', fat: 'Faturado (nota fiscal)', saida: 'Saída para expedição', desp: 'Despachado para a transportadora' };
+    // Pronto para despacho: já desceu para a expedição (planilha de saída), a nota fiscal está emitida e ainda não foi despachado.
+    // Só para Cambuci (o despacho dos outros armazéns não é registrado aqui). A coleta é depois das 18h.
+    const pronto = ev.saida.feita && ev.fat.feita && !despachadoEm && v.soCambuci;
+    const hojeSP = diaSP(agora);
+    const avisoColeta = !pronto ? '' : diaSP(saidaIso) === hojeSP
+      ? (horaSP(agora) < HORA_COLETA ? 'Provável saída hoje, na coleta (após as ' + HORA_COLETA + 'h).' : 'A coleta de hoje é após as ' + HORA_COLETA + 'h: provável saída ainda hoje.')
+      : 'Está na expedição desde ' + diaMes(saidaIso) + ', aguardando a coleta (após as ' + HORA_COLETA + 'h). Se já passou da coleta, confirme com a expedição.';
     let ultimaFeita = -1;
     ordem.forEach((c, i) => { if (ev[c].feita) ultimaFeita = i; });
     const etapas = ordem.map((c, i) => {
@@ -111,6 +121,8 @@
         if (c === 'saida') item.titulo = 'Aguardando saída para expedição';
         if (c === 'desp') item.titulo = v.soCambuci ? 'Aguardando despacho' : 'Aguardando despacho (' + v.armazens.join(', ') + ')';
       }
+      if (c === 'desp' && estado === 'atual' && pronto) { item.titulo = 'Pronto para despacho'; item.nota = avisoColeta; }
+      if (c === 'fat' && estado === 'atual' && ev.saida.feita) item.nota = 'Já desceu para a expedição: falta a nota fiscal para poder despachar.';
       if (c === 'desp' && estado !== 'feita' && !v.soCambuci) item.nota = 'O despacho dos armazéns de fora de Cambuci não é registrado aqui: confirme com a expedição.';
       return item;
     });
@@ -125,6 +137,7 @@
     const atrasado = !despachadoEm && (v.atrasado || (dias != null && dias >= LIMITE_ATRASO_DIAS));
     let resumo;
     if (despachadoEm) resumo = { nivel: 'concluido', texto: 'Despachado em ' + diaSP(despachadoEm).split('-').reverse().slice(0, 2).join('/') + '.' };
+    else if (pronto) resumo = { nivel: 'pronto', texto: 'Pronto para despacho. ' + avisoColeta };
     else if (atrasado) resumo = { nivel: 'atraso', texto: 'Atrasado' + (dias != null ? ' há ' + dias + (dias === 1 ? ' dia' : ' dias') : '') + (atual ? '. Agora: ' + atual.titulo.toLowerCase() + '.' : '.') };
     else resumo = { nivel: 'andamento', texto: atual ? 'Agora: ' + atual.titulo.toLowerCase() + '.' : 'Em andamento.' };
 
@@ -141,7 +154,7 @@
     };
   }
 
-  const api = { normalizarPedido, montarRastreio, LIMITE_ATRASO_DIAS };
+  const api = { normalizarPedido, montarRastreio, LIMITE_ATRASO_DIAS, HORA_COLETA };
   root.SC9Rastreio = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

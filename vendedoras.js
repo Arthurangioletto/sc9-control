@@ -68,8 +68,8 @@
     partes.push('Consulta em ' + C.dataHora(new Date().toISOString()) + '.');
     return partes.join(' ');
   }
-  const rotuloResumo = (r) => (r.resumo.nivel === 'atraso' ? 'Atrasado' : r.resumo.nivel === 'concluido' ? 'Despachado' : 'Em andamento');
-  const iconeResumo = (r) => (r.resumo.nivel === 'atraso' ? 'alerta' : r.resumo.nivel === 'concluido' ? 'caminhao' : 'relogio');
+  const rotuloResumo = (r) => (r.resumo.nivel === 'atraso' ? 'Atrasado' : r.resumo.nivel === 'concluido' ? 'Despachado' : r.resumo.nivel === 'pronto' ? 'Pronto para despacho' : 'Em andamento');
+  const iconeResumo = (r) => (r.resumo.nivel === 'atraso' ? 'alerta' : r.resumo.nivel === 'concluido' || r.resumo.nivel === 'pronto' ? 'caminhao' : 'relogio');
 
   function formBusca(compacto) {
     const recentes = lerLS(LS.recentes, []);
@@ -268,6 +268,7 @@
     const d = r.detalhes || {};
     if (!r.achado) return h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'O pedido ' + r.pedido + ' ainda não está no SC9. ' }), 'Ele (a base só atualiza a cada carga). Se o número está certo, você pode enviar a solicitação mesmo assim: a equipe é avisada para recarregar o SC9 e mostrar as informações.'));
     return h('div', { class: 'previa', role: 'group', 'aria-label': 'Dados do pedido ' + r.pedido },
+      r.resumo.nivel === 'pronto' ? h('div', { class: 'aviso', style: 'margin-bottom:10px' }, ic('caminhao'), h('div', null, h('b', { text: 'Este pedido já está pronto para despacho. ' }), 'Ele sai na coleta (após as 18h). Peça prioridade só se ele precisa sair antes.')) : null,
       h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, h('b', { class: 'num', style: 'font-size:18px', text: 'Pedido ' + r.pedido }), C.selo(rotuloResumo(r), r.resumo.nivel)), h('p', { class: 'mudo', style: 'margin-top:4px', text: r.resumo.texto }),
       h('div', { class: 'fatos' }, C.fato('pessoa', 'Cliente', d.cliente), C.fato('predio', 'Filial', d.armazem), C.fato('caminhao', 'Transportadora', d.transportadora), C.fato('pacote', 'Itens', d.pecas ? d.pecas + ' peças' : ''), C.fato('calendario', 'Liberado em', d.liberadoEm ? C.dataHora(d.liberadoEm) : '')));
   }
