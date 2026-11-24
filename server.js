@@ -1735,7 +1735,10 @@ async function handleApi(req, res, pathname) {
   // Ocorrências da expedição (por nota fiscal): lista compartilhada (administrador e perfil "ocorrencias") + o que o SC9 sabe de cada nota
   // (cliente, pedido, despacho, Saída p/ Expedição). Na primeira abertura entram as 3 linhas que a expedição já tinha na planilha.
   if (pathname === "/api/ocorrencias" && (method === "GET" || method === "POST")) {
-    const sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return;
+    // ler: quem tem acesso, ou o link sem senha do Histórico de Atraso (?k=); registrar/apagar/importar: sempre usuário e senha
+    let sess = null;
+    if (method === "GET" && (await linkAtrasoValido(req))) { /* leitura liberada pelo link com código */ }
+    else { sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return; }
     const Oc = require("./ocorrencias-store.js");
     const Lookup = require("./ocorrencias-lookup.js");
     res.setHeader("Cache-Control", "no-store");

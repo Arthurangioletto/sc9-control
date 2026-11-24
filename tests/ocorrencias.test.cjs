@@ -158,6 +158,13 @@ test('servidor: ocorrências exigem o acesso, começam com as 3 linhas da expedi
     const eva = (await call('/api/login', { usuario: 'eva', password: 'ficticio-123' })).cookie;
     const bia = (await call('/api/login', { usuario: 'bia', password: 'ficticio-123' })).cookie;
     assert.equal((await call('/api/ocorrencias')).status, 401);
+    // link sem senha do histórico (?k=): só LEITURA; registrar continua exigindo usuário e senha
+    const k = (await call('/api/atraso-historico-link', { acao: 'gerar' }, admin)).data.token;
+    assert.ok(k);
+    assert.equal((await call('/api/ocorrencias?k=' + k)).status, 200, 'o link lê as ocorrências');
+    assert.equal((await call('/api/ocorrencias?k=errado' + k)).status, 401, 'código errado não lê');
+    assert.equal((await call('/api/ocorrencias?k=' + k, { acao: 'salvar', linha: { nf: '885234', dataOcorrencia: '2026-11-24' } })).status, 401, 'o link não grava');
+    assert.equal((await call('/api/ocorrencias?k=' + k, { acao: 'importar', linhas: [{ nf: '1', dataOcorrencia: '2026-11-24' }] })).status, 401, 'o link não importa');
     assert.equal((await call('/api/ocorrencias', null, bia)).status, 403, 'sem o acesso Ocorrências não entra');
     let r = await call('/api/ocorrencias', null, eva);
     assert.equal(r.status, 200);
