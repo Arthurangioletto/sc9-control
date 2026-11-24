@@ -211,7 +211,7 @@ test('arquivos do painel são servidos e carregados pela página', () => {
   }
   // o painel só aparece com ?painel=1 e a página continua usando o conteúdo de sempre
   const pg = fs.readFileSync(path.join(__dirname, '..', 'historico-atraso.js'), 'utf8');
-  assert.ok(pg.includes("get('painel') === '1'"));
+  assert.ok(pg.includes("get('painel') !== '0'"), 'o painel é o padrão; ?painel=0 volta à página antiga');
   assert.ok(pg.includes('faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()'));
 });
 
