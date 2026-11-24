@@ -332,6 +332,7 @@ const LIMITES_CORPO = {
   // Entradas TDC: conferência física (até 10.000 linhas) e lista de fichas (até 100.000 ids) passam de 1 MB em dias grandes
   "/api/entradas-tdc/notas": 8 * 1024 * 1024, "/api/entradas-tdc/fichas": 8 * 1024 * 1024,
   // Transferência e Retém: o documento grava a base e os registros juntos; acima de ~1.200 itens passava de 1 MB e o servidor recusava (413) sem salvar
+  "/api/gaveta/carga": MAX_BODY_BYTES, // cargas SB8/ZZ2/SB1 da Gaveta (milhares de linhas; já passava de 1 MB com ~15 mil)
   "/api/transferencia-documentos": 10 * 1024 * 1024, "/api/retem-documentos": 10 * 1024 * 1024,
   "/api/entradas-tdc/fotos": 2 * 1024 * 1024, // foto já reduzida (a rota barra > 900 KB; em base64 ≈ 1,2 MB)
 };
@@ -503,7 +504,9 @@ function serveStatic(req, res, urlPath) {
       cabecalhos["Content-Security-Policy"] = "sandbox allow-scripts allow-downloads allow-forms; form-action 'none'; frame-ancestors 'self'; default-src 'none'; script-src 'unsafe-inline' 'self' https://cdn.sheetjs.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com";
     }
     if (String(req.headers["if-none-match"] || "").split(",").map((x) => x.trim()).includes(e.etag)) {
-      res.writeHead(304, { "ETag": e.etag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding" });
+      // o 304 também leva o CSP/X-Frame-Options da página: sem isso valiam os globais (frame-ancestors 'none') e a moldura da Transferência/Retem era bloqueada na 2ª abertura
+      const { "Content-Type": _tipo, ...cab304 } = cabecalhos;
+      res.writeHead(304, cab304);
       return res.end();
     }
     if (e.gz && aceitaGzip(req)) { res.writeHead(200, { ...cabecalhos, "Content-Encoding": "gzip", "Content-Length": e.gz.length }); return res.end(e.gz); }

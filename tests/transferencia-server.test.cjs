@@ -242,6 +242,14 @@ test('páginas que abrem dentro do SC9 (Transferência e Retem) não são bloque
       assert.equal(r.headers.get('x-frame-options'), 'SAMEORIGIN', pagina + ': a moldura da mesma origem precisa abrir');
       assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'self'/, pagina);
     }
+    // 2ª abertura (revalidação com ETag, resposta 304): precisa manter o CSP da moldura, senão valem os cabeçalhos globais (frame-ancestors 'none')
+    for (const pagina of ['/transferencia-de-lotes.html', '/conferencia-de-lotes.html']) {
+      const etag = (await fetch(base + pagina)).headers.get('etag');
+      const r = await fetch(base + pagina, { headers: { 'If-None-Match': etag } });
+      assert.equal(r.status, 304, pagina);
+      assert.equal(r.headers.get('x-frame-options'), 'SAMEORIGIN', pagina + ' (304)');
+      assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'self'/, pagina + ' (304)');
+    }
     const inicio = await fetch(base + '/');
     assert.equal(inicio.headers.get('x-frame-options'), 'DENY', 'o resto continua protegido contra clickjacking');
     assert.match(inicio.headers.get('permissions-policy'), /camera=\(self\)/, 'a câmera da Gaveta não pode ser bloqueada');
