@@ -461,11 +461,12 @@
     if(new Set(itens.map(item=>String(item.fornecedor||'').trim().toUpperCase())).size>1){
       throw Error('Este número e série aparecem para mais de um fornecedor no SD1. Confira a nota antes de transferir.');
     }
-    const {registros,transferencias}=M.conferenciaParaTransferencia(itens,quantidades);
+    const {registros,transferencias,jaNoDestino}=M.conferenciaParaTransferencia(itens,quantidades);
+    const aviso=jaNoDestino.length?' '+jaNoDestino.length+(jaNoDestino.length===1?' item já foi lançado no 01 pelo SD1 e não entra':' itens já foram lançados no 01 pelo SD1 e não entram')+' no Excel de transferência.':'';
     const workbook=transferencias.length?root.SC9Exports.buildTransferWorkbook(transferencias,root.XLSX):null;
     await onAdd(nota,serie,registros);
     if(workbook)root.SC9Exports.downloadWorkbook(workbook,'Transferencia_NF_'+nota+(serie?'_'+serie:''),root.XLSX);
-    return workbook?'Conferência salva. Excel de transferência gerado.':'Conferência salva. A contagem física foi zero em todos os itens.';
+    return (workbook?'Conferência salva. Excel de transferência gerado.':jaNoDestino.length?'Conferência salva. Nenhuma transferência necessária.':'Conferência salva. A contagem física foi zero em todos os itens.')+aviso;
   }
 
   function QuantidadeFisica({item,index,value,qtdNota,busy,onChange}){
@@ -537,10 +538,10 @@
           }))))));
   }
 
-  function NotaCard({reg,res,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,sd3Comparativo,onSD3Comparativo}){
+  const NotaCard=(R.memo||(c=>c))(function NotaCard({reg,res,fObj,achados,onAdd,onRemover,onFichas,onManual,onVincular,sd3Comparativo,onSD3Comparativo}){
     const [draft,setDraft]=useState({}),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[notice,setNotice]=useState('');
     const [comparativoAberto,setComparativoAberto]=useState(false);
-    const itens=res?res.itens.filter(i=>M.combinaNota(i,[reg])):[];
+    const itens=useMemo(()=>res?res.itens.filter(i=>M.combinaNota(i,[reg])):[],[res,reg]);
     const contagens=new Map();
     for(const item of reg.conferenciaFisica||[]){
       const chave=M.chaveConferenciaFisica(item);
@@ -599,6 +600,12 @@
       cands.length>0&&h('details',{className:'sc9-tdc-ev',style:{marginTop:10}},h('summary',null,'Entradas manuais no 59 sem nota, até 7 dias depois ('+cands.length+') — algum desses veio junto com esta nota?'),
         h('ul',null,cands.map(c=>h('li',{key:c.id,style:{display:'flex',gap:10,alignItems:'center',justifyContent:'space-between'}},h('span',null,fmtD(c.dtEntrada),' · produto ',h('b',null,c.produto),' · lote ',c.lote,' · ',h('b',null,fmtN(c.qtdFisica)),' pç',c.corrigidoPor&&c.corrigidoPor.length?' · por '+c.corrigidoPor.join(', '):''),
           h('button',{className:'sc9-tdc-btn',onClick:()=>onVincular(c,base,reg)},'Era desta nota'))))));
+  });
+  /* armazém em que o SD1 lançou a peça: 59 é o esperado; outro armazém fica destacado e a transferência sai dele (01 = já está no destino) */
+  function ArmazemSD1(valor){
+    const arm=M.armazemDeOrigem(valor),texto=String(valor==null?'':valor).trim()?arm:'59 (SD1 sem armazém)';
+    if(arm==='59')return texto;
+    return h('span',{className:'sc9-tdc-pill '+(arm==='01'?'bad':'warn'),title:arm==='01'?'O SD1 lançou direto no 01: não há o que transferir do 59.':'O SD1 lançou esta peça no armazém '+arm+', não no 59. A transferência sai desse armazém.'},arm);
   }
   function NotaItens({itens,quantidades=[],onQuantidade,busy=false}){
     const [query,setQuery]=useState(''),[matches,setMatches]=useState([]),[active,setActive]=useState(-1);
@@ -650,11 +657,12 @@
         matches.length>1&&h('button',{type:'button',className:'sc9-tdc-btn',onClick:()=>showMatch(matches[(matches.indexOf(active)+1)%matches.length])},'Próxima linha')),
       h('p',{className:'sc9-tdc-sub',role:'status'},checked.size+' de '+itens.length+' itens marcados nesta conferência.'+(feedback?' '+feedback:'')),
       h('div',{className:'sc9-tdc-lot-table'},h('table',{className:'sc9-tdc-table'},
-        h('thead',null,h('tr',null,[['Produto','l'],['Lote','l'],['Qtd. na nota',''],['Qtd. física',''],['Conferido','']].map(([label,style])=>h('th',{key:label,className:style,scope:'col'},label)))),
+        h('thead',null,h('tr',null,[['Produto','l'],['Lote','l'],['Armazém no SD1','l'],['Qtd. na nota',''],['Qtd. física',''],['Conferido','']].map(([label,style])=>h('th',{key:label,className:style,scope:'col'},label)))),
         h('tbody',null,itens.map((item,index)=>{
           return h('tr',{key:index,ref:node=>{if(node)rowRefs.current.set(index,node);else rowRefs.current.delete(index);},className:active===index?'sc9-tdc-lot-active':undefined},
           h('td',{className:'l'},h('b',null,item.produto)),
           h('td',{className:'l'},item.lote||'—'),
+          h('td',{className:'l'},ArmazemSD1(item.armazem)),
           h('td',null,fmtN(item.qt)),
           h(QuantidadeFisica,{item,index,value:quantidades[index]??'',qtdNota:item.qt,busy,onChange:updateQuantity}),
           h('td',null,h('label',{className:'sc9-tdc-lot-check-label'},h('input',{type:'checkbox',checked:checked.has(index),disabled:busy,onChange:()=>toggle(index),'aria-label':'Conferir item '+(index+1)+', produto '+item.produto+', lote '+(item.lote||'não informado')}))));
@@ -705,6 +713,7 @@
         ambigua&&h('div',{className:'sc9-tdc-msg info'},'Existe a nota '+busca.nota+' em mais de uma série. Qual é a sua? ',busca.series.map(sr=>h('button',{key:sr,className:'sc9-tdc-chip',style:{marginLeft:6},onClick:()=>escolherSerie(sr)},'Série '+(sr||'(em branco)')))),
         busca&&itens.length>0&&!ambigua&&h('div',{style:{marginTop:12}},
           h('p',{className:'sc9-tdc-sub',style:{margin:'0 0 6px'}},'Achei ',h('b',null,itens.length+' item(ns)'),' na NF ',h('b',null,busca.nota),' · ',forn(itens[0].fornecedor)||'fornecedor não informado',' · entrada em ',fmtD(itens[0].dtDigit),':'),
+          itens.some(i=>M.armazemDeOrigem(i.armazem)!=='59')&&h('div',{className:'sc9-tdc-msg info'},'Atenção: ',itens.filter(i=>M.armazemDeOrigem(i.armazem)!=='59').length+' item(ns) desta nota foram lançados no SD1 em outro armazém (coluna "Armazém no SD1"). A transferência sai do armazém em que o SD1 lançou a peça.'),
           h(NotaItens,{key:busca.id,itens,quantidades,busy,onQuantidade:(index,value)=>{
             setErr('');
             setQuantidades(current=>{
@@ -803,7 +812,7 @@
 
     const sd3=useMemo(()=>sd3Raw?M.expandirSD3(sd3Raw):[],[sd3Raw]);
     const sd1All=useMemo(()=>sd1Raw?M.expandirSD1(sd1Raw):[],[sd1Raw]);
-    const sd1=useMemo(()=>sd1All.filter(l=>(!de||l.dtDigit>=de)&&(!ate||l.dtDigit<=ate)&&(!grupoEnt||M.infoCFOP(l.cfop).grupo===grupoEnt)),[sd1All,de,ate,grupoEnt]);
+    const sd1=useMemo(()=>!de&&!ate&&!grupoEnt?sd1All:sd1All.filter(l=>(!de||l.dtDigit>=de)&&(!ate||l.dtDigit<=ate)&&(!grupoEnt||M.infoCFOP(l.cfop).grupo===grupoEnt)),[sd1All,de,ate,grupoEnt]);
     const gruposPresentes=useMemo(()=>{const m={};for(const l of sd1All){const g=M.infoCFOP(l.cfop).grupo;m[g]=(m[g]||0)+1;}return Object.keys(m).map(g=>[g,m[g]]);},[sd1All]);
     const fObj=fichas.fichas||{};
     const ignorar=useMemo(()=>new Set(Object.keys(fObj).filter(k=>fObj[k].status==='descartado')),[fObj]);
