@@ -498,6 +498,8 @@ function serveStatic(req, res, urlPath) {
       cabecalhos["Referrer-Policy"] = "no-referrer"; cabecalhos["X-Content-Type-Options"] = "nosniff"; cabecalhos["X-Robots-Tag"] = "noindex, nofollow";
     }
     if (name === "conferencia-de-lotes.html" || name === "transferencia-de-lotes.html") {
+      // essas duas páginas abrem DENTRO do SC9 (moldura da mesma origem): o X-Frame-Options DENY global as bloqueava ("recusou a se conectar")
+      if (!FRAMING_OK) cabecalhos["X-Frame-Options"] = "SAMEORIGIN";
       cabecalhos["Content-Security-Policy"] = "sandbox allow-scripts allow-downloads allow-forms; form-action 'none'; frame-ancestors 'self'; default-src 'none'; script-src 'unsafe-inline' 'self' https://cdn.sheetjs.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com";
     }
     if (String(req.headers["if-none-match"] || "").split(",").map((x) => x.trim()).includes(e.etag)) {
@@ -4028,7 +4030,7 @@ const CSP_COMPLETA = "default-src 'self'; script-src 'self' 'unsafe-inline' http
 function cabecalhosDeSeguranca(req, res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+  res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=(), payment=(), usb=()"); // a aba Gaveta lê código de barras pela câmera
   if (!FRAMING_OK) res.setHeader("X-Frame-Options", "DENY");
   if (req.headers["x-forwarded-proto"] === "https" || req.socket.encrypted || EM_PRODUCAO) res.setHeader("Strict-Transport-Security", "max-age=15552000");
   if (process.env.CSP_ENFORCE === "1") res.setHeader("Content-Security-Policy", CSP_COMPLETA);

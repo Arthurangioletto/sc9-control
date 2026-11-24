@@ -222,3 +222,30 @@ test('Transferência salva documento grande (milhares de itens, mais de 1 MB) se
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('páginas que abrem dentro do SC9 (Transferência e Retem) não são bloqueadas por X-Frame-Options, e a câmera segue liberada para a Gaveta', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-moldura-'));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'transferencia-de-lotes.html', 'conferencia-de-lotes.html', 'index.html']) {
+    fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  }
+  const password = 'admin-ficticio-moldura';
+  Object.assign(process.env, { SUPABASE_URL:'', SUPABASE_SERVICE_KEY:'', PORT:'0', APP_PASSWORD:password, SESSION_SECRET:password, NODE_ENV:'test' });
+  const file = path.join(dir, 'server.js');
+  delete require.cache[file];
+  const server = require(file);
+  if (!server.listening) await new Promise(resolve => server.once('listening', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  try {
+    for (const pagina of ['/transferencia-de-lotes.html', '/conferencia-de-lotes.html']) {
+      const r = await fetch(base + pagina);
+      assert.equal(r.status, 200, pagina);
+      assert.equal(r.headers.get('x-frame-options'), 'SAMEORIGIN', pagina + ': a moldura da mesma origem precisa abrir');
+      assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'self'/, pagina);
+    }
+    const inicio = await fetch(base + '/');
+    assert.equal(inicio.headers.get('x-frame-options'), 'DENY', 'o resto continua protegido contra clickjacking');
+    assert.match(inicio.headers.get('permissions-policy'), /camera=\(self\)/, 'a câmera da Gaveta não pode ser bloqueada');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
