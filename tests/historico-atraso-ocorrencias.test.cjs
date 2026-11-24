@@ -88,3 +88,12 @@ test('ocorrência sem nota: chega ao pedido pelo número do pedido (e também a 
   assert.equal(b.total, 2, 'a da nota e a do pedido aparecem juntas');
   assert.equal(H.ocorrenciaDoPedido(p, item('777777', '', 'F', 4), AGORA), null);
 });
+
+test('lista de ocorrências do pedido: nota e pedido juntos, sem repetir a mesma linha', () => {
+  const it = item('355999', '886039', 'F', 7);
+  const comAmbos = oc('886039', { pedido: '355999', detalhes: 'tem nota e pedido' });
+  const p = H.preparar(dados([comAmbos, oc('', { pedido: '0355999', detalhes: 'só pedido' })], {}, [it]));
+  const lista = H.ocorrenciasDoPedido(p, it);
+  assert.deepEqual(lista.map((x) => x.detalhes).sort(), ['só pedido', 'tem nota e pedido'], 'a linha com nota e pedido aparece uma vez só');
+  assert.deepEqual(H.ocorrenciasDoPedido(p, item('1', '', 'F', 1)), []);
+});

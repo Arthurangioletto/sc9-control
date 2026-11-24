@@ -127,10 +127,14 @@
 
   // ---------- ocorrências da expedição e "o que fazer" ----------
   // Ocorrência do pedido (achada pela nota fiscal): a mais importante, com o status já calculado. null se não há.
-  function ocorrenciaDoPedido(p, it, agora) {
+  // Todas as ocorrências do pedido: pela nota fiscal e/ou pelo número do pedido, sem repetir.
+  function ocorrenciasDoPedido(p, it) {
     const nfDoPedido = nfNum(extra(it).nf);
-    const lista = p && p.ocorr && [...new Set([].concat((nfDoPedido && p.ocorr.get(nfDoPedido)) || [], p.ocorr.get('p' + nfNum(it[0])) || []))];
-    if (!lista || !lista.length) return null;
+    return p && p.ocorr ? [...new Set([].concat((nfDoPedido && p.ocorr.get(nfDoPedido)) || [], p.ocorr.get('p' + nfNum(it[0])) || []))] : [];
+  }
+  function ocorrenciaDoPedido(p, it, agora) {
+    const lista = ocorrenciasDoPedido(p, it);
+    if (!lista.length) return null;
     const info = { pedido: String(it[0]), liberadoEm: it[2] || '', despachadoEm: entregaDe(p.entregues, it[0]) };
     const quando = agora || new Date();
     const todas = lista.map((oc) => ({ oc, av: OC().avaliar(oc, info, it[9] || '', quando) }));
@@ -242,7 +246,7 @@
     return '﻿' + linhas.map((l) => l.map(cel).join(';')).join('\r\n');
   }
 
-  const api = { extra, ETAPA, aplicarSaidas, preparar, ocorrenciaDoPedido, acaoDoPedido, avaliarPedido, prioridades, GLOSSARIO, sequencia, despacho, filtrar, csv, statusDoPedido, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
+  const api = { extra, ETAPA, aplicarSaidas, preparar, ocorrenciasDoPedido, ocorrenciaDoPedido, acaoDoPedido, avaliarPedido, prioridades, GLOSSARIO, sequencia, despacho, filtrar, csv, statusDoPedido, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
   root.SC9HistoricoAtraso = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (typeof document === 'undefined' || !document.getElementById || !document.getElementById('app')) return;
@@ -487,18 +491,111 @@
     return caixa;
   }
 
-  // Botão "Justificar atraso": leva o pedido (e a nota, se tiver) para o quadro de ocorrências no fim da página.
-  function justificar(it) {
-    const e = extra(it);
-    root.dispatchEvent(new root.CustomEvent('sc9-ocorrencia-nova', { detail: { nf: nfNum(e.nf), pedido: nfNum(it[0]), cliente: e.n || '' } }));
-    const c = document.getElementById('ocorrencias-box');
-    if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  /* ---------- justificar o atraso na própria lista (sem sair do pedido) ----------
+   * O formulário fica dentro do detalhe do pedido. Todos veem as ocorrências; para registrar, a pessoa da expedição entra com usuário e senha
+   * ali mesmo (quem tem o acesso "Ocorrências" ou o administrador). Não depende de React. */
+  const CAB_POST = { 'Content-Type': 'application/json', 'X-SC9-App': '1' };
+  estado.sessao = null; estado.login = { usuario: '', senha: '', erro: '', entrando: false }; estado.just = null;
+  const hojeBR = () => OC().mostrarData(OC().hojeSP(new Date()));
+  const justVazia = (k, extraCampos) => Object.assign({ k, id: '', data: hojeBR(), detalhes: '', responsavel: '', solucao: '', dataSolucao: '', erro: '', aviso: '', salvando: false }, extraCampos || {});
+
+  async function carregarSessao() {
+    try {
+      const r = await fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' });
+      const j = await r.json();
+      estado.sessao = { authed: Boolean(j.authed), nome: j.nome || j.usuario || '', pode: Boolean(j.authed && (j.role === 'admin' || (j.perfis || []).includes('ocorrencias'))) };
+    } catch (e) { estado.sessao = { authed: false, nome: '', pode: false }; }
   }
-  const painelDeOcorrencias = () => Boolean(root.React && root.ReactDOM && root.ReactDOM.createRoot && root.SC9Ocorrencias && root.SC9Ocorrencias.Panel && document.getElementById('ocorrencias-box'));
+  function abrirJustificativa(it, k) {
+    estado.aberto = k; estado.just = justVazia(k);
+    if (!estado.sessao) carregarSessao().then(desenhar);
+    desenhar();
+    setTimeout(() => { const e = document.getElementById('just-detalhes') || document.getElementById('just-usuario'); if (e) { e.scrollIntoView({ block: 'center' }); e.focus({ preventScroll: true }); } }, 60);
+  }
+  async function entrarParaJustificar() {
+    const l = estado.login; l.entrando = true; l.erro = ''; desenhar();
+    try {
+      const r = await fetch('/api/login', { method: 'POST', credentials: 'same-origin', headers: CAB_POST, body: JSON.stringify({ usuario: l.usuario, password: l.senha }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Não consegui entrar.');
+      l.senha = ''; await carregarSessao();
+    } catch (e) { l.erro = e.message; }
+    l.entrando = false; desenhar();
+  }
+  async function sairDaConta() {
+    try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin', headers: CAB_POST }); } catch (e) { /* segue */ }
+    await carregarSessao(); desenhar();
+  }
+  async function salvarJustificativa(it) {
+    const j = estado.just; j.erro = ''; j.aviso = '';
+    const nf = nfNum(extra(it).nf), pedido = nfNum(it[0]);
+    const dataOcorrencia = OC().lerData(j.data, new Date());
+    if (!dataOcorrencia) { j.erro = 'A data não foi entendida. Escreva assim: 24/11/2026.'; return desenhar(); }
+    if (!j.detalhes.trim()) { j.erro = 'Escreva o motivo do atraso (observação).'; return desenhar(); }
+    let dataSolucao = '';
+    if (j.dataSolucao.trim()) { dataSolucao = OC().lerData(j.dataSolucao, new Date()); if (!dataSolucao) { j.erro = 'Não entendi a data da solução. Escreva assim: 24/11/2026.'; return desenhar(); } }
+    j.salvando = true; desenhar();
+    try {
+      const r = await fetch('/api/ocorrencias', { method: 'POST', credentials: 'same-origin', headers: CAB_POST, body: JSON.stringify({ acao: 'salvar', linha: { id: j.id || undefined, nf, pedido, dataOcorrencia, detalhes: j.detalhes, responsavel: j.responsavel, solucao: j.solucao, dataSolucao } }) });
+      const resp = await r.json().catch(() => ({}));
+      if (r.status === 401 || r.status === 403) { await carregarSessao(); throw new Error('Sem acesso para registrar. Entre com usuário e senha de quem tem o acesso "Ocorrências".'); }
+      if (!r.ok) throw new Error(resp.error || 'Não consegui salvar.');
+      estado.data.ocorrencias = (resp.linhas || []).map((l) => ({ nf: l.nf, pedido: l.pedido || '', dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id }));
+      ultimaSaidas = JSON.stringify([estado.data.saidas || {}, estado.data.ocorrencias]);
+      estado.p = preparar(estado.data);
+      estado.just = justVazia(j.k, { aviso: j.id ? 'Alteração salva.' : 'Ocorrência registrada.' });
+      try { root.dispatchEvent(new root.Event('sc9-ocorrencias-mudou')); } catch (e) { /* painel do fim da página não carregou */ }
+    } catch (e) { j.erro = e.message; }
+    j.salvando = false; desenhar();
+  }
+  function formularioDeJustificativa(it, k) {
+    const lista = ocorrenciasDoPedido(estado.p, it);
+    const j = estado.just && estado.just.k === k ? estado.just : null;
+    const pode = Boolean(estado.sessao && estado.sessao.pode);
+    const campo = (rot, id, chave, opc) => h('label', { class: 'campo' + ((opc && opc.larga) ? ' larga' : '') }, h('span', { text: rot }),
+      opc && opc.area ? h('textarea', { id, rows: 2, placeholder: opc.dica || '', oninput: (ev) => { j[chave] = ev.target.value; } }, j[chave])
+        : h('input', { id, value: j[chave], placeholder: (opc && opc.dica) || '', oninput: (ev) => { j[chave] = ev.target.value; } }));
+    const itens = lista.map((oc) => {
+      const av = OC().avaliar(oc, { pedido: String(it[0]), liberadoEm: it[2] || '', despachadoEm: entregaDe(estado.p.entregues, it[0]) }, it[9] || '', new Date());
+      return h('li', null, h('span', { class: 'tag oc-' + av.nivel, text: av.status }), ' ', h('b', { text: OC().mostrarData(oc.dataOcorrencia) }), ' · ', oc.detalhes || '(sem detalhes)', oc.responsavel ? ' · ' + oc.responsavel : '', oc.solucao ? ' · Solução: ' + oc.solucao + (oc.dataSolucao ? ' (' + OC().mostrarData(oc.dataSolucao) + ')' : '') : '',
+        pode ? [' ', h('button', { class: 'btn peq', type: 'button', onclick: (ev) => { ev.stopPropagation(); estado.just = justVazia(k, { id: oc.id || '', data: OC().mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: OC().mostrarData(oc.dataSolucao) }); desenhar(); setTimeout(() => { const e = document.getElementById('just-detalhes'); if (e) e.focus({ preventScroll: true }); }, 60); } }, 'Editar')] : null);
+    });
+    const caixa = h('div', { class: 'just', id: 'just-' + k.replace(/\W/g, '_'), onclick: (ev) => ev.stopPropagation() },
+      h('h3', { text: 'Por que este pedido está atrasado? (ocorrência)' }),
+      lista.length ? h('ul', { class: 'just-lista' }, itens) : h('p', { class: 'mudo peq', text: 'Nenhuma ocorrência registrada para este pedido' + (extra(it).nf ? ' (nota ' + extra(it).nf + ')' : ' (ainda sem nota fiscal)') + '. Registre o motivo para explicar o atraso (por exemplo cliente pediu para segurar, endereço, cadastro).' }));
+    if (!j) {
+      caixa.appendChild(h('button', { class: 'btn primario', type: 'button', onclick: () => abrirJustificativa(it, k), text: lista.length ? '+ Nova ocorrência' : 'Justificar atraso' }));
+      return caixa;
+    }
+    if (j.aviso) caixa.appendChild(h('p', { class: 'aviso', role: 'status', text: j.aviso }));
+    if (!estado.sessao) { caixa.appendChild(h('p', { class: 'mudo peq', text: 'Carregando…' })); return caixa; }
+    if (!pode) {
+      const l = estado.login;
+      caixa.appendChild(h('p', { class: 'mudo peq', text: estado.sessao.authed ? 'Seu usuário não tem o acesso "Ocorrências". Peça ao administrador para liberar, ou entre com outro usuário.' : 'Quem registra entra com usuário e senha (os mesmos do SC9). O administrador deixa o usuário vazio.' }));
+      caixa.appendChild(h('form', { class: 'just-form', onsubmit: (ev) => { ev.preventDefault(); entrarParaJustificar(); } },
+        h('label', { class: 'campo' }, h('span', { text: 'Usuário' }), h('input', { id: 'just-usuario', value: l.usuario, autocomplete: 'username', oninput: (ev) => { l.usuario = ev.target.value; } })),
+        h('label', { class: 'campo' }, h('span', { text: 'Senha' }), h('input', { id: 'just-senha', type: 'password', value: l.senha, autocomplete: 'current-password', oninput: (ev) => { l.senha = ev.target.value; } })),
+        h('button', { class: 'btn primario', type: 'submit', disabled: l.entrando, text: l.entrando ? 'Entrando…' : 'Entrar para registrar' })));
+      if (l.erro) caixa.appendChild(h('p', { class: 'erro', role: 'alert', text: l.erro }));
+      return caixa;
+    }
+    caixa.appendChild(h('div', { class: 'just-form' },
+      campo('Data da ocorrência', 'just-data', 'data', { dica: 'dd/mm/aaaa' }),
+      campo('Motivo do atraso (observação) *', 'just-detalhes', 'detalhes', { area: true, larga: true, dica: 'ex.: cliente pediu para segurar a entrega' }),
+      campo('Responsável (quem resolve)', 'just-resp', 'responsavel', { dica: 'ex.: Juliana' }),
+      campo('Solução', 'just-solucao', 'solucao', { dica: 'deixe vazio se ainda não resolveu' }),
+      campo('Data da solução', 'just-datasol', 'dataSolucao', { dica: 'dd/mm/aaaa' })));
+    caixa.appendChild(h('div', { class: 'acoes-just' },
+      h('button', { class: 'btn primario', type: 'button', disabled: j.salvando, onclick: () => salvarJustificativa(it), text: j.salvando ? 'Salvando…' : j.id ? 'Salvar alteração' : 'Registrar ocorrência' }),
+      j.id ? h('button', { class: 'btn', type: 'button', onclick: () => { estado.just = justVazia(k); desenhar(); }, text: 'Cancelar edição' }) : null,
+      h('span', { class: 'mudo peq', text: 'Entrou como ' + (estado.sessao.nome || 'usuário') + ' · ' }), h('button', { class: 'btn peq', type: 'button', onclick: sairDaConta, text: 'Sair' })));
+    if (j.erro) caixa.appendChild(h('p', { class: 'erro', role: 'alert', text: j.erro }));
+    return caixa;
+  }
 
   // Célula "Ocorrência (expedição)" da tabela, com o botão de justificar o atraso.
-  function celulaOcorrencia(v, it) {
-    const botao = painelDeOcorrencias() && v.st.tipo !== 'desp' ? h('button', { class: 'btn peq', type: 'button', title: 'Registrar o motivo deste pedido estar atrasado (ocorrência), por exemplo cliente, endereço ou cadastro', onclick: (ev) => { ev.stopPropagation(); justificar(it); } }, v.ocor ? '+ Ocorrência' : 'Justificar atraso') : null;
+  function celulaOcorrencia(v, it, k) {
+    const botao = v.st.tipo !== 'desp' ? h('button', { class: 'btn peq', type: 'button', title: 'Escrever o motivo deste pedido estar atrasado (ocorrência), por exemplo cliente, endereço ou cadastro', onclick: (ev) => { ev.stopPropagation(); abrirJustificativa(it, k); } }, v.ocor ? '+ Ocorrência' : 'Justificar atraso') : null;
     return h('div', null, celulaOcorrenciaTexto(v, it), botao);
   }
   function celulaOcorrenciaTexto(v, it) {
@@ -591,7 +688,7 @@
     const k = aba.id + '|' + chave(it), aberto = estado.aberto === k, st = statusDoPedido(estado.p.entregues, it, a.reg.dia, aba.id);
     const v = Object.assign(avaliarPedido(estado.p, it, a.reg.dia, new Date()), { st });
     const tr = h('tr', { class: 'clicavel' + (aberto ? ' sel' : ''), tabindex: '0', 'aria-expanded': aberto, onclick: () => { estado.aberto = aberto ? '' : k; desenhar(); }, onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); tr.click(); } } },
-      h('td', { class: 'ped', text: it[0] }), h('td', { class: 'cli', 'data-l': 'Cliente', title: extra(it).n || '', text: extra(it).n || '—' }), h('td', { 'data-l': 'Ocorrência' }, celulaOcorrencia(v, it)), h('td', { class: 'acao', 'data-l': 'O que fazer', text: v.acao.texto }), h('td', { 'data-l': 'Armazém', text: it[1] || '—' }), h('td', { 'data-l': 'Liberado em', text: it[2] ? ddmmaaaa(it[2]) : '—' }), h('td', { class: 'num', 'data-l': 'Peças', text: fmtN(it[3]) }),
+      h('td', { class: 'ped', text: it[0] }), h('td', { class: 'cli', 'data-l': 'Cliente', title: extra(it).n || '', text: extra(it).n || '—' }), h('td', { 'data-l': 'Ocorrência' }, celulaOcorrencia(v, it, k)), h('td', { class: 'acao', 'data-l': 'O que fazer', text: v.acao.texto }), h('td', { 'data-l': 'Armazém', text: it[1] || '—' }), h('td', { 'data-l': 'Liberado em', text: it[2] ? ddmmaaaa(it[2]) : '—' }), h('td', { class: 'num', 'data-l': 'Peças', text: fmtN(it[3]) }),
       h('td', { 'data-l': 'Tipo' }, h('span', { class: 'tag ' + (it[4] === 'F' ? 'fat' : 'est'), title: it[10] ? 'O SC9 marcou como estoque, mas o pedido foi achado na Saída p/ Expedição: contado como faturamento (falta a nota).' : '', text: TIPO[it[4]] + (it[10] ? ' (saída)' : '') })), h('td', { 'data-l': 'Situação' }, h('span', { class: 'tag ' + (it[5] === 'A' ? 'atr' : 'proc'), text: SIT[it[5]] })),
       h('td', { class: 'num' + (it[6] >= 5 ? ' forte' : ''), 'data-l': 'Dias de atraso', text: fmtN(it[6]) }), h('td', { 'data-l': 'Transportadora', text: it[7] || '—' }), h('td', { 'data-l': 'Status' }, h('span', { class: 'tag ' + st.tipo, text: st.texto })), aba.id === 'novos' ? null : h('td', { 'data-l': aba.id === 'saiu' ? 'Estava em' : 'Mudou', text: status(a, it, aba) }));
     if (!aberto) return tr;
@@ -614,6 +711,7 @@
         v.ocor ? campo('Solução', (v.ocor.oc.solucao || 'sem solução ainda') + (v.ocor.oc.dataSolucao ? ' (' + ddmmaaaa(v.ocor.oc.dataSolucao) + ')' : '')) : null,
         campo('Comparado ao dia anterior', status(a, it, { id: 'atraso' }) || '—'),
         campo('Dias seguidos em atraso', seq.n ? seq.n + (seq.n === 1 ? ' dia' : ' dias') + ' (desde ' + ddmm(seq.desde) + ')' : aba.id === 'saiu' ? 'saiu do atraso nesta foto (estava na anterior)' : 'não estava em atraso neste dia')),
+      formularioDeJustificativa(it, k),
       dias.length ? h('div', { class: 'linha-tempo' }, h('span', { class: 'mudo', text: 'Dias gravados em que apareceu em atraso: ' }), dias.map((d) => h('button', { class: 'chip' + (d === a.reg.dia ? ' ativo' : ''), onclick: (ev) => { ev.stopPropagation(); escolherDia(d); }, text: ddmm(d) }))) : null));
     return [tr, det];
   }
