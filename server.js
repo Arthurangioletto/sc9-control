@@ -477,6 +477,8 @@ SERVABLE.add("prioridades.html");
 SERVABLE.add("prioridades.js");
 SERVABLE.add("historico-atraso.html");
 SERVABLE.add("historico-atraso.js");
+SERVABLE.add("atraso-painel.js");
+SERVABLE.add("atraso-painel-ui.js");
 SERVABLE.add("vendor-exceljs.js");
 SERVABLE.add("vendor-jszip.js");
 SERVABLE.add("vendor-zxing.js");
