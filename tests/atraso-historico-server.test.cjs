@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 test('rota do histórico de atraso: só administrador, grava por mês, troca só o mesmo dia e rejeita lixo', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-atraso-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   fs.mkdirSync(path.join(dir, 'data'));
   delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
   process.env.PORT = '0'; process.env.APP_PASSWORD = crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomUUID(); process.env.NODE_ENV = 'test';
@@ -27,7 +27,9 @@ test('rota do histórico de atraso: só administrador, grava por mês, troca só
     assert.equal((await req('/api/atraso-historico', registro(hoje, 5, []), '')).status, 401, 'sem login não grava');
     cookie = (await req('/api/login', { password: process.env.APP_PASSWORD })).cookie;
 
-    assert.deepEqual((await req('/api/atraso-historico')).data, { meses: {}, expedicao: {}, entregues: {}, saidas: {} });
+    const vazio = (await req('/api/atraso-historico')).data;
+    assert.deepEqual(Object.assign({}, vazio, { ocorrencias: undefined }), { meses: {}, expedicao: {}, entregues: {}, saidas: {}, ocorrencias: undefined });
+    assert.deepEqual(vazio.ocorrencias.map((o) => o.nf).sort(), ['885234', '886039', '886511'], 'a página recebe as ocorrências da expedição (lista inicial)');
     assert.equal((await req('/api/atraso-historico', registro(ontem, 50, [['P1', 'Cambuci', ontem, 3, 'E', 'A', 2]]))).status, 200);
     assert.equal((await req('/api/atraso-historico', registro(hoje, 60, [['P2', 'BH', ontem, 4, 'F', 'P', 1], ['P3', 'BH', ontem, 1, 'E', 'A', 1]]))).status, 200);
     assert.equal((await req('/api/atraso-historico', registro(hoje, 61, [['P2', 'BH', ontem, 4, 'F', 'A', 1]]))).status, 200, 'o mesmo dia pode ser regravado');

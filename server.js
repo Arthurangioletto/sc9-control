@@ -1650,6 +1650,20 @@ async function handleApi(req, res, pathname) {
   };
   // Onde cada pedido das fotos aparece na Saída p/ Expedição (1º registro): { pedido: ISO }. Fica guardado em atraso-saidas.json
   // para não se perder quando o administrador exporta e apaga dias antigos da saída.
+  // Ocorrências da expedição (lista compartilhada). Na primeira leitura entram as 3 linhas que a expedição já tinha.
+  async function ocorrenciasLinhas() {
+    const Oc = require("./ocorrencias-store.js");
+    let dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+    if (!dado) {
+      await comFila("ocorrencias", async () => {
+        dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+        if (!dado) { dado = { linhas: Oc.linhasIniciais(Date.now()) }; await objSave("ocorrencias-expedicao.json", dado); }
+      });
+    }
+    return Oc.normalizarLista(dado);
+  }
+  // Versão enxuta para a página do histórico de atraso (cruza pela nota fiscal do pedido).
+  const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas().catch(() => [])).map((l) => ({ nf: l.nf, dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao }));
   async function saidasDosPedidos(meses) {
     const procurados = new Set();
     for (const m of Object.values(meses)) for (const r of Object.values(m.dias || {})) for (const it of r.itens || []) { const n = normalizarPedido(it[0]); if (n) procurados.add(n); }
@@ -1739,14 +1753,7 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, 200, Object.assign({ linhas, notas, saidas, agora: new Date().toISOString() }, extra || {}));
       };
       if (method === "GET") {
-        let dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
-        if (!dado) {
-          await comFila("ocorrencias", async () => {
-            dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
-            if (!dado) { dado = { linhas: Oc.linhasIniciais(Date.now()) }; await objSave("ocorrencias-expedicao.json", dado); }
-          });
-        }
-        return responder(Oc.normalizarLista(dado));
+        return responder(await ocorrenciasLinhas());
       }
       let corpo;
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
@@ -1806,7 +1813,7 @@ async function handleApi(req, res, pathname) {
             const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
             if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
           }
-          return sendJson(res, 200, { saidas: await saidasDosPedidos(meses).catch(() => ({})) });
+          return sendJson(res, 200, { saidas: await saidasDosPedidos(meses).catch(() => ({})), ocorrencias: await ocorrenciasParaPagina() });
         }
         for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
           const dado = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
@@ -1816,7 +1823,7 @@ async function handleApi(req, res, pathname) {
         }
         const dadoEntregues = await objLoad("atraso-entregues.json", { fresh: true }).catch(() => null);
         const saidas = await saidasDosPedidos(meses).catch(() => ({}));
-        return sendJson(res, 200, { meses, expedicao, entregues: (dadoEntregues && dadoEntregues.pedidos) || {}, saidas });
+        return sendJson(res, 200, { meses, expedicao, entregues: (dadoEntregues && dadoEntregues.pedidos) || {}, saidas, ocorrencias: await ocorrenciasParaPagina() });
       }
       let corpo;
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }

@@ -71,7 +71,7 @@ test('csv sai com BOM, ponto e vírgula, aspas escapadas e nomes legíveis', () 
   const texto = H.csv([item], { 1001: '2026-11-21' }, '2026-11-19', 'atraso');
   assert.ok(texto.startsWith('\ufeff"Pedido";"Cliente"'));
   const linhas = texto.slice(1).split('\r\n');
-  assert.equal(linhas[1], '"1001";"CLIENTE X";"001902";"884285";"1234,5";"Cambuci ""A""";"10/11/2026";"5,5";"3";"Faturamento";"Faturamento (falta a nota)";"Em processo";"9";"";"ANA";"BIA";"17/11/2026, 10:30:00";"Estava em atraso · despachado em 21/11"');
+  assert.equal(linhas[1], '"1001";"CLIENTE X";"001902";"884285";"1234,5";"Cambuci ""A""";"10/11/2026";"5,5";"3";"Faturamento";"Faturamento (falta a nota)";"Em processo";"9";"";"ANA";"BIA";"17/11/2026, 10:30:00";"Estava em atraso · despachado em 21/11";"";"";"";"";"";""');
 });
 
 test('status do pedido: despachado (e quando), saiu sem despacho ou ainda em atraso', () => {
@@ -203,7 +203,7 @@ test('o servidor acha na Saída p/ Expedição os pedidos das fotos (ignora zero
     assert.deepEqual(j.saidas, { 5001: hoje + 'T12:00:00.000Z' }, 'acha 5001 (com zeros na foto), usa o 1º registro e ignora pedido que não está nas fotos');
     // atualização em tempo real: só o cruzamento com a saída, sem as fotos
     const so = await (await fetch(base + '/api/atraso-historico?so=saidas', { headers: { Cookie: cookie } })).json();
-    assert.deepEqual(so, { saidas: { 5001: hoje + 'T12:00:00.000Z' } });
+    assert.deepEqual(so, { saidas: { 5001: hoje + 'T12:00:00.000Z' }, ocorrencias: [] });
     // o dia da saída é apagado depois da exportação: o resultado guardado continua
     fs.rmSync(path.join(data, 'saida-pv-' + hoje + '.json'));
     const guardado = JSON.parse(fs.readFileSync(path.join(data, 'atraso-saidas.json'), 'utf8'));
