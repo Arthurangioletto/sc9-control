@@ -239,6 +239,7 @@ test('com o detalhe por armazém, despachados e faturados acompanham o filtro e 
   assert.equal(r.temBase, true);
   assert.equal(r.lista.find((x) => x.nome === 'BH').pctBase, 10); // 2 em atraso de 20
   assert.equal(P.armazens(H.preparar(dados()), '2026-11-19', P.filtroVazio()).temBase, false);
+});
 
 test('modo TV e impressão existem e o painel sai do modo TV com Esc', () => {
   const fs = require('node:fs'), path = require('node:path');
