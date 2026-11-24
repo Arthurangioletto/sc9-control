@@ -178,7 +178,7 @@
       h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); enviarConta(c.modo); } },
         criar ? campoTexto('c-nome', 'Seu nome', 'nome', c, { autocomplete: 'name', maxlength: '60', placeholder: 'Ex.: Ana (Vendas)' }) : null,
         criar ? campoTexto('c-email', 'E-mail corporativo da Implacil', 'email', c, { type: 'email', autocomplete: 'email', maxlength: '120', autocapitalize: 'none', placeholder: 'Ex.: ana@implacil.com.br' }) : null,
-        criar ? h('p', { class: 'dica', style: 'margin-top:-6px', text: 'O acesso é liberado na hora para e-mail corporativo da Implacil. Sem login você continua consultando e avisando pelo link.' }) : null,
+        criar ? h('div', { class: 'aviso', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Use o seu próprio e-mail corporativo da Implacil. ' }), 'O acesso é liberado na hora, mas tudo o que você pedir, avisar ou consultar fica registrado com o seu e-mail e o seu nome, e a equipe pode ver. Não use o e-mail de outra pessoa. Sem login você continua consultando e avisando pelo link.')) : null,
         campoTexto('c-login', 'Login', 'login', c, { autocomplete: 'username', maxlength: '24', autocapitalize: 'none', placeholder: 'Ex.: ana.vendas' }),
         criar ? h('p', { class: 'dica', style: 'margin-top:-6px', text: 'De 3 a 24 caracteres: letras, números, ponto, hífen ou sublinhado.' }) : null,
         campoTexto('c-codigo', criar ? 'Código (mínimo 6 caracteres)' : 'Código', 'codigo', c, { type: 'password', autocomplete: criar ? 'new-password' : 'current-password', maxlength: '40' }),
