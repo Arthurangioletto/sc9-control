@@ -181,3 +181,43 @@ test('Transferência e Retem abrem e salvam bases de documentos novos mesmo com 
     fs.rmSync(dir,{recursive:true,force:true});
   }
 });
+
+test('Transferência salva documento grande (milhares de itens, mais de 1 MB) sem perder item', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-transferencia-grande-'));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js']) {
+    fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  }
+  const password = 'admin-ficticio-grande';
+  Object.assign(process.env, { SUPABASE_URL:'', SUPABASE_SERVICE_KEY:'', PORT:'0', APP_PASSWORD:password, SESSION_SECRET:password, NODE_ENV:'test' });
+  const file = path.join(dir, 'server.js');
+  delete require.cache[file];
+  const server = require(file);
+  if (!server.listening) await new Promise(resolve => server.once('listening', resolve));
+  const endpoint = '/api/transferencia-documentos';
+  async function api(route, cookie, body) {
+    const response = await fetch('http://127.0.0.1:'+server.address().port+route, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'Content-Type':'application/json', 'X-SC9-App':'1', ...(cookie ? { Cookie:cookie } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    return { status:response.status, data:await response.json(), cookie:response.headers.get('set-cookie')?.split(';')[0] };
+  }
+  try {
+    const { cookie:admin } = await api('/api/login', null, { password });
+    const doc = (await api(endpoint, admin, { acao:'criar' })).data.documento;
+    const itens = Array.from({ length:3000 }, (_, i) => ({ id:'i'+i, itemId:'it'+i, loteId:'l'+i, loteProduto:'LP'+i, sku:'SKU'+i, lote:'L'+i, filial:'01', arm:'59',
+      descricao:'PRODUTO DE TESTE COM DESCRIÇÃO LONGA NÚMERO '+i, ean:'789000'+i, validade:'2027-01-01', unidade:'UN', endereco:'A-01-'+i, fornecedor:'FORNECEDOR TESTE LTDA',
+      nf:'12345', doca:'1', placa:'ABC1D23', chegada:'2026-11-24', esperado:5, conferido:0, avaria:0 }));
+    const corpo = { acao:'atualizar', id:doc.id, versao:doc.versao, status:'andamento', registros:itens, base:{ arquivo:'SB8.xlsx', items:itens } };
+    assert.ok(JSON.stringify(corpo).length > 2 * 1024 * 1024, 'o teste precisa passar de 2 MB');
+    const salvo = await api(endpoint, admin, corpo);
+    assert.equal(salvo.status, 200, JSON.stringify(salvo.data).slice(0, 200));
+    assert.equal(salvo.data.documento.registros.length, 3000);
+    const lista = (await api(endpoint, admin)).data.documentos.find(d => d.id === doc.id);
+    assert.equal(lista.registros.length, 3000, 'nenhum item perdido ao recarregar');
+    const base = (await api(endpoint + '/' + doc.id + '/base', admin)).data.base;
+    assert.equal(base.items.length, 3000, 'a base também volta completa');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
