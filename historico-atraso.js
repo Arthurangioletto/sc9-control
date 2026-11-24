@@ -344,6 +344,7 @@
         h('button', { class: 'btn', onclick: () => i < meses.length - 1 && trocarMes(meses[i + 1]), disabled: i >= meses.length - 1, 'aria-label': 'Mês anterior', text: '◀' }),
         sel,
         h('button', { class: 'btn', onclick: () => i > 0 && trocarMes(meses[i - 1]), disabled: i <= 0, 'aria-label': 'Próximo mês', text: '▶' }),
+        h('button', { class: 'btn', type: 'button', title: 'Ver e registrar as ocorrências da expedição (quem registra entra com usuário e senha)', onclick: () => { const c = document.getElementById('ocorrencias-box'); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, text: 'Ocorrências da expedição ↓' }),
         chaveLink ? null : h('a', { class: 'btn', href: '/', text: 'Voltar ao SC9' })));
   }
 
@@ -598,8 +599,22 @@
     const blocos = vazio ? [h('section', { class: 'cartao centro' }, h('h2', { text: 'Ainda não há histórico gravado' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Cada vez que o atraso é exportado, a foto do dia fica guardada aqui.' }))]
       : [faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()];
     $app.replaceChildren(cabecalho(), ...blocos.filter(Boolean));
+    montarOcorrencias();
     root.scrollTo(0, y);
     if (foco) { const e = document.getElementById(foco); if (e && e.focus) e.focus({ preventScroll: true }); }
+  }
+
+  // Ocorrências da expedição dentro da própria página: todo mundo lê e analisa (o link libera a leitura); para registrar, a pessoa da
+  // expedição entra com usuário e senha no próprio painel. O painel fica fora da parte redesenhada, então não perde o que foi digitado.
+  let ocorrenciasMontadas = false;
+  function montarOcorrencias() {
+    if (ocorrenciasMontadas) return;
+    const caixa = document.getElementById('ocorrencias-box'), Painel = root.SC9Ocorrencias && root.SC9Ocorrencias.Panel;
+    if (!caixa || !Painel || !root.React || !root.ReactDOM || !root.ReactDOM.createRoot) return;
+    ocorrenciasMontadas = true;
+    caixa.style.display = 'block';
+    root.ReactDOM.createRoot(caixa).render(root.React.createElement(Painel, { embedded: true, chaveLink }));
+    root.addEventListener('sc9-ocorrencias', () => { atualizarSaidas(); });
   }
 
   // Tempo real: a cada 30 s (com a aba aberta) cruza de novo os pedidos com a Saída p/ Expedição e só redesenha se algo mudou.
