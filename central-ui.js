@@ -82,6 +82,8 @@
   const NIVEL_DICA = { normal: 'Sem pressa', media: 'Neste dia', alta: 'Hoje', urgente: 'Agora' };
   const STATUS = { recebida: 'Recebida', em_analise: 'Em análise', aprovada: 'Aprovada', em_atendimento: 'Em atendimento', concluida: 'Concluída', nao_aprovada: 'Não aprovada' };
   const MOTIVO = { cliente_aguardando: 'Cliente esperando o pedido', prazo_combinado: 'Prazo combinado com o cliente', cliente_importante: 'Cliente estratégico', erro_nosso: 'Atraso por erro nosso', retirada: 'Cliente vai retirar', outro: 'Outro (explique na observação)' };
+  const TIPO_AVISO = { endereco: 'Cliente mudou o endereço de entrega', retirada: 'Cliente vai retirar / mudou a retirada', transportadora: 'Trocar a transportadora', cancelar: 'Cliente pediu para cancelar ou segurar o pedido', produto: 'Problema ou dúvida com os itens do pedido', outro: 'Outra informação' };
+  const STATUS_AVISO = { recebido: 'Recebido', em_andamento: 'Em andamento', resolvido: 'Resolvido' };
   const ICONE_ETAPA = { liberado: 'liberado', sep: 'pacote', conf: 'conferencia', fat: 'nota', saida: 'caixaEntrada', desp: 'caminhao' };
 
   /* ---------- datas ---------- */
@@ -135,5 +137,5 @@
     try { await root.navigator.clipboard.writeText(texto); toast(aviso || 'Copiado.'); } catch (e) { toast('Não consegui copiar. Selecione o texto e copie.', 'erro'); }
   }
 
-  root.Central = { NOME, FUSO, h, icone, marca, NIVEL, NIVEL_DICA, STATUS, MOTIVO, ICONE_ETAPA, dataBR, curta, horaBR, dataHora, diaSP, duracao, selo, fato, vazio, esqueleto, toast, copiar, montarCsv, baixarCsv, dataHoraCsv, nomeArquivo };
+  root.Central = { NOME, FUSO, h, icone, marca, NIVEL, NIVEL_DICA, STATUS, MOTIVO, TIPO_AVISO, STATUS_AVISO, ICONE_ETAPA, dataBR, curta, horaBR, dataHora, diaSP, duracao, selo, fato, vazio, esqueleto, toast, copiar, montarCsv, baixarCsv, dataHoraCsv, nomeArquivo };
 })(window);

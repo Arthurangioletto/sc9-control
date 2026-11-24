@@ -20,9 +20,9 @@
   const moeda = (v) => (v > 0 ? 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '');
   const normPedido = (x) => String(x == null ? '' : x).replace(/\D/g, '').replace(/^0+/, '');
 
-  // chave = código do link sem senha (?k=): libera só a LEITURA; gravar sempre exige usuário e senha
+  // chave = código do link sem senha (?k=): libera a leitura e o registrar/editar; apagar e importar exigem usuário e senha
   async function pedir(opcoes, chave) {
-    const r = await fetch('/api/ocorrencias' + (chave && !(opcoes && opcoes.method === 'POST') ? '?k=' + encodeURIComponent(chave) : ''), Object.assign({ cache: 'no-store' }, opcoes, { headers: { 'X-SC9-App': '1', 'Content-Type': 'application/json' } }));
+    const r = await fetch('/api/ocorrencias' + (chave ? '?k=' + encodeURIComponent(chave) : ''), Object.assign({ cache: 'no-store' }, opcoes, { headers: { 'X-SC9-App': '1', 'Content-Type': 'application/json' } }));
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 || r.status === 403) throw new Error(chave && !(opcoes && opcoes.method === 'POST') ? 'Link sem acesso. Peça um link novo ao administrador.' : 'Sem acesso. Entre com seu usuário e senha, ou peça ao administrador para liberar "Ocorrências" no seu usuário.');
     if (!r.ok) throw new Error(j.error || 'Não consegui falar com o servidor.');
@@ -54,12 +54,6 @@
       } catch (e) { setSessao({ pode: false, authed: false }); }
     }, []);
     useEffect(() => { verSessao(); }, [verSessao]);
-    // a lista de pedidos atrasados da página registrou uma ocorrência: recarrega
-    useEffect(() => {
-      const ao = () => { carregar(); };
-      root.addEventListener('sc9-ocorrencias-mudou', ao);
-      return () => root.removeEventListener('sc9-ocorrencias-mudou', ao);
-    }, [carregar]);
     // botão "Justificar atraso" da lista de pedidos atrasados: abre o quadro já com o pedido (e a nota, se tiver) e a data de hoje
     useEffect(() => {
       const ao = (ev) => {
@@ -72,7 +66,8 @@
       root.addEventListener('sc9-ocorrencia-nova', ao);
       return () => root.removeEventListener('sc9-ocorrencia-nova', ao);
     }, []);
-    const pode = !embedded || Boolean(sessao && sessao.pode);
+    const comLogin = !embedded || Boolean(sessao && sessao.pode); // apagar e importar do Excel
+    const pode = comLogin || Boolean(embedded && chaveLink); // registrar e editar (o link do histórico basta)
     const avisarPagina = () => { try { root.dispatchEvent(new root.Event('sc9-ocorrencias')); } catch (e) { /* sem página para avisar */ } };
     async function entrar() {
       setLogin((l) => Object.assign({}, l, { entrando: true, erro: '' }));
@@ -103,6 +98,13 @@
     const carregar = useCallback(async () => {
       try { setDados(await chamar({})); setErro(''); } catch (e) { setErro(e.message); }
     }, []);
+    // (fica depois de carregar: usar antes dava erro de inicialização e o painel não abria)
+    // a lista de pedidos atrasados da página registrou uma ocorrência: recarrega
+    useEffect(() => {
+      const ao = () => { carregar(); };
+      root.addEventListener('sc9-ocorrencias-mudou', ao);
+      return () => root.removeEventListener('sc9-ocorrencias-mudou', ao);
+    }, [carregar]);
     useEffect(() => {
       carregar();
       const t = setInterval(carregar, 60000);
@@ -199,7 +201,7 @@
     return h('div', { style: embedded ? { background: '#f6f8fc', fontFamily: 'inherit', color: cor.ink, borderRadius: 14, border: '1px solid ' + cor.border } : { minHeight: '100vh', background: '#f6f8fc', fontFamily: 'Manrope, ui-sans-serif, system-ui', color: cor.ink } },
       h('header', { style: Object.assign({ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#fff', borderBottom: '1px solid ' + cor.border }, embedded ? { borderRadius: '14px 14px 0 0' } : { position: 'sticky', top: 0, zIndex: 5 }) },
         onBack && h('button', { type: 'button', onClick: onBack, 'aria-label': 'Voltar ao SC9', style: { border: 0, background: cor.soft, borderRadius: 8, width: 34, height: 34, fontSize: 20, cursor: 'pointer', color: cor.accent } }, '‹'),
-        h('div', { style: { flex: 1 } }, h('div', { style: { fontWeight: 800, fontSize: 17 } }, 'Ocorrências da expedição'), h('div', { style: { fontSize: 12, color: cor.mute } }, embedded ? 'O que impede cada pedido de sair, quem resolve e o que fazer. Todos veem; para registrar, entre com usuário e senha.' : 'Digite o que impede o pedido de sair. O SC9 acha o cliente e diz o que falta.')),
+        h('div', { style: { flex: 1 } }, h('div', { style: { fontWeight: 800, fontSize: 17 } }, 'Ocorrências da expedição'), h('div', { style: { fontSize: 12, color: cor.mute } }, embedded ? (chaveLink ? 'O que impede cada pedido de sair, quem resolve e o que fazer. Quem tem o link registra e edita; apagar exige usuário e senha.' : 'O que impede cada pedido de sair, quem resolve e o que fazer. Todos veem; para registrar, entre com usuário e senha.') : 'Digite o que impede o pedido de sair. O SC9 acha o cliente e diz o que falta.')),
         botao('↻ Atualizar', carregar),
         embedded && sessao && sessao.authed && botao('Sair (' + (sessao.nome || 'conta') + ')', sair),
         onLogout && botao('Sair', onLogout)),
@@ -223,9 +225,9 @@
           kpi(res.resolvidas, 'Resolvidas', 'concluido', res.mediaDiasParaResolver != null ? 'Média de ' + res.mediaDiasParaResolver + ' dias para resolver' : ''),
           res.naoAchadas ? kpi(res.naoAchadas, 'Nota não achada na base', 'atencao', 'Confira o número da nota ou se o SC9 já foi atualizado') : null),
 
-        embedded && sessao && !pode && h('section', { style: { background: '#fff', border: '1px solid ' + cor.border, borderRadius: 12, padding: 14 } },
-          h('strong', { style: { fontSize: 14 } }, 'Registrar ocorrência'),
-          h('p', { style: { margin: '4px 0 10px', fontSize: 12.5, color: cor.mute } }, sessao.authed ? 'Seu usuário não tem o acesso "Ocorrências". Peça ao administrador para liberar, ou entre com outro usuário.' : 'Quem registra entra com usuário e senha (os mesmos do SC9). Deixe o usuário vazio se for o administrador.'),
+        embedded && sessao && !comLogin && h('section', { style: { background: '#fff', border: '1px solid ' + cor.border, borderRadius: 12, padding: 14 } },
+          h('strong', { style: { fontSize: 14 } }, chaveLink ? 'Apagar ou importar do Excel' : 'Registrar ocorrência'),
+          h('p', { style: { margin: '4px 0 10px', fontSize: 12.5, color: cor.mute } }, chaveLink ? 'Pelo link você já registra e edita ocorrências. Para apagar uma ocorrência ou importar linhas do Excel, entre com usuário e senha.' : sessao.authed ? 'Seu usuário não tem o acesso "Ocorrências". Peça ao administrador para liberar, ou entre com outro usuário.' : 'Quem registra entra com usuário e senha (os mesmos do SC9). Deixe o usuário vazio se for o administrador.'),
           h('form', { onSubmit: (e) => { e.preventDefault(); entrar(); }, style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
             h('input', { value: login.usuario, onChange: (e) => setLogin(Object.assign({}, login, { usuario: e.target.value })), placeholder: 'Usuário', 'aria-label': 'Usuário', autoComplete: 'username', style: { flex: '1 1 140px', border: '1px solid ' + cor.border, borderRadius: 8, padding: '8px 10px', fontSize: 13 } }),
             h('input', { type: 'password', value: login.senha, onChange: (e) => setLogin(Object.assign({}, login, { senha: e.target.value })), placeholder: 'Senha', 'aria-label': 'Senha', autoComplete: 'current-password', style: { flex: '1 1 140px', border: '1px solid ' + cor.border, borderRadius: 8, padding: '8px 10px', fontSize: 13 } }),
@@ -235,7 +237,7 @@
         pode && h('section', { style: { background: '#fff', border: '1px solid ' + cor.border, borderRadius: 12, padding: 14 } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 } },
             h('strong', { style: { fontSize: 14 } }, rascunho.id ? 'Editando a ocorrência ' + (rascunho.nf ? 'da nota ' + rascunho.nf : 'do pedido ' + rascunho.pedido) : 'Nova ocorrência (justificativa do atraso)'),
-            h('div', { style: { display: 'flex', gap: 8 } }, botao(colar == null ? 'Colar do Excel' : 'Fechar colagem', () => setColar(colar == null ? '' : null)))),
+            h('div', { style: { display: 'flex', gap: 8 } }, comLogin && botao(colar == null ? 'Colar do Excel' : 'Fechar colagem', () => setColar(colar == null ? '' : null)))),
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(135px,1fr))', gap: 10 } },
             h('div', null, rotulo('Nº da Nota Fiscal', 'ou o pedido'), entrada('nf', 'ex.: 885234', { ref: nfRef, inputMode: 'numeric' })),
             h('div', null, rotulo('Nº do Pedido', 'se ainda não tem nota'), entrada('pedido', 'ex.: 355386', { inputMode: 'numeric' })),
@@ -277,7 +279,7 @@
                 td(oc.dataSolucao ? O.mostrarData(oc.dataSolucao) : h('span', { style: { color: cor.mute } }, '—'), { whiteSpace: 'nowrap' }),
                 td(h('div', null, selo(av), h('div', { style: { color: cor.mute, fontSize: 11, marginTop: 3 } }, av.resolvida ? 'resolvida em ' + av.dias + (av.dias === 1 ? ' dia' : ' dias') : 'aberta há ' + av.dias + (av.dias === 1 ? ' dia' : ' dias')))),
                 td(av.acao),
-                pode && td(h('div', { style: { display: 'flex', gap: 6, flexDirection: 'column' } }, botao('Editar', () => editar(oc)), botao('Apagar', () => apagar(oc), { style: { border: '1px solid #f0c4bf', background: '#fff', color: cor.red, borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' } })))))))) : null),
+                pode && td(h('div', { style: { display: 'flex', gap: 6, flexDirection: 'column' } }, botao('Editar', () => editar(oc)), comLogin && botao('Apagar', () => apagar(oc), { style: { border: '1px solid #f0c4bf', background: '#fff', color: cor.red, borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' } })))))))) : null),
 
         h('p', { style: { fontSize: 11.5, color: cor.mute, margin: 0 } }, 'Os dados de cliente e pedido vêm do último SC9 exportado pelo administrador; "Saída p/ Expedição" e "despachado" vêm dos registros da expedição. Se a nota não aparece, atualize a base.')));
   }

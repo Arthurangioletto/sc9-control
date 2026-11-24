@@ -5,7 +5,7 @@
   const C = root.Central, h = C.h, ic = C.icone;
   const chaveLink = new URLSearchParams(root.location.search).get('k') || '';
   const $raiz = root.document.getElementById('raiz');
-  const LS = { recentes: 'sc9v_recentes', meus: 'sc9v_meus', nome: 'sc9v_nome', sessao: 'sc9v_sessao', consultas: 'sc9v_consultas' };
+  const LS = { recentes: 'sc9v_recentes', meus: 'sc9v_meus', nome: 'sc9v_nome', sessao: 'sc9v_sessao', consultas: 'sc9v_consultas', avisos: 'sc9v_avisos' };
   const lerLS = (k, padrao) => { try { const v = root.localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } };
   const gravarLS = (k, v) => { try { root.localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sem armazenamento: segue sem lembrar */ } };
   const LIMITE_BASE_VELHA_H = 10; // carga do SC9 mais velha que isso fica em destaque
@@ -14,6 +14,8 @@
     tela: 'rastrear', digitado: '', consulta: null, varios: null, carregando: false, erro: '', atualizadoEm: null,
     f: { pedido: '', nivel: 'normal', motivo: '', observacao: '', nome: lerLS(LS.nome, ''), etapa: 'form', previa: null, buscando: false, enviando: false, erro: '', enviada: null },
     prio: null, prioErro: '', visao: 'minhas', aberta: null,
+    a: { pedido: '', tipo: '', texto: '', nome: lerLS(LS.nome, ''), previa: null, buscando: false, enviando: false, erro: '', enviado: null },
+    avisos: null, avisosErro: '', sub: 'prioridades', abertoAviso: null,
     conta: lerLS(LS.sessao, null), // { token, nome, login } quando ela entrou com o acesso opcional
     cf: { modo: 'criar', nome: '', login: '', codigo: '', codigo2: '', erro: '', enviando: false, atual: '', novo: '', erroTroca: '', okTroca: '', trocando: false }
   };
@@ -103,7 +105,8 @@
         h('div', { class: 'acoes' },
           h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(textoParaCopiar(r), 'Status copiado. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar status'),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { const u = new URL(root.location.href); u.searchParams.set('pedido', r.pedido); C.copiar(u.toString(), 'Link copiado.'); } }, ic('link'), 'Copiar link do pedido'),
-          r.resumo.nivel !== 'concluido' ? h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaPrioridade(r.pedido) }, ic('raio'), 'Pedir prioridade') : null)),
+          r.resumo.nivel !== 'concluido' ? h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaPrioridade(r.pedido) }, ic('raio'), 'Pedir prioridade') : null,
+          h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(r.pedido) }, ic('comentario'), 'Avisar a expedição'))),
       h('section', { class: 'card', 'aria-label': 'Andamento do pedido ' + r.pedido },
         h('div', { class: 'card-titulo' }, h('h3', { text: 'Andamento do pedido' }), h('span', { class: 'mudo peq', text: (r.etapas || []).filter((e) => e.estado === 'feita').length + ' de ' + (r.etapas || []).length + ' etapas concluídas' })),
         h('ol', { class: 'tempo' }, (r.etapas || []).map((e) => h('li', { class: e.estado, 'aria-current': e.estado === 'atual' ? 'step' : null },
@@ -121,6 +124,7 @@
     const itens = [
       h('li', null, h('b', { text: 'O andamento vem do SC9, que a expedição carrega 2 a 3 vezes por dia. ' }), h('span', { class: velha ? 'velha' : '', text: base + ' Pedido novo ou mudança recente pode demorar a aparecer: aguarde a próxima carga.' }))
     ];
+    if (modo === 'avisar') itens.push(h('li', null, h('b', { text: 'O aviso vai para a equipe da expedição, que trata e responde: não é na hora. ' }), 'Acompanhe em "Minhas solicitações" → "Avisos à expedição". Não precisa mandar de novo nem cobrar por mensagem.'));
     if (modo === 'prioridade' || modo === 'minhas') itens.push(h('li', null, h('b', { text: 'A análise é feita pela equipe do SC9, não é na hora. ' }), 'Depois de enviar, aguarde a resposta aqui em "Minhas solicitações". Não precisa mandar de novo nem cobrar por mensagem.'));
     if (compacta) return h('div', { class: 'processo compacta', role: 'note' }, ic('info'), h('p', null, h('b', { text: 'Aguarde a análise do SC9. ' }), base));
     return h('section', { class: 'processo', role: 'note', 'aria-label': 'Como funciona o acompanhamento' }, h('div', { class: 'bola' }, ic('info')), h('div', null, h('h2', { text: modo === 'rastrear' ? 'Como funciona o acompanhamento' : 'Antes de pedir: como funciona a análise' }), h('ul', null, itens)));
@@ -140,10 +144,10 @@
     if (c.erro) return desenhar();
     c.enviando = true; desenhar();
     try {
-      const corpo = modo === 'criar' ? { acao: 'criar', nome: c.nome, login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []) } : { acao: 'entrar', login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []) };
+      const corpo = modo === 'criar' ? { acao: 'criar', nome: c.nome, login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) } : { acao: 'entrar', login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) };
       const j = await api('/api/vendedoras/conta', { method: 'POST', body: JSON.stringify(corpo) });
       salvarSessao(j); c.codigo = ''; c.codigo2 = ''; C.toast(modo === 'criar' ? 'Acesso criado. Você já está dentro.' : 'Bem-vinda, ' + j.conta.nome + '.');
-      estado.tela = 'minhas'; estado.visao = 'minhas'; carregarPrioridades(true);
+      estado.tela = 'minhas'; estado.visao = 'minhas'; carregarPrioridades(true); carregarAvisos(true);
     } catch (e) { c.erro = e.message; }
     c.enviando = false; desenhar(); root.scrollTo(0, 0);
   }
@@ -186,6 +190,8 @@
   const EXPORTAR = {
     minhas: () => C.baixarCsv(C.nomeArquivo('minhas-solicitacoes'), ['Protocolo', 'Pedido', 'Prioridade', 'Motivo', 'Status', 'Pedida em', 'Atualizada em', 'Observação', 'Resposta da logística', 'No SC9 agora?', 'Histórico'],
       ((estado.prio && estado.prio.meus) || []).map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.MOTIVO[l.motivo] || '', C.STATUS[l.status], C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.observacao, l.resposta, ['recebida', 'em_analise', 'aprovada', 'em_atendimento'].includes(l.status) ? (l.foraDoSc9 ? 'Não' : 'Sim') : '', historicoTexto(l)])),
+    avisos: () => C.baixarCsv(C.nomeArquivo('meus-avisos-a-expedicao'), ['Protocolo', 'Pedido', 'Tipo', 'O que informei', 'Status', 'Resposta da expedição', 'Enviado em', 'Atualizado em', 'No SC9 agora?', 'Histórico'],
+      ((estado.avisos && estado.avisos.meus) || []).map((l) => [l.protocolo, l.pedido, C.TIPO_AVISO[l.tipo], l.texto, C.STATUS_AVISO[l.status], l.resposta, C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.status === 'resolvido' ? '' : (l.foraDoSc9 ? 'Não' : 'Sim'), (l.historico || []).map((x) => C.dataHoraCsv(x.em) + ' - ' + (x.status ? C.STATUS_AVISO[x.status] || x.status : 'Atualização') + (x.texto ? ' - ' + x.texto : '')).join(' | ')])),
     consultas: () => C.baixarCsv(C.nomeArquivo('pedidos-consultados'), ['Pedido', 'Consultado em', 'Situação na hora', 'Filial', 'Cliente'], listaConsultas().map((x) => [x.pedido, C.dataHoraCsv(x.em), x.situacao, x.filial, x.cliente]))
   };
   // Com acesso (login) as consultas vêm do servidor (qualquer aparelho); sem acesso, só as deste aparelho.
@@ -200,10 +206,12 @@
     const cartao = (icone, titulo, texto, n, chave, pronto) => h('section', { class: 'card cartao-exportar' }, h('div', { class: 'bola' }, ic(icone)), h('div', { class: 'meio' }, h('h2', { text: titulo }), h('p', { class: 'mudo', text: texto }), h('p', { class: 'peq', style: 'margin-top:4px', text: pronto ? n + (n === 1 ? ' linha' : ' linhas') : 'Carregando…' })),
       h('button', { class: 'btn primario', type: 'button', disabled: !pronto || !n, onclick: EXPORTAR[chave], 'aria-label': 'Baixar ' + titulo }, ic('baixar'), 'Baixar (CSV)'));
     if (!estado.prio && !estado.prioErro) carregarPrioridades(true);
+    if (!estado.avisos && !estado.avisosErro) carregarAvisos(true);
     if (estado.conta && !estado.consultasServ && !estado.consultasErro) carregarConsultas();
     return [h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Exportar' }), h('p', { class: 'mudo', style: 'margin-top:6px', text: 'Baixe só o que é seu em planilha (CSV). Abre direto no Excel.' })),
       estado.prioErro || estado.consultasErro ? h('div', { class: 'erro' }, ic('alerta'), estado.prioErro || estado.consultasErro) : null,
       cartao('lista', 'Minhas solicitações', 'Protocolo, prioridade, motivo, status, resposta da logística e histórico de cada pedido de prioridade.', meus.length, 'minhas', Boolean(estado.prio)),
+      cartao('comentario', 'Meus avisos à expedição', 'Cada aviso que você mandou para a expedição, com o que informou, a resposta da equipe e o histórico.', ((estado.avisos && estado.avisos.meus) || []).length, 'avisos', Boolean(estado.avisos)),
       cartao('busca', 'Pedidos que consultei', estado.conta ? 'Cada pedido que você consultou logada, com data, hora e a situação que aparecia na hora. Vem do seu login, de qualquer aparelho.' : 'Cada pedido que você consultou, com data, hora e a situação que aparecia na hora. Fica guardado só neste aparelho; com acesso criado, passa a valer em qualquer aparelho.', consultas.length, 'consultas', !estado.conta || Boolean(estado.consultasServ)),
       h('p', { class: 'dica', text: estado.conta ? 'Suas solicitações vêm do seu login, de qualquer aparelho.' : 'Sem acesso criado, "Minhas solicitações" e "Pedidos que consultei" são só deste aparelho. Crie seu acesso para ter as solicitações em qualquer lugar.' }),
       !estado.conta ? h('div', { class: 'acoes' }, h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.tela = 'conta'; desenhar(); root.scrollTo(0, 0); } }, ic('usuario'), 'Criar meu acesso')) : null];
@@ -305,6 +313,90 @@
       f.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), f.erro) : null))];
   }
 
+  /* ---------- avisar a expedição (ocorrência / informação sobre um pedido) ---------- */
+  function irParaAviso(pedido) { const a = estado.a; if (pedido && soNumeros(pedido) !== soNumeros(a.pedido)) { a.pedido = pedido; a.previa = null; } a.erro = ''; a.enviado = null; estado.tela = 'avisar'; desenhar(); root.scrollTo(0, 0); }
+  async function localizarA() {
+    const a = estado.a; a.erro = '';
+    const p = soNumeros(a.pedido);
+    if (p.length < 4) { a.erro = 'Digite o número do pedido (só números).'; return desenhar(); }
+    a.buscando = true; desenhar();
+    try { const r = await api('/api/vendedoras/pedido?pedido=' + p); estado.atualizadoEm = r.atualizadoEm || estado.atualizadoEm; a.previa = r; } catch (e) { a.erro = e.message; a.previa = null; }
+    a.buscando = false; desenhar();
+  }
+  async function enviarA() {
+    const a = estado.a; a.erro = '';
+    if (soNumeros(a.pedido).length < 4) a.erro = 'Digite o número do pedido (só números).';
+    else if (!a.tipo) a.erro = 'Escolha o tipo de aviso.';
+    else if (a.texto.trim().length < 5) a.erro = 'Escreva a informação para a expedição (mínimo 5 letras).';
+    else if (!estado.conta && a.nome.trim().length < 2) a.erro = 'Diga seu nome para a equipe saber quem avisou.';
+    if (a.erro) return desenhar();
+    a.enviando = true; desenhar();
+    try {
+      const j = await api('/api/vendedoras/aviso', { method: 'POST', body: JSON.stringify({ pedido: soNumeros(a.pedido), tipo: a.tipo, texto: a.texto, pedidoPor: estado.conta ? estado.conta.nome : a.nome }) });
+      if (!estado.conta) gravarLS(LS.nome, a.nome.trim());
+      gravarLS(LS.avisos, [j.linha.id].concat(lerLS(LS.avisos, []).filter((x) => x !== j.linha.id)).slice(0, 60));
+      a.enviado = { linha: j.linha, naoAchado: j.naoAchado }; a.pedido = ''; a.texto = ''; a.tipo = ''; a.previa = null;
+      C.toast('Aviso enviado para a expedição.'); carregarAvisos(true);
+    } catch (e) { a.erro = e.message; }
+    a.enviando = false; desenhar();
+  }
+  function telaAvisar() {
+    const a = estado.a;
+    if (a.enviado) {
+      const l = a.enviado.linha;
+      return [h('section', { class: 'card' }, h('div', { class: 'protocolo-ok' }, h('div', { class: 'selo-ok' }, ic('ok')), h('h2', { text: 'Aviso enviado para a expedição' }),
+        h('div', { class: 'codigo', text: l.protocolo || '' }),
+        h('div', { class: 'resumo-lista' }, [['Pedido', l.pedido], ['Tipo', C.TIPO_AVISO[l.tipo]], ['Enviado em', C.dataHora(l.criadoEm)], ['Status', C.STATUS_AVISO[l.status]]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
+        h('div', { class: 'processo compacta forte', role: 'status' }, ic('relogio'), h('p', null, h('b', { text: 'Agora é só aguardar. ' }), 'A equipe da expedição vai ver, tratar e responder. A resposta aparece em "Minhas solicitações" → "Avisos à expedição".')),
+        a.enviado.naoAchado ? h('div', { class: 'aviso', style: 'width:100%' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe também foi avisada para recarregar o SC9. Se o número estava errado, fale com a expedição.')) : null,
+        h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn primario', type: 'button', onclick: () => { estado.tela = 'minhas'; estado.sub = 'avisos'; desenhar(); root.scrollTo(0, 0); } }, ic('lista'), 'Ver meus avisos'), h('button', { class: 'btn', type: 'button', onclick: () => { a.enviado = null; desenhar(); } }, 'Novo aviso'))))];
+    }
+    const cab = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,32px);font-weight:800;letter-spacing:-.02em', text: 'Avisar a expedição' }), h('p', { class: 'mudo', style: 'margin-top:6px;font-size:16px', text: 'Tem uma informação ou ocorrência sobre um pedido (endereço, retirada, transportadora...)? Conte aqui para a equipe tratar.' })), faixaProcesso('avisar'));
+    return [cab, h('section', { class: 'card' }, h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); enviarA(); } },
+      h('div', null, h('label', { class: 'rotulo', for: 'a-pedido', text: '1. Número do pedido' }),
+        h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, h('input', { id: 'a-pedido', class: 'entrada', style: 'flex:1 1 200px', type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Ex.: 123456', value: a.pedido, oninput: (ev) => { a.pedido = ev.target.value; if (a.previa && soNumeros(a.previa.pedido) !== soNumeros(a.pedido)) a.previa = null; } }),
+          h('button', { class: 'btn', type: 'button', disabled: a.buscando, onclick: localizarA }, ic('busca'), a.buscando ? 'Localizando…' : 'Conferir pedido'))),
+      a.previa ? previaPedido(a.previa) : null,
+      h('div', null, h('label', { class: 'rotulo', for: 'a-tipo', text: '2. Tipo de aviso' }), h('select', { id: 'a-tipo', class: 'entrada', onchange: (ev) => { a.tipo = ev.target.value; } }, h('option', { value: '', text: 'Escolha o tipo', selected: !a.tipo }), Object.keys(C.TIPO_AVISO).map((k) => h('option', { value: k, text: C.TIPO_AVISO[k], selected: a.tipo === k })))),
+      h('div', null, h('label', { class: 'rotulo', for: 'a-texto', text: '3. O que a expedição precisa saber' }), h('textarea', { id: 'a-texto', class: 'entrada', maxlength: '500', rows: '4', placeholder: 'Ex.: o cliente mudou o endereço de entrega para Rua X, 100, Santo André. Já avisei o cliente.', oninput: (ev) => { a.texto = ev.target.value; } }, a.texto), h('p', { class: 'dica', text: 'Escreva tudo que a equipe precisa para agir, sem depender de outra mensagem.' })),
+      estado.conta ? h('div', null, h('span', { class: 'rotulo', text: 'Quem avisa' }), h('div', { class: 'previa', style: 'display:flex;align-items:center;gap:8px' }, ic('usuarioCheck'), h('b', { text: estado.conta.nome }), h('span', { class: 'mudo peq', text: 'login ' + estado.conta.login })))
+        : h('div', null, h('label', { class: 'rotulo', for: 'a-nome', text: 'Seu nome' }), h('input', { id: 'a-nome', class: 'entrada', type: 'text', autocomplete: 'name', maxlength: '60', placeholder: 'Ex.: Ana (Vendas)', value: a.nome, oninput: (ev) => { a.nome = ev.target.value; } })),
+      h('button', { class: 'btn primario', type: 'submit', disabled: a.enviando }, ic('enviar'), a.enviando ? 'Enviando…' : 'Enviar aviso'),
+      a.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), a.erro) : null))];
+  }
+  async function carregarAvisos(silencioso) {
+    try { estado.avisos = await api('/api/vendedoras/avisos?ids=' + encodeURIComponent(lerLS(LS.avisos, []).join(',')) + '&nome=' + encodeURIComponent((estado.conta && estado.conta.nome) || lerLS(LS.nome, ''))); estado.avisosErro = ''; } catch (e) { estado.avisosErro = e.message; }
+    if (!silencioso || ['minhas', 'exportar'].includes(estado.tela)) desenhar();
+  }
+  const cartaoAviso = (l) => h('button', { class: 'cartao-lista', type: 'button', onclick: () => { estado.abertoAviso = l.id; desenhar(); } },
+    h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + l.pedido }), C.selo(C.TIPO_AVISO[l.tipo], 'normal', true), C.selo(C.STATUS_AVISO[l.status], l.status), h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
+    h('div', { class: 'l2' }, h('span', { text: 'Enviado em ' + C.dataHora(l.criadoEm) }), h('span', { text: 'Atualizado há ' + C.duracao(l.atualizadoEm || l.criadoEm) }), l.resposta ? h('span', { style: 'color:var(--tinta-2)', text: 'Expedição: ' + l.resposta }) : null,
+      l.foraDoSc9 ? h('span', { class: 'aguarde', text: 'Este pedido ainda não está no SC9: a equipe foi avisada para recarregar.' }) : null, l.status === 'recebido' ? h('span', { class: 'aguarde', text: 'Aguarde: a expedição ainda vai ver este aviso.' }) : null));
+  function gavetaAviso(l) {
+    const fecha = () => { estado.abertoAviso = null; estado.gavAnim = null; desenhar(); };
+    const abre = estado.gavAnim !== l.id ? ' abre' : ''; estado.gavAnim = l.id;
+    return [h('div', { class: 'gaveta-fundo' + abre, onclick: fecha }),
+      h('aside', { class: 'gaveta' + abre, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Aviso ' + (l.protocolo || l.pedido) },
+        h('div', { class: 'gaveta-cab' }, h('div', null, h('p', { class: 'mudo peq', text: l.protocolo || 'Aviso' }), h('h3', { class: 'num', text: 'Pedido ' + l.pedido }), h('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' }, C.selo(C.TIPO_AVISO[l.tipo], 'normal', true), C.selo(C.STATUS_AVISO[l.status], l.status))), h('button', { class: 'btn peq fantasma', type: 'button', 'aria-label': 'Fechar', onclick: fecha }, ic('fechar'))),
+        h('div', { class: 'gaveta-corpo' },
+          l.foraDoSc9 ? h('div', { class: 'aviso' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar o SC9.')) : null,
+          h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['O que você informou', l.texto], ['Enviado em', C.dataHora(l.criadoEm)], ['Última atualização', C.dataHora(l.atualizadoEm)]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v || '—' })))),
+          l.resposta ? h('div', { class: 'ok', style: 'background:var(--azul-claro);border-color:var(--azul-borda);color:var(--azul-escuro)' }, ic('comentario'), h('div', null, h('b', { style: 'display:block', text: 'Resposta da expedição' }), l.resposta)) : null,
+          h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico do aviso' }, (l.historico || []).slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? C.STATUS_AVISO[x.status] || x.status : '' }), x.texto ? (x.status ? ' · ' : '') + x.texto : ''))))))];
+  }
+  const abasMinhas = () => h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'O que mostrar', style: 'align-self:flex-start' },
+    h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'prioridades'), onclick: () => { estado.sub = 'prioridades'; desenhar(); }, text: 'Prioridades' }), h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'avisos'), onclick: () => { estado.sub = 'avisos'; carregarAvisos(true); desenhar(); }, text: 'Avisos à expedição' }));
+  function corpoAvisos() {
+    const meus = (estado.avisos && estado.avisos.meus) || [], blocos = [];
+    if (estado.avisosErro) blocos.push(h('div', { class: 'erro' }, ic('alerta'), estado.avisosErro));
+    if (!estado.avisos && !estado.avisosErro) blocos.push(C.esqueleto(2));
+    else if (estado.avisos) blocos.push(h('section', { class: 'card', 'aria-label': 'Avisos à expedição' }, meus.length ? [meus.map(cartaoAviso), h('p', { class: 'dica', style: 'margin-top:12px', text: (estado.conta ? 'Avisos do seu login, em qualquer aparelho.' : 'Estes avisos são deste aparelho. Crie seu acesso para vê-los em qualquer aparelho.') + ' Atualiza sozinho a cada minuto.' })]
+      : [C.vazio('comentario', 'Nenhum aviso ainda', 'Quando você avisar a expedição sobre um pedido, ele aparece aqui com a resposta da equipe.'), h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn primario peq', type: 'button', onclick: () => irParaAviso('') }, ic('comentario'), 'Avisar a expedição'))]));
+    const aberto = estado.abertoAviso && meus.find((x) => x.id === estado.abertoAviso);
+    if (aberto) blocos.push(...gavetaAviso(aberto));
+    return blocos;
+  }
+
   /* ---------- minhas solicitações ---------- */
   async function carregarPrioridades(silencioso) {
     const antes = estado.atualizadoEm + '|' + (estado.conta && estado.conta.login);
@@ -333,6 +425,8 @@
   function telaMinhas() {
     const meus = (estado.prio && estado.prio.meus) || [];
     const blocos = [faixaProcesso('minhas', true), h('div', { class: 'card-titulo' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Minhas solicitações' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Só o que é seu: acompanhe a análise da logística sem precisar mandar mensagem.' })))];
+    blocos.push(abasMinhas());
+    if (estado.sub === 'avisos') return blocos.concat(corpoAvisos());
     if (estado.prioErro) blocos.push(h('div', { class: 'erro' }, ic('alerta'), estado.prioErro));
     if (!estado.prio && !estado.prioErro) blocos.push(C.esqueleto(2));
     else if (estado.prio) blocos.push(h('section', { class: 'card', 'aria-label': 'Minhas solicitações' }, meus.length ? [meus.map(cartaoSolicitacao), h('p', { class: 'dica', style: 'margin-top:12px', text: estado.conta ? 'Lista do seu login, em qualquer aparelho. Atualiza sozinha a cada minuto.' : 'Esta lista é deste aparelho. Crie seu acesso para vê-la em qualquer aparelho. Atualiza sozinha a cada minuto.' })] : C.vazio('caixaEntrada', 'Nenhuma solicitação ainda', 'Quando você pedir prioridade em um pedido, ele aparece aqui com o protocolo e o andamento.')));
@@ -342,21 +436,21 @@
   }
 
   /* ---------- tela ---------- */
-  const NAV = [['rastrear', 'busca', 'Acompanhar pedidos', 'Acompanhar'], ['prioridade', 'raio', 'Solicitar prioridade', 'Prioridade'], ['minhas', 'lista', 'Minhas solicitações', 'Minhas'], ['exportar', 'baixar', 'Exportar', 'Exportar']];
+  const NAV = [['rastrear', 'busca', 'Acompanhar pedidos', 'Acompanhar'], ['prioridade', 'raio', 'Solicitar prioridade', 'Prioridade'], ['avisar', 'comentario', 'Avisar a expedição', 'Avisar'], ['minhas', 'lista', 'Minhas solicitações', 'Minhas'], ['exportar', 'baixar', 'Exportar', 'Exportar']];
   function desenhar() {
     const foco = root.document.activeElement && root.document.activeElement.id ? root.document.activeElement.id : '';
     const y = root.scrollY;
     const topo = h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Acompanhamento de pedidos'),
-      chaveLink ? h('nav', { class: 'nav', 'aria-label': 'Principal' }, NAV.map(([id, i, nome, curto]) => h('button', { type: 'button', 'aria-label': nome, 'aria-current': estado.tela === id ? 'page' : null, onclick: () => { estado.tela = id; estado.aberta = null; if ((id === 'minhas' || id === 'exportar') && !estado.prio) carregarPrioridades(); desenhar(); root.scrollTo(0, 0); } }, ic(i), h('span', { class: 'longo', text: nome }), h('span', { class: 'curto', text: curto })))) : null,
+      chaveLink ? h('nav', { class: 'nav', 'aria-label': 'Principal' }, NAV.map(([id, i, nome, curto]) => h('button', { type: 'button', 'aria-label': nome, 'aria-current': estado.tela === id ? 'page' : null, onclick: () => { estado.tela = id; estado.aberta = null; if ((id === 'minhas' || id === 'exportar') && !estado.prio) carregarPrioridades(); if (id === 'minhas' || id === 'exportar') carregarAvisos(true); desenhar(); root.scrollTo(0, 0); } }, ic(i), h('span', { class: 'longo', text: nome }), h('span', { class: 'curto', text: curto })))) : null,
       chaveLink ? h('button', { class: 'btn peq conta-botao' + (estado.tela === 'conta' ? ' ativo' : ''), type: 'button', 'aria-label': estado.conta ? 'Seu acesso: ' + estado.conta.nome : 'Criar acesso ou entrar', onclick: () => { estado.tela = 'conta'; estado.aberta = null; desenhar(); root.scrollTo(0, 0); } }, ic(estado.conta ? 'usuarioCheck' : 'usuario'), h('span', { class: 'conta-nome', text: estado.conta ? estado.conta.nome.split(' ')[0] : 'Entrar' })) : null));
     let corpo;
     if (!chaveLink) corpo = [h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'Este link está incompleto. Peça o link das vendedoras ao administrador do SC9.')];
-    else corpo = estado.tela === 'prioridade' ? telaPrioridade() : estado.tela === 'minhas' ? telaMinhas() : estado.tela === 'exportar' ? telaExportar() : estado.tela === 'conta' ? telaConta() : telaRastrear();
+    else corpo = estado.tela === 'avisar' ? telaAvisar() : estado.tela === 'prioridade' ? telaPrioridade() : estado.tela === 'minhas' ? telaMinhas() : estado.tela === 'exportar' ? telaExportar() : estado.tela === 'conta' ? telaConta() : telaRastrear();
     const velha = chaveLink && estado.atualizadoEm && idadeBaseH() > LIMITE_BASE_VELHA_H;
     $raiz.replaceChildren(topo, h('main', { class: 'pagina estreita' + (estado.animada !== estado.tela ? ' anima' : '') },
       velha ? h('div', { class: 'aviso', role: 'status' }, ic('relogio'), 'A base do SC9 foi atualizada em ' + C.dataHora(estado.atualizadoEm) + ' (há ' + C.duracao(estado.atualizadoEm) + '). O andamento pode estar atrasado.') : null, ...corpo));
     estado.animada = estado.tela;
-    root.document.title = ({ prioridade: 'Solicitar prioridade', minhas: 'Minhas solicitações', exportar: 'Exportar', conta: 'Seu acesso' }[estado.tela] || 'Acompanhe seus pedidos') + ' · ' + C.NOME;
+    root.document.title = ({ prioridade: 'Solicitar prioridade', avisar: 'Avisar a expedição', minhas: 'Minhas solicitações', exportar: 'Exportar', conta: 'Seu acesso' }[estado.tela] || 'Acompanhe seus pedidos') + ' · ' + C.NOME;
     root.scrollTo(0, y);
     if (foco) { const e = root.document.getElementById(foco); if (e && e.focus) { e.focus({ preventScroll: true }); if (e.setSelectionRange && e.type === 'text') { try { e.setSelectionRange(e.value.length, e.value.length); } catch (x) { /* ok */ } } } }
   }
@@ -364,12 +458,13 @@
   root.setInterval(() => {
     if (root.document.hidden || !chaveLink || estado.f.enviando) return;
     if (estado.tela === 'rastrear' && estado.consulta && estado.consulta.achado && !estado.carregando) consultar(estado.consulta.pedido, true);
-    else if (estado.tela === 'minhas') carregarPrioridades(true);
+    else if (estado.tela === 'minhas') { carregarPrioridades(true); carregarAvisos(true); }
     else if (estado.tela === 'rastrear' && !estado.consulta && !estado.carregando) carregarPrioridades(true);
   }, 60000);
 
   const pedidoDaUrl = new URLSearchParams(root.location.search).get('pedido');
   desenhar();
   if (chaveLink && pedidoDaUrl) { estado.digitado = pedidoDaUrl; consultar(pedidoDaUrl); }
+  if (chaveLink && (lerLS(LS.avisos, []).length || estado.conta)) carregarAvisos(true);
   if (chaveLink) carregarPrioridades(true); // traz também a hora da última carga do SC9 e confere a sessão do acesso
 })(window);

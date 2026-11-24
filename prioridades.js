@@ -9,7 +9,8 @@
   const ACAO = { criado: 'Pedido criado', reforco: 'Pedido reforçado', status: 'Status', assumir: 'Assumiu', interno: 'Comentário interno' };
   const VAZIO = { nivel: '', status: '', vendedora: '', filial: '', de: '', ate: '', fora: '' };
   const ATIVOS = ['recebida', 'em_analise', 'aprovada', 'em_atendimento'];
-  const estado = { sessao: null, login: { usuario: '', senha: '', erro: '', entrando: false }, dados: null, erro: '', respostas: {}, internos: {}, filtro: Object.assign({}, VAZIO), aberta: null, gavAnim: null, salvando: '', vistos: null, novos: new Set(), link: null, linkErro: '', mostraLink: false, carregando: true, aba: 'fila', contas: null, contasErro: '', codigoTemp: null, consultas: null, filtroConta: '' };
+  const ATIVOS_AV = ['recebido', 'em_andamento'];
+  const estado = { sessao: null, login: { usuario: '', senha: '', erro: '', entrando: false }, dados: null, erro: '', respostas: {}, internos: {}, filtro: Object.assign({}, VAZIO), aberta: null, gavAnim: null, salvando: '', vistos: null, novos: new Set(), link: null, linkErro: '', mostraLink: false, carregando: true, aba: 'fila', avisos: null, avisosErro: '', avisoAberto: null, avisoResp: {}, avisoInt: {}, avisosVistos: null, avisosNovos: new Set(), contas: null, contasErro: '', codigoTemp: null, consultas: null, filtroConta: '' };
 
   async function pedir(url, opcoes) {
     const r = await root.fetch(url, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, opcoes, { headers: CAB }));
@@ -32,11 +33,22 @@
       if (estado.vistos) estado.novos = new Set([...ids].filter((i) => !estado.vistos.has(i)).concat([...estado.novos].filter((i) => ids.has(i))));
       estado.vistos = ids; estado.dados = j; estado.erro = '';
       const fora = j.ativos.filter((l) => l.situacao === null).length;
-      root.document.title = (fora ? '⚠ ' + fora + ' fora do SC9 · ' : '') + (j.ativos.length ? '(' + j.ativos.length + ') ' : '') + 'Painel da logística · ' + C.NOME;
+      await carregarAvisos();
+      const novosAv = estado.avisos ? estado.avisos.ativos.filter((l) => l.status === 'recebido').length : 0;
+      root.document.title = (novosAv ? '✉ ' + novosAv + ' aviso' + (novosAv > 1 ? 's' : '') + ' · ' : '') + (fora ? '⚠ ' + fora + ' fora do SC9 · ' : '') + (j.ativos.length ? '(' + j.ativos.length + ') ' : '') + 'Painel da logística · ' + C.NOME;
     } catch (e) { estado.erro = e.message; }
     estado.carregando = false;
     const ativo = root.document.activeElement;
     if (!silencioso || !ativo || ativo === root.document.body || !/^(TEXTAREA|INPUT|SELECT)$/.test(ativo.tagName)) desenhar();
+  }
+  // Avisos das vendedoras à expedição (ocorrência / informação sobre um pedido). Falha aqui não derruba a fila de prioridades.
+  async function carregarAvisos() {
+    try {
+      const j = await pedir('/api/avisos');
+      const ids = new Set(j.ativos.map((l) => l.id));
+      if (estado.avisosVistos) estado.avisosNovos = new Set([...ids].filter((i) => !estado.avisosVistos.has(i)).concat([...estado.avisosNovos].filter((i) => ids.has(i))));
+      estado.avisosVistos = ids; estado.avisos = j; estado.avisosErro = '';
+    } catch (e) { estado.avisosErro = e.message; }
   }
   async function carregarLink() {
     if (!estado.sessao || !estado.sessao.admin) return;
@@ -92,6 +104,24 @@
     if (status === 'nao_aprovada' && !resposta) { C.toast('Explique o motivo na resposta para a vendedora.', 'erro'); return; }
     if (await enviarAcao(l, { acao: 'status', status, resposta }, 'Status atualizado: ' + C.STATUS[status] + '. A vendedora já vê.')) delete estado.respostas[l.id];
   }
+  async function acaoAviso(l, corpo, aviso) {
+    estado.salvando = l.id; desenhar();
+    try {
+      estado.avisos = await pedir('/api/avisos', { method: 'POST', body: JSON.stringify(Object.assign({ id: l.id }, corpo)) });
+      estado.avisosVistos = new Set(estado.avisos.ativos.map((x) => x.id)); C.toast(aviso); estado.salvando = ''; desenhar(); return true;
+    } catch (e) { C.toast(e.message, 'erro'); }
+    estado.salvando = ''; desenhar(); return false;
+  }
+  async function responderAviso(l, status) {
+    const resposta = (estado.avisoResp[l.id] || '').trim();
+    if (status === 'resolvido' && !resposta && !l.resposta) { C.toast('Escreva a resposta para a vendedora antes de resolver.', 'erro'); return; }
+    if (await acaoAviso(l, { acao: 'status', status, resposta }, 'Aviso atualizado: ' + C.STATUS_AVISO[status] + '. A vendedora já vê.')) delete estado.avisoResp[l.id];
+  }
+  async function comentarAviso(l) {
+    const texto = (estado.avisoInt[l.id] || '').trim();
+    if (!texto) { C.toast('Escreva o comentário interno.', 'erro'); return; }
+    if (await acaoAviso(l, { acao: 'interno', texto }, 'Comentário interno salvo (a vendedora não vê).')) delete estado.avisoInt[l.id];
+  }
   const assumir = (l) => enviarAcao(l, { acao: 'assumir' }, 'Você assumiu este pedido de prioridade.');
   async function comentar(l) {
     const texto = (estado.internos[l.id] || '').trim();
@@ -144,6 +174,64 @@
       bloco('comentario', 'Histórico completo', 'Uma linha por acontecimento (criou, reforçou, assumiu, mudou o status, comentário interno). Serve para auditar quem fez o quê e quando. Contém os comentários internos: não compartilhe com as vendedoras.', 'Baixar histórico', exportarHistorico, ev));
   }
 
+  const todosAvisos = () => (estado.avisos ? estado.avisos.ativos.concat(estado.avisos.demais) : []);
+  function exportarAvisos() {
+    C.baixarCsv(C.nomeArquivo('avisos-das-vendedoras'), ['Protocolo', 'Pedido', 'Tipo', 'O que a vendedora informou', 'Vendedora', 'Login da vendedora', 'Filial', 'Enviado em', 'Atualizado em', 'Status', 'Responsável', 'Resposta para a vendedora', 'Está no SC9?', 'Histórico'],
+      todosAvisos().map((l) => [l.protocolo, l.pedido, C.TIPO_AVISO[l.tipo], l.texto, l.pedidoPor, l.conta || '', l.filial || (l.situacao && l.situacao.armazem) || '', C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), C.STATUS_AVISO[l.status], l.responsavel, l.resposta, l.situacao === null ? 'Não' : l.situacao ? 'Sim' : '',
+        (l.historico || []).map((x) => C.dataHoraCsv(x.em) + ' - ' + (x.acao === 'interno' ? 'Comentário interno' : x.acao === 'assumir' ? 'Assumiu' : x.acao === 'criar' ? 'Enviado' : 'Status ' + (C.STATUS_AVISO[x.status] || '')) + (x.por ? ' (' + x.por + ')' : '') + (x.texto ? ': ' + x.texto : '')).join(' | ')]));
+  }
+
+  /* ---------- avisos das vendedoras à expedição ---------- */
+  function telaAvisos() {
+    const a = estado.avisos, lista = todosAvisos();
+    const cab = h('div', { class: 'card-titulo' }, h('div', null, h('h2', { text: 'Avisos das vendedoras à expedição' }), h('p', { class: 'mudo peq', text: 'Informações e ocorrências que as vendedoras mandam pelo link (endereço, retirada, transportadora, cancelamento...). Assuma, responda (ela vê a resposta) e marque como resolvido. Não alteram as ocorrências oficiais do SC9: se for o caso, registre lá também.' })),
+      h('button', { class: 'btn peq primario', type: 'button', disabled: !lista.length, onclick: exportarAvisos }, ic('baixar'), 'Baixar avisos (CSV)'));
+    if (estado.avisosErro && !a) return h('section', { class: 'card' }, cab, h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.avisosErro));
+    if (!a) return h('section', { class: 'card' }, cab, C.esqueleto(2));
+    if (!lista.length) return h('section', { class: 'card' }, cab, C.vazio('caixaEntrada', 'Nenhum aviso por enquanto', 'Quando uma vendedora avisar a expedição sobre um pedido, ele aparece aqui.'));
+    return h('section', { class: 'card' }, cab, h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' },
+      h('thead', null, h('tr', null, ['Pedido', 'Vendedora', 'Tipo', 'Informação', 'Enviado', 'Status', 'Responsável'].map((t) => h('th', { scope: 'col', text: t })))),
+      h('tbody', null, lista.map((l) => h('tr', { class: 'linha' + (l.status === 'recebido' ? ' alta' : '') + (estado.avisoAberto === l.id ? ' sel' : '') + (estado.avisosNovos.has(l.id) ? ' novo-fio' : ''), tabindex: '0', role: 'button', 'aria-label': 'Abrir aviso do pedido ' + l.pedido,
+        onclick: () => { estado.avisoAberto = l.id; desenhar(); }, onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); estado.avisoAberto = l.id; desenhar(); } } },
+        h('td', null, h('span', { class: 'pedido', text: l.pedido }), h('span', { class: 'sub', text: l.protocolo || '' }), l.situacao === null && ATIVOS_AV.includes(l.status) ? C.selo('Fora do SC9', 'alta') : null),
+        h('td', null, l.pedidoPor || '—', l.conta ? h('span', { class: 'sub', text: 'login ' + l.conta }) : null), h('td', { text: C.TIPO_AVISO[l.tipo] || l.tipo }),
+        h('td', { style: 'max-width:340px', text: (l.texto || '').length > 110 ? l.texto.slice(0, 107) + '…' : l.texto }),
+        h('td', null, C.dataHora(l.criadoEm), h('span', { class: 'sub', text: 'há ' + C.duracao(l.criadoEm) })), h('td', null, C.selo(C.STATUS_AVISO[l.status], l.status)), h('td', { text: l.responsavel || '—', class: l.responsavel ? '' : 'mudo' })))))));
+  }
+  function gavetaAviso(l) {
+    const fecha = () => { estado.avisoAberto = null; estado.gavAnim = null; desenhar(); };
+    const ativo = ATIVOS_AV.includes(l.status), ocupado = estado.salvando === l.id, s = l.situacao;
+    const abre = estado.gavAnim !== l.id ? ' abre' : ''; estado.gavAnim = l.id;
+    const bt = (st, rotulo, cls) => h('button', { class: 'btn peq ' + (cls || ''), type: 'button', disabled: ocupado, onclick: () => responderAviso(l, st) }, rotulo);
+    return [h('div', { class: 'gaveta-fundo' + abre, onclick: fecha }),
+      h('aside', { class: 'gaveta' + abre, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Aviso do pedido ' + l.pedido },
+        h('div', { class: 'gaveta-cab' }, h('div', null, h('p', { class: 'mudo peq', text: l.protocolo || 'Aviso da vendedora' }), h('h3', { class: 'num', text: 'Pedido ' + l.pedido }), h('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' }, C.selo(C.TIPO_AVISO[l.tipo], 'normal', true), C.selo(C.STATUS_AVISO[l.status], l.status))),
+          h('button', { class: 'btn peq fantasma', type: 'button', 'aria-label': 'Fechar', onclick: fecha }, ic('fechar'))),
+        h('div', { class: 'gaveta-corpo' },
+          h('div', { class: 'cx-situacao', style: 'background:#fff7e6;color:#7a4a00' }, h('b', { style: 'display:block', text: 'A vendedora informou' }), l.texto),
+          h('div', null, h('p', { class: 'bloco-titulo', text: 'Situação do pedido agora' }), s ? h('div', { class: 'cx-situacao' }, h('b', { text: s.texto }), h('div', { class: 'mudo peq', style: 'margin-top:4px', text: [s.cliente, s.armazem].filter(Boolean).join(' · ') }))
+            : h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'Este pedido não está no SC9 carregado. ' }), 'Recarregue o SC9 ou confira o número com a vendedora.'))),
+          h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Enviado', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'Ninguém assumiu ainda']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
+          l.resposta ? h('div', { class: 'cx-situacao', style: 'background:var(--azul-claro);color:var(--azul-escuro)' }, h('b', { text: 'Última resposta para a vendedora: ' }), l.resposta) : null,
+          ativo ? h('div', { style: 'display:flex;flex-direction:column;gap:14px' },
+            h('button', { class: 'btn', type: 'button', disabled: ocupado, onclick: () => acaoAviso(l, { acao: 'assumir' }, 'Você assumiu este aviso.') }, ic('usuarioCheck'), l.responsavel ? 'Assumir para mim' : 'Assumir este aviso'),
+            h('div', null, h('label', { class: 'rotulo', for: 'ar-' + l.id, text: 'Resposta para a vendedora (ela vê)' }), h('textarea', { id: 'ar-' + l.id, class: 'entrada', maxlength: '300', placeholder: 'Ex.: endereço alterado, já avisei a transportadora', oninput: (ev) => { estado.avisoResp[l.id] = ev.target.value; } }, estado.avisoResp[l.id] || '')),
+            h('div', { class: 'botoes-status' }, l.status !== 'em_andamento' ? bt('em_andamento', 'Em andamento') : null, bt('resolvido', 'Marcar como resolvido', 'verde')),
+            h('div', null, h('label', { class: 'rotulo', for: 'ai-' + l.id, text: 'Comentário interno (só a equipe vê)' }), h('textarea', { id: 'ai-' + l.id, class: 'entrada', maxlength: '300', placeholder: 'Ex.: liguei para a transportadora', oninput: (ev) => { estado.avisoInt[l.id] = ev.target.value; } }, estado.avisoInt[l.id] || ''), h('button', { class: 'btn peq', style: 'margin-top:8px', type: 'button', disabled: ocupado, onclick: () => comentarAviso(l) }, 'Salvar comentário')))
+            : h('div', { class: 'aviso' }, ic('info'), 'Aviso resolvido. O histórico continua abaixo.'),
+          h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist' }, (l.historico || []).slice().reverse().map((x) => h('li', { class: x.acao === 'interno' ? 'interno' : '' },
+            h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.acao === 'interno' ? 'Comentário interno' : x.acao === 'assumir' ? 'Assumiu' : x.acao === 'criar' ? 'Aviso enviado' : 'Status: ' + (C.STATUS_AVISO[x.status] || x.status || '') }), x.por ? h('span', { class: 'mudo', text: ' · ' + x.por }) : null, x.texto ? h('span', { text: ' — ' + x.texto }) : null))))))];
+  }
+  // Alerta no topo: avisos novos (ainda "recebido") que ninguém tratou.
+  function faixaAvisos() {
+    const a = estado.avisos; if (!a) return null;
+    const novos = a.ativos.filter((l) => l.status === 'recebido');
+    if (!novos.length) return null;
+    return h('section', { class: 'alerta-sc9', role: 'alert' }, h('div', { class: 'bola' }, ic('comentario')), h('div', { class: 'meio' }, h('h2', { text: novos.length === 1 ? '1 aviso novo das vendedoras' : novos.length + ' avisos novos das vendedoras' }),
+      h('p', { text: 'Pedidos: ' + novos.slice(0, 8).map((l) => l.pedido + ' (' + (C.TIPO_AVISO[l.tipo] || '').split(' ').slice(0, 3).join(' ') + ')').join(', ') + (novos.length > 8 ? '…' : '') + '. Elas estão aguardando.' })),
+      h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.aba = 'avisos'; estado.aberta = null; desenhar(); } }, ic('lista'), 'Abrir avisos'));
+  }
+
   /* ---------- acessos das vendedoras (só administrador) ---------- */
   const consultasFiltradas = () => (estado.consultas || []).filter((x) => !estado.filtroConta || x.conta === estado.filtroConta);
   function exportarConsultas() {
@@ -171,7 +259,8 @@
             h('td', null, h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' }, h('button', { class: 'btn peq', type: 'button', onclick: () => acaoConta(c, 'redefinir') }, 'Redefinir código'), h('button', { class: 'btn peq' + (c.ativo ? ' perigo' : ''), type: 'button', onclick: () => acaoConta(c, c.ativo ? 'desativar' : 'ativar') }, c.ativo ? 'Desativar' : 'Ativar')))))))));
   }
   function abas() {
-    const lista = [['fila', 'lista', 'Solicitações'], ['exportar', 'baixar', 'Exportar']].concat(estado.sessao.admin ? [['acessos', 'usuarioCheck', 'Acessos das vendedoras']] : []);
+    const nAv = estado.avisos ? estado.avisos.ativos.filter((l) => l.status === 'recebido').length : 0;
+    const lista = [['fila', 'lista', 'Solicitações'], ['avisos', 'comentario', 'Avisos das vendedoras' + (nAv ? ' (' + nAv + ')' : '')], ['exportar', 'baixar', 'Exportar']].concat(estado.sessao.admin ? [['acessos', 'usuarioCheck', 'Acessos das vendedoras']] : []);
     return h('div', { class: 'cx-abas', role: 'group', 'aria-label': 'Seções do painel' }, lista.map(([id, i, nome]) => h('button', { type: 'button', 'aria-pressed': String(estado.aba === id), onclick: () => { estado.aba = id; estado.aberta = null; if (id === 'acessos' && !estado.contas) carregarContas(); desenhar(); } }, ic(i), nome)));
   }
 
@@ -286,21 +375,23 @@
         h('div', { class: 'card-titulo', style: 'margin:0' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Solicitações de prioridade' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Quem decide é a logística: analise, aprove e responda. Atualiza sozinho a cada 20 segundos.' })),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.carregando = true; carregar(); } }, ic('atualizar'), 'Atualizar agora')),
         faixaSc9(),
+        faixaAvisos(),
         abas(),
         estado.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro) : null,
         estado.mostraLink && estado.sessao.admin ? cartaoLink() : null,
-        estado.aba === 'exportar' ? (d ? telaExportar(linhas) : C.esqueleto(2)) : estado.aba === 'acessos' && estado.sessao.admin ? [telaAcessos(), cartaoConsultas()] : null,
+        estado.aba === 'avisos' ? telaAvisos() : estado.aba === 'exportar' ? (d ? telaExportar(linhas) : C.esqueleto(2)) : estado.aba === 'acessos' && estado.sessao.admin ? [telaAcessos(), cartaoConsultas()] : null,
         estado.aba !== 'fila' ? null : d ? indicadores() : C.esqueleto(2),
         estado.aba !== 'fila' ? null : d ? h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Solicitações' }), h('span', { class: 'mudo peq', text: linhas.length + (algumFiltro() ? ' de ' + todas().length : '') + (todas().length === 1 ? ' solicitação' : ' solicitações') })), barraFiltros(), h('div', { style: 'margin-top:14px' }, tabela(linhas))) : null);
     }
     const ab = logado && estado.dados && estado.aberta ? todas().find((x) => x.id === estado.aberta) : null;
-    $raiz.replaceChildren(topo, corpo, ...(ab ? gaveta(ab) : []));
+    const av = logado && estado.avisos && estado.avisoAberto ? todosAvisos().find((x) => x.id === estado.avisoAberto) : null;
+    $raiz.replaceChildren(topo, corpo, ...(ab ? gaveta(ab) : av ? gavetaAviso(av) : []));
     root.scrollTo(0, y);
     if (foco) { const e = root.document.getElementById(foco); if (e && e.focus) e.focus({ preventScroll: true }); }
   }
 
   root.setInterval(() => { if (!root.document.hidden) carregar(true); }, 20000);
   root.document.addEventListener('visibilitychange', () => { if (!root.document.hidden) carregar(true); });
-  root.document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && estado.aberta) { estado.aberta = null; estado.gavAnim = null; desenhar(); } });
+  root.document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && (estado.aberta || estado.avisoAberto)) { estado.aberta = null; estado.avisoAberto = null; estado.gavAnim = null; desenhar(); } });
   (async () => { await carregarSessao(); desenhar(); await carregar(); carregarLink(); })();
 })(window);

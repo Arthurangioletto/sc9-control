@@ -158,13 +158,23 @@ test('servidor: ocorrências exigem o acesso, começam com as 3 linhas da expedi
     const eva = (await call('/api/login', { usuario: 'eva', password: 'ficticio-123' })).cookie;
     const bia = (await call('/api/login', { usuario: 'bia', password: 'ficticio-123' })).cookie;
     assert.equal((await call('/api/ocorrencias')).status, 401);
-    // link sem senha do histórico (?k=): só LEITURA; registrar continua exigindo usuário e senha
+    // link sem senha do histórico (?k=): lê, registra e edita; apagar e importar continuam exigindo usuário e senha
     const k = (await call('/api/atraso-historico-link', { acao: 'gerar' }, admin)).data.token;
     assert.ok(k);
     assert.equal((await call('/api/ocorrencias?k=' + k)).status, 200, 'o link lê as ocorrências');
     assert.equal((await call('/api/ocorrencias?k=errado' + k)).status, 401, 'código errado não lê');
-    assert.equal((await call('/api/ocorrencias?k=' + k, { acao: 'salvar', linha: { nf: '885234', dataOcorrencia: '2026-11-24' } })).status, 401, 'o link não grava');
-    assert.equal((await call('/api/ocorrencias?k=' + k, { acao: 'importar', linhas: [{ nf: '1', dataOcorrencia: '2026-11-24' }] })).status, 401, 'o link não importa');
+    assert.equal((await call('/api/ocorrencias?k=errado' + k, { acao: 'salvar', linha: { nf: '700001', dataOcorrencia: '2026-11-24', detalhes: 'x' } })).status, 401, 'código errado não grava');
+    assert.equal((await call('/api/ocorrencias', { acao: 'salvar', linha: { nf: '700001', dataOcorrencia: '2026-11-24', detalhes: 'x' } })).status, 401, 'sem link e sem login não grava');
+    const viaLink = await call('/api/ocorrencias?k=' + k, { acao: 'salvar', linha: { nf: '700001', dataOcorrencia: '2026-11-24', detalhes: 'cliente pediu para segurar' } });
+    assert.equal(viaLink.status, 200, 'o link registra');
+    const criada = viaLink.data.linhas.find((l) => l.nf === '700001');
+    assert.equal(criada.criadoPor, 'Link do histórico', 'fica registrado que veio do link');
+    const editada = await call('/api/ocorrencias?k=' + k, { acao: 'salvar', linha: { id: criada.id, nf: '700001', dataOcorrencia: '2026-11-24', detalhes: 'cliente pediu para segurar', solucao: 'liberado', dataSolucao: '2026-11-25' } });
+    assert.equal(editada.status, 200, 'o link edita');
+    assert.equal(editada.data.linhas.find((l) => l.id === criada.id).solucao, 'liberado');
+    assert.equal((await call('/api/ocorrencias?k=' + k, { acao: 'remover', id: criada.id })).status, 403, 'o link não apaga');
+    assert.equal((await call('/api/ocorrencias?k=' + k, { acao: 'importar', linhas: [{ nf: '1', dataOcorrencia: '2026-11-24' }] })).status, 403, 'o link não importa');
+    assert.equal((await call('/api/ocorrencias', { acao: 'remover', id: criada.id }, admin)).status, 200, 'com login apaga (limpa o teste)');
     assert.equal((await call('/api/ocorrencias', null, bia)).status, 403, 'sem o acesso Ocorrências não entra');
     let r = await call('/api/ocorrencias', null, eva);
     assert.equal(r.status, 200);
