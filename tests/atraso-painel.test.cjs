@@ -214,3 +214,29 @@ test('arquivos do painel são servidos e carregados pela página', () => {
   assert.ok(pg.includes("get('painel') === '1'"));
   assert.ok(pg.includes('faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()'));
 });
+
+test('com o detalhe por armazém, despachados e faturados acompanham o filtro e a % de atraso por armazém aparece', () => {
+  const d = dados();
+  d.expedicao['2026-11']['2026-11-17'].por = { BH: { pedidos: 12, pecas: 100 }, Cambuci: { pedidos: 18, pecas: 200 } };
+  d.expedicao['2026-11']['2026-11-19'].por = { BH: { pedidos: 5, pecas: 40 } };
+  d.faturados['2026-11']['2026-11-19'].por = { BH: { pedidos: 4, pecas: 30 } };
+  d.meses['2026-11'].dias['2026-11-19'].totalPorArmazem = { BH: 20, Cambuci: 100, Barueri: 50 };
+  const p = H.preparar(d);
+  const c = P.cartoes(p, '2026-11-19', { arm: 'BH', transp: '' }, new Date());
+  const por = Object.fromEntries(c.cartoes.map((x) => [x.id, x]));
+  assert.equal(por.despachados.valor, 5);
+  assert.equal(por.despachados.ref, 12);           // dia anterior COM detalhe de BH (17/11)
+  assert.equal(por.despachados.refDia, '2026-11-17');
+  assert.equal(por.despachados.semFiltroArmazem, false);
+  assert.equal(por.faturados.valor, 4);
+  assert.equal(por.atraso.base, 20);
+  // armazém sem detalhe no dia continua mostrando o total e avisando
+  const c2 = P.cartoes(p, '2026-11-19', { arm: 'Barueri', transp: '' }, new Date());
+  const por2 = Object.fromEntries(c2.cartoes.map((x) => [x.id, x]));
+  assert.equal(por2.despachados.valor, 20);
+  assert.equal(por2.despachados.semFiltroArmazem, true);
+  const r = P.armazens(p, '2026-11-19', P.filtroVazio());
+  assert.equal(r.temBase, true);
+  assert.equal(r.lista.find((x) => x.nome === 'BH').pctBase, 10); // 2 em atraso de 20
+  assert.equal(P.armazens(H.preparar(dados()), '2026-11-19', P.filtroVazio()).temBase, false);
+});

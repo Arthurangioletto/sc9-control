@@ -316,9 +316,9 @@
       return h('div', null, arm.lista.map((a) => h('button', { type: 'button', class: 'pn-linha' + (S.arm === a.nome ? ' sel' : ''), onclick: () => mudar(() => { S.arm = S.arm === a.nome ? '' : a.nome; }), 'aria-pressed': S.arm === a.nome, 'aria-label': a.nome + ': ' + a.tot + ' pedidos em atraso, ' + a.cinco + ' com 5 dias ou mais. Clique para filtrar por este armazém.' },
         h('span', { class: 'nome' }, a.nome, h('small', { text: 'idade média ' + fmtN(a.idadeMedia) + ' d' })),
         h('div', { class: 'pn-trilho' }, h('span', { style: 'width:' + (a.e / max * 100).toFixed(1) + '%;background:' + COR.estoque }), h('span', { style: 'width:' + (a.f / max * 100).toFixed(1) + '%;background:' + COR.faturamento })),
-        h('span', { class: 'num' }, fmtI(a.tot) + ' · ' + fmtI(a.pecas) + ' peças · ' + a.cinco + ' c/ 5+ d'))),
+        h('span', { class: 'num' }, fmtI(a.tot) + (a.pctBase != null ? ' (' + fmtN(a.pctBase) + '% da base)' : '') + ' · ' + fmtI(a.pecas) + ' peças · ' + a.cinco + ' c/ 5+ d'))),
         h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), 'Estoque'), h('span', null, h('i', { style: 'background:' + COR.faturamento }), 'Faturamento'), null),
-        h('p', { class: 'pn-nota', text: 'Comparação em números absolutos: a base total de pedidos só existe para a empresa toda.' }));
+        h('p', { class: 'pn-nota', text: arm.temBase ? 'Percentual sobre os pedidos da base de cada armazém no dia.' : 'Comparação em números absolutos: a base de cada armazém só é gravada nas exportações novas.' }));
     };
     const tabela = () => (arm ? tabelaDe(['Armazém', 'Em atraso', 'Estoque', 'Faturamento', 'Peças', '5+ dias', 'Idade média (dias)'], arm.lista.map((a) => [a.nome, fmtI(a.tot), fmtI(a.e), fmtI(a.f), fmtI(a.pecas), fmtI(a.cinco), fmtN(a.idadeMedia)])) : h('p', { class: 'pn-vazio', text: 'Sem posição neste dia.' }));
     return blocoGrafico('armazens', 'Armazéns', 'Clique para filtrar o painel.', null, corpo, tabela, null, 'm6');

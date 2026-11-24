@@ -105,7 +105,29 @@ test('registroDoDia leva os despachados por dia da planilha de Entrega (pedido c
   assert.deepEqual(RG.despachadosPorDia(pedidos, null), {}, 'sem planilha de Entrega carregada');
   assert.deepEqual(RG.entreguesPorPedido(pedidos, entrega, new Date(2026, 10, 23)), { 9001: '2026-11-19', 9002: '2026-11-19', 9003: '2026-11-20' }, 'pedido -> dia do despacho; sem data fica de fora');
   assert.deepEqual(RG.entreguesPorPedido(pedidos, entrega, new Date(2027, 5, 1)), {}, 'despacho com mais de 120 dias não vai junto');
-  assert.deepEqual(RG.registroDoDia(pedidos, new Date(2026, 10, 20), '2026-11-20', null, entrega).despachados['2026-11-19'], { pedidos: 2, pecas: 19.5 });
+  const dia19 = RG.registroDoDia(pedidos, new Date(2026, 10, 20), '2026-11-20', null, entrega).despachados['2026-11-19'];
+  const { por, ...semPor } = dia19;
+  assert.deepEqual(semPor, { pedidos: 2, pecas: 19.5 });
+  // campo novo e opcional: o mesmo dia aberto por armazém (um pedido em 2 armazéns conta em cada um)
+  assert.deepEqual(por, { Cambuci: { pedidos: 1, pecas: 10 }, BH: { pedidos: 2, pecas: 9.5 } });
+});
+
+test('registroDoDia leva o total de pedidos da base por armazém e o faturamento por armazém; o servidor guarda só o que é válido', () => {
+  const RG = require('../relatorio-geral-xlsx.js'), AH = require('../atraso-historico.js');
+  const pedidos = [
+    { pedido: '1', armazem: 'Cambuci', qt: 2, nf: '10' }, { pedido: '2', armazem: 'Cambuci', qt: 3 }, { pedido: '3', armazem: 'Tambore', qt: 1, nf: '11' },
+    { pedido: '4', armazem: 'BH', qt: 5, status: 'Atrasado', separador: 'Ana', conferente: 'Rui' }
+  ];
+  const fat = new Map([['10', new Date(2026, 10, 20, 9)], ['11', new Date(2026, 10, 20, 10)]]);
+  const reg = RG.registroDoDia(pedidos, new Date(2026, 10, 20), '2026-11-20', null, null, { faturamento: fat });
+  assert.deepEqual(reg.totalPorArmazem, { Cambuci: 2, 'Tamboré': 1, BH: 1 });
+  assert.deepEqual(reg.faturados['2026-11-20'].por, { Cambuci: { pedidos: 1, pecas: 2 }, 'Tamboré': { pedidos: 1, pecas: 1 } });
+  const limpo = AH.normalizarRegistro(Object.assign({}, reg, { totalPorArmazem: Object.assign({}, reg.totalPorArmazem, { lixo: 'x', zero: 0 }) }));
+  assert.deepEqual(limpo.totalPorArmazem, { Cambuci: 2, 'Tamboré': 1, BH: 1 });
+  assert.equal(AH.normalizarRegistro(Object.assign({}, reg, { totalPorArmazem: undefined })).totalPorArmazem, undefined, 'registro antigo continua igual');
+  const desp = AH.normalizarDespachados({ '2026-11-20': { pedidos: 3, pecas: 9, por: { Cambuci: { pedidos: 2, pecas: 6 }, ruim: 'x', BH: { pedidos: 0 } } }, '2026-11-19': { pedidos: 1, pecas: 2 } });
+  assert.deepEqual(desp['2026-11-20'].por, { Cambuci: { pedidos: 2, pecas: 6 } });
+  assert.equal(desp['2026-11-19'].por, undefined);
 });
 
 test('o servidor guarda os despachados que chegam com a foto e só deixa o dia crescer', async () => {
