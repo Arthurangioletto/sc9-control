@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Prioridades das vendedoras · SC9</title>
+<style>
+  :root { --ink:#14233d; --mute:#526079; --line:#dde4ef; --soft:#f3f6fb; --accent:#123b7a; --red:#c63828; --green:#1f8a4c; --amber:#8a5a00; --bg:#eef2f8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  p { margin:0; } .mudo { color:var(--mute); } .peq { font-size:13px; }
+  #app { max-width:960px; margin:0 auto; padding:16px 14px 60px; display:flex; flex-direction:column; gap:14px; }
+  .sobre { font-size:12px; font-weight:800; letter-spacing:.08em; color:var(--accent); text-transform:uppercase; } h1 { margin:2px 0 4px; font-size:26px; } h2 { margin:0; font-size:17px; } h3 { margin:0; font-size:15px; }
+  .cartao { background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .topo { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap; }
+  label { display:block; font-size:12px; font-weight:700; color:var(--mute); margin:0 0 3px; }
+  input,textarea,select { width:100%; font:inherit; color:var(--ink); background:#fff; border:1px solid #c5cfe0; border-radius:9px; padding:9px 10px; } textarea { min-height:64px; resize:vertical; }
+  :focus-visible { outline:3px solid #7aa2e3; outline-offset:2px; }
+  .btn { padding:9px 14px; font:inherit; font-weight:800; border-radius:9px; border:1px solid var(--line); background:#fff; color:var(--accent); cursor:pointer; } .btn.primario { background:var(--accent); border-color:var(--accent); color:#fff; } .btn:disabled { opacity:.55; cursor:default; }
+  .btn.peq { padding:5px 10px; font-size:12.5px; }
+  .tag { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:800; }
+  .tag.urgente { background:#fde4e0; color:#a62a1c; } .tag.media { background:#e8f1fb; color:#245a99; } .tag.alta { background:#fff1d6; color:var(--amber); } .tag.normal { background:#eceff4; color:var(--mute); }
+  .tag.recebida { background:#e3edff; color:var(--accent); } .tag.em_analise { background:#fff1d6; color:var(--amber); } .tag.aprovada { background:#e0f0fb; color:#0b5a8a; } .tag.em_atendimento { background:#ede6fb; color:#4b2a9a; } .tag.concluida { background:#e2f3e8; color:#14693a; } .tag.nao_aprovada { background:#fde4e0; color:#a62a1c; }
+  .pedido { display:flex; flex-direction:column; gap:8px; padding:14px 0; border-bottom:1px solid var(--line); } .pedido:last-child { border-bottom:0; padding-bottom:0; }
+  .l1 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .l1 b { font-size:17px; }
+  .sit { background:var(--soft); border-radius:10px; padding:8px 10px; font-size:14px; }
+  .resp { padding:8px 10px; background:var(--soft); border-left:3px solid var(--accent); border-radius:6px; font-size:14px; }
+  .acoes { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; } .acoes .campo { flex:1 1 260px; }
+  .erro { padding:10px 12px; border-radius:10px; background:#fde4e0; border:1px solid #f0b5ad; color:#a62a1c; font-weight:700; } .ok { padding:10px 12px; border-radius:10px; background:#e2f3e8; border:1px solid #9bd0b0; color:#14693a; font-weight:700; }
+  .novo { box-shadow:0 0 0 3px #7aa2e3; border-radius:10px; }
+  .link-vend { display:flex; gap:8px; flex-wrap:wrap; align-items:center; } .link-vend input { flex:1 1 320px; font-size:13px; }
+  form.login { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; } form.login > div { flex:1 1 200px; }
+  .grade-filtros { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px; }
+  .botoes { display:flex; gap:6px; flex-wrap:wrap; flex:1 1 100%; }
+  .pedido.urg { border-left:4px solid var(--red); padding-left:10px; }
+  details.hist-det { font-size:13px; } details.hist-det summary { cursor:pointer; color:var(--accent); font-weight:700; }
+  ol.hist { list-style:none; margin:6px 0 0; padding:0 0 0 2px; border-left:2px solid var(--line); } ol.hist li { padding:0 0 6px 10px; color:var(--mute); } ol.hist li.interno { color:#6b4600; background:#fff9ec; } ol.hist .hora { font-weight:800; color:var(--ink); }
+  .acoes .campo { flex:1 1 100%; }
+</style>
+</head>
+<body>
+<main id="app"><p class="mudo">Carregando…</p></main>
+<script src="/prioridades.js"></script>
+</body>
+</html>

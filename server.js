@@ -407,6 +407,10 @@ SERVABLE.add("atraso-historico-ui.js");
 SERVABLE.add("pedidos-fixados.js");
 SERVABLE.add("ocorrencias.js");
 SERVABLE.add("ocorrencias-ui.js");
+SERVABLE.add("vendedoras.html");
+SERVABLE.add("vendedoras.js");
+SERVABLE.add("prioridades.html");
+SERVABLE.add("prioridades.js");
 SERVABLE.add("historico-atraso.html");
 SERVABLE.add("historico-atraso.js");
 SERVABLE.add("vendor-exceljs.js");
@@ -425,6 +429,11 @@ function serveStatic(req, res, urlPath) {
   carregarEstatico(name, (err, e) => {
     if (err) { res.writeHead(404); return res.end("não encontrado"); }
     const cabecalhos = { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache", "ETag": e.etag, "Vary": "Accept-Encoding" };
+    if (name === "vendedoras.html" || name === "prioridades.html") {
+      // páginas sem React e sem scripts de terceiros: só o próprio servidor
+      cabecalhos["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+      cabecalhos["Referrer-Policy"] = "no-referrer"; cabecalhos["X-Content-Type-Options"] = "nosniff"; cabecalhos["X-Robots-Tag"] = "noindex, nofollow";
+    }
     if (name === "conferencia-de-lotes.html" || name === "transferencia-de-lotes.html") {
       cabecalhos["Content-Security-Policy"] = "sandbox allow-scripts allow-downloads allow-forms; form-action 'none'; frame-ancestors 'self'; default-src 'none'; script-src 'unsafe-inline' 'self' https://cdn.sheetjs.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com";
     }
@@ -1196,6 +1205,16 @@ const CAMPOS_IDENTIDADE = ["criadoPorUsuario", "criadoPorNome", "criadoEm", "con
 const RATE_LIMIT_JANELA_MS = 60 * 1000;
 const RATE_LIMIT_MAX = 240; // por IP, por minuto — ampla margem pra várias pessoas atrás do mesmo IP
 const rateLimitPorIp = new Map();
+// Limites mais duros para a área das vendedoras (link com código, sem login): por IP e no total. Devolve true se passou do limite.
+const limitesVendedoras = new Map();
+let ultimoFechamentoPrioridades = 0; // última vez que concluímos sozinhos os pedidos de prioridade já despachados (no máx. 1x por minuto)
+function limiteVendedoras(chave, max, janelaMs) {
+  const agora = Date.now(), reg = limitesVendedoras.get(chave);
+  if (!reg || agora - reg.inicio > janelaMs) { limitesVendedoras.set(chave, { inicio: agora, n: 1, janelaMs }); return false; }
+  reg.n++;
+  return reg.n > max;
+}
+setInterval(() => { const agora = Date.now(); for (const [k, r] of limitesVendedoras) if (agora - r.inicio > r.janelaMs * 2) limitesVendedoras.delete(k); }, 5 * 60 * 1000).unref();
 function rateLimitExcedido(ip) {
   const agora = Date.now();
   const reg = rateLimitPorIp.get(ip);
@@ -1706,6 +1725,163 @@ async function handleApi(req, res, pathname) {
         if (Object.keys(fat).length) novo.faturados = fat;
         await objSave(nome, novo);
       });
+    }
+  }
+
+  // ---------- Área das vendedoras: rastreio do pedido + pedidos de prioridade (link à parte: /vendedoras.html?k=CÓDIGO) ----------
+  // O código é só das vendedoras (arquivo próprio, vendedoras-link.json): o link do histórico de atraso não abre isto, nem o contrário.
+  // Só devolve o que a vendedora pode ver (sem valor, sem nomes de separador/conferente, sem itens) e tem limites duros por IP.
+  async function linkVendedorasValido(req) {
+    const k = String(new URL(req.url, "http://x").searchParams.get("k") || "");
+    if (!k) return false;
+    const dado = await objLoad("vendedoras-link.json", { fresh: true }).catch(() => null);
+    return Boolean(dado && dado.token && k.length === String(dado.token).length && timingSafeEqualStr(k, String(dado.token)));
+  }
+  const prioridadesLinhas = async () => require("./prioridades-store.js").normalizarLista(await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null));
+  // Pedido de prioridade de um pedido que já foi despachado não faz mais sentido: conclui sozinho (no máximo 1x por minuto).
+  const fecharPrioridadesDespachadas = async () => {
+    if (Date.now() - ultimoFechamentoPrioridades < 60000) return;
+    ultimoFechamentoPrioridades = Date.now();
+    try {
+      const P = require("./prioridades-store.js");
+      const ativos = (await prioridadesLinhas()).filter((l) => P.ATIVOS.includes(l.status));
+      if (!ativos.length) return;
+      const Rastreio = require("./rastreio.js");
+      const snap = await loadSnapshot().catch(() => null);
+      const saidas = await saidasDosPedidos({ p: { dias: { hoje: { itens: ativos.map((l) => [l.pedido]) } } } }).catch(() => ({}));
+      const despachados = new Set(ativos.filter((l) => { const r = Rastreio.montarRastreio(snap, l.pedido, { saidaIso: saidas[l.pedido] || "", ocorrencias: [], agora: new Date() }); return r.achado && r.resumo.nivel === "concluido"; }).map((l) => l.pedido));
+      if (!despachados.size) return;
+      await comFila("prioridades-vendedoras", async () => {
+        const atual = await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null);
+        const feito = P.fecharDespachados(P.normalizarLista(atual), despachados, Date.now());
+        if (feito.mudou) await objSave("prioridades-vendedoras.json", { linhas: feito.linhas });
+      });
+    } catch (e) { console.error("Erro ao concluir prioridades despachadas:", e); }
+  };
+  const rastrearPedido = async (pedidoDigitado, linhasOcorrencias) => {
+    const Rastreio = require("./rastreio.js");
+    const snap = await loadSnapshot().catch(() => null);
+    const pedido = Rastreio.normalizarPedido(pedidoDigitado);
+    let nomeTransp = null;
+    try { nomeTransp = require("./consolidado.js").nomeTransportadora; } catch (e) { nomeTransp = null; }
+    const saidas = pedido ? await saidasDosPedidos({ r: { dias: { hoje: { itens: [[pedido]] } } } }).catch(() => ({})) : {};
+    return Rastreio.montarRastreio(snap, pedido, { saidaIso: saidas[pedido] || "", ocorrencias: linhasOcorrencias || [], agora: new Date(), nomeTransportadora: nomeTransp });
+  };
+
+  if (pathname.startsWith("/api/vendedoras/")) {
+    const ip = ipDe(req);
+    if (bloqueado("vend|" + ip)) return sendJson(res, 429, { error: "Muitas tentativas com código errado. Aguarde alguns minutos." });
+    if (!(await linkVendedorasValido(req))) {
+      registraFalha("vend|" + ip);
+      return sendJson(res, 401, { error: "Este link não vale mais. Peça um link novo ao administrador do SC9." });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    const consulta = new URL(req.url, "http://x").searchParams;
+    try {
+      if (pathname === "/api/vendedoras/pedido" && method === "GET") {
+        if (limiteVendedoras("vc|" + ip, 40, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
+        const Rastreio = require("./rastreio.js");
+        if (!Rastreio.normalizarPedido(consulta.get("pedido"))) return sendJson(res, 400, { error: "Digite o número do pedido (só números)." });
+        const r = await rastrearPedido(consulta.get("pedido"), await ocorrenciasLinhas().catch(() => []));
+        if (!r.achado && limiteVendedoras("vn|" + ip, 15, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas sem resultado. Confira os números e tente de novo em alguns minutos." });
+        return sendJson(res, 200, r);
+      }
+      if (pathname === "/api/vendedoras/prioridades" && method === "GET") {
+        if (limiteVendedoras("vc|" + ip, 40, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
+        const P = require("./prioridades-store.js");
+        await fecharPrioridadesDespachadas();
+        const linhas = await prioridadesLinhas();
+        const meus = new Set(String(consulta.get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 100));
+        return sendJson(res, 200, {
+          meus: linhas.filter((l) => meus.has(l.id)).map(P.visaoMeu),
+          fila: P.ordenarFila(linhas.filter((l) => P.ATIVOS.includes(l.status))).slice(0, 200).map(P.visaoFila),
+          agora: new Date().toISOString()
+        });
+      }
+      if (pathname === "/api/vendedoras/prioridade" && method === "POST") {
+        if (limiteVendedoras("vp|" + ip, 5, 10 * 60 * 1000) || limiteVendedoras("vp-total", 60, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitos pedidos de prioridade em pouco tempo. Aguarde alguns minutos ou fale com a expedição." });
+        let corpo;
+        try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const P = require("./prioridades-store.js");
+        const pedido = P.numeroDoPedido(corpo && corpo.pedido);
+        if (!pedido) return sendJson(res, 400, { error: "Número do pedido inválido (só números, de 4 a 10 dígitos)." });
+        const r = await rastrearPedido(pedido, []);
+        if (r.achado && r.resumo.nivel === "concluido") return sendJson(res, 400, { error: "Este pedido já foi despachado. " + r.resumo.texto });
+        let resultado, linhas;
+        await comFila("prioridades-vendedoras", async () => {
+          const atual = await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null);
+          const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: corpo.pedidoPor, motivo: corpo.motivo, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, corpo && corpo.pedidoPor, Date.now());
+          if (feito.erro) { resultado = { erro: feito.erro }; return; }
+          resultado = feito.resultado; linhas = feito.linhas;
+          await objSave("prioridades-vendedoras.json", { linhas });
+        });
+        if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
+        const linha = linhas.find((l) => l.id === resultado.id);
+        return sendJson(res, 200, { ok: true, duplicado: resultado.duplicado, naoAchado: !r.achado, linha: P.visaoMeu(linha) });
+      }
+      return sendJson(res, 404, { error: "não encontrado" });
+    } catch (e) {
+      console.error("Erro na área das vendedoras:", e);
+      return sendJson(res, 500, erroPublico(e, "erro na área das vendedoras"));
+    }
+  }
+
+  // Administrador: ver / gerar / desativar o link das vendedoras.
+  if (pathname === "/api/vendedoras-link" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      if (method === "GET") {
+        const dado = await objLoad("vendedoras-link.json", { fresh: true }).catch(() => null);
+        return sendJson(res, 200, { token: (dado && dado.token) || null, criadoEm: (dado && dado.criadoEm) || null });
+      }
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      const acao = corpo && corpo.acao;
+      if (acao !== "gerar" && acao !== "desativar") return sendJson(res, 400, { error: "ação inválida" });
+      const novo = acao === "gerar" ? { token: crypto.randomBytes(24).toString("base64url"), criadoEm: new Date().toISOString(), criadoPor: sess.usuario } : { token: null, criadoEm: null, desativadoEm: new Date().toISOString(), desativadoPor: sess.usuario };
+      await comFila("vendedoras-link", async () => { await objSave("vendedoras-link.json", novo); });
+      return sendJson(res, 200, { token: novo.token, criadoEm: novo.criadoEm });
+    } catch (e) {
+      console.error("Erro no link das vendedoras:", e);
+      return sendJson(res, 500, erroPublico(e, "erro no link das vendedoras"));
+    }
+  }
+
+  // Equipe (logada, perfil "ocorrencias" ou administrador): vê os pedidos de prioridade das vendedoras, com a situação atual do pedido, e responde.
+  if (pathname === "/api/prioridades" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    const P = require("./prioridades-store.js");
+    try {
+      const responder = async (linhas) => {
+        const Rastreio = require("./rastreio.js");
+        const snap = await loadSnapshot().catch(() => null);
+        let nomeTransp = null;
+        try { nomeTransp = require("./consolidado.js").nomeTransportadora; } catch (e) { nomeTransp = null; }
+        const ativos = P.ordenarFila(linhas.filter((l) => P.ATIVOS.includes(l.status)));
+        const demais = linhas.filter((l) => !P.ATIVOS.includes(l.status)).sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 300);
+        const saidas = await saidasDosPedidos({ p: { dias: { hoje: { itens: ativos.map((l) => [l.pedido]) } } } }).catch(() => ({}));
+        const ocs = await ocorrenciasLinhas().catch(() => []);
+        const situacao = (l) => { const r = Rastreio.montarRastreio(snap, l.pedido, { saidaIso: saidas[l.pedido] || "", ocorrencias: ocs, agora: new Date(), nomeTransportadora: nomeTransp }); return r.achado ? { texto: r.resumo.texto, nivel: r.resumo.nivel, cliente: r.detalhes.cliente, armazem: r.detalhes.armazem, transportadora: r.detalhes.transportadora, dias: r.detalhes.diasDesdeLiberacao, ocorrencia: r.ocorrencia ? r.ocorrencia.status : "" } : null; };
+        return sendJson(res, 200, { ativos: ativos.map((l) => Object.assign({}, l, { situacao: situacao(l) })), demais, agora: new Date().toISOString() });
+      };
+      if (method === "GET") { await fecharPrioridadesDespachadas(); return responder(await prioridadesLinhas()); }
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      let resultado, linhas;
+      await comFila("prioridades-vendedoras", async () => {
+        const atual = await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null);
+        const feito = P.aplicar(P.normalizarLista(atual), Object.assign({}, corpo, { acao: ["status", "assumir", "interno"].includes(corpo && corpo.acao) ? corpo.acao : "status" }), sess.usuario, Date.now());
+        if (feito.erro) { resultado = { erro: feito.erro }; return; }
+        linhas = feito.linhas; resultado = feito.resultado;
+        await objSave("prioridades-vendedoras.json", { linhas });
+      });
+      if (resultado.erro) return sendJson(res, resultado.erro.includes("não encontrado") ? 404 : 400, { error: resultado.erro });
+      return responder(linhas);
+    } catch (e) {
+      console.error("Erro nas prioridades das vendedoras:", e);
+      return sendJson(res, 500, erroPublico(e, "erro nas prioridades"));
     }
   }
 

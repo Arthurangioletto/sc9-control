@@ -346,6 +346,24 @@ Cada pedido em atraso gravado na exportação leva também (campo extra da linha
 
 **Excel de atrasados autoexplicativo.** O Excel passa a usar as mesmas regras da página (reclassificação pela Saída p/ Expedição, status do pedido, ocorrências da expedição pela nota fiscal): nova aba **Como ler** (glossário, colunas e cores), bloco **O que fazer agora** na aba do dia mais recente e três colunas por pedido — Status do pedido, Ocorrência (situação atual) e O que fazer (traço nos dias antigos). Ao baixar, o botão lê o histórico completo do servidor (`/api/atraso-historico`); se a leitura falhar, gera o Excel básico como antes.
 
+## Central das vendedoras: rastreio do pedido e pedido de prioridade (link à parte)
+
+Uma área separada do SC9, para as vendedoras acompanharem os pedidos sem perguntar à expedição e pedirem prioridade. Dados vêm da mesma carga do SC9 que a equipe já faz (2 a 3 vezes por dia); não há conexão direta com o Protheus e nada é gravado nele.
+
+**Para as vendedoras** (`/vendedoras.html?k=CÓDIGO`, sem senha, funciona bem no celular). Três abas:
+- **Rastrear pedido:** digita o número (ou vários) e vê o andamento em linha do tempo, como nos Correios: etapas, data e hora, em que etapa está e há quanto tempo, nota fiscal, transportadora, peças, ocorrência da expedição. "Copiar status" para colar no WhatsApp. Mostra sempre o horário da última carga e avisa se faz mais de 10 horas.
+- **Pedir prioridade:** número do pedido, nível (Normal, Média, Alta, Urgente), motivo (lista) e observação. Antes de enviar ela vê os dados do pedido e confirma; recebe um protocolo (`PRI-AAAAMMDD-NNN`). Em "Meus pedidos de prioridade" acompanha status, resposta da equipe e histórico com data e hora.
+- **Prioridades em andamento:** fila geral só com número, nível e status.
+
+Nunca aparecem para a vendedora: valores, nomes de separador e conferente, itens e lotes, nomes da equipe, comentários internos.
+
+**Para a logística** (`/prioridades.html`, com usuário e senha; administrador ou perfil "Ocorr."): lista com protocolo, vendedora, data e hora, nível, motivo, observação, situação atual do pedido, tempo desde o pedido e responsável. Filtros por prioridade, status, vendedora, filial e data. Ações: assumir (registra quem), mudar o status (Recebida, Em análise, Aprovada, Em atendimento, Concluída, Não aprovada, a última exige explicação), responder à vendedora, comentário interno e histórico completo de alterações. Urgentes ficam em destaque. Prioridade só diz que a equipe vai analisar: não passa o pedido na frente sozinha.
+
+- **Link:** o administrador gera, copia, troca ou desativa em `/prioridades.html` ("Link das vendedoras"). Trocar derruba o antigo. O código é só desta área (arquivo `vendedoras-link.json`): o link do histórico de atraso não abre isto, nem o contrário.
+- **Regras:** pedido já despachado não aceita pedido de prioridade e o que estava aberto é concluído sozinho quando o pedido é despachado; pedir de novo um pedido já na fila reforça o existente (só sobe o nível); máximo de 10 pedidos por vendedora (nome) em 24 h.
+- **Proteções:** limites por IP (consultas, buscas sem resultado, envios e total por hora), bloqueio após códigos errados, mesma resposta para pedido inexistente ou ainda não liberado, cabeçalhos de segurança (CSP, sem referrer, sem indexação) e tudo mostrado como texto.
+- **Arquivos:** `rastreio.js` (monta as etapas só com o que a vendedora pode ver), `prioridades-store.js` (regras e histórico; dados em `prioridades-vendedoras.json`), `vendedoras.html/.js` e `prioridades.html/.js`; rotas `/api/vendedoras/*` (público com código), `/api/vendedoras-link` (administrador) e `/api/prioridades` (equipe). Testes em `tests/vendedoras-rastreio.test.cjs`.
+
 ## Transferência (aba por perfil)
 
 Cópia do fluxo do Retem 26 (`transferencia-de-lotes.html`, `operation-transferencia.js`, `transferencia-inventory.js`), liberada por usuário no perfil `transferencia` (admin sempre vê). Diferenças em relação ao Retem:
