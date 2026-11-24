@@ -29,13 +29,13 @@
     return j;
   }
 
-  const VAZIO = { id: '', nf: '', dataOcorrencia: '', detalhes: '', responsavel: '', solucao: '', dataSolucao: '' };
+  const VAZIO = { id: '', nf: '', pedido: '', dataOcorrencia: '', detalhes: '', responsavel: '', solucao: '', dataSolucao: '' };
 
   function csv(itens) {
     const aspas = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-    const cab = ['Nº da Nota Fiscal', 'Data da Ocorrência', 'Detalhes da Ocorrência', 'Responsável', 'Solução da Ocorrência', 'Data da Solução', 'Pedido', 'Cliente', 'Armazém', 'Situação do pedido', 'Status', 'Dias', 'O que fazer'];
-    const linhas = itens.map(({ oc, info, av }) => [oc.nf, O.mostrarData(oc.dataOcorrencia), oc.detalhes, oc.responsavel, oc.solucao, O.mostrarData(oc.dataSolucao),
-      info ? info.pedido : '', info ? info.nome : '', info ? info.armazem : '', av.pedido.texto, av.status, av.dias, av.acao].map(aspas).join(';'));
+    const cab = ['Nº da Nota Fiscal', 'Pedido informado', 'Data da Ocorrência', 'Detalhes da Ocorrência', 'Responsável', 'Solução da Ocorrência', 'Data da Solução', 'Pedido', 'Cliente', 'Armazém', 'Situação do pedido', 'Status', 'Dias', 'O que fazer'];
+    const linhas = itens.map(({ oc, info, av }) => [oc.nf, oc.pedido || '', O.mostrarData(oc.dataOcorrencia), oc.detalhes, oc.responsavel, oc.solucao, O.mostrarData(oc.dataSolucao),
+      info ? info.pedido : (oc.pedido || ''), info ? info.nome : '', info ? info.armazem : '', av.pedido.texto, av.status, av.dias, av.acao].map(aspas).join(';'));
     return '﻿' + [cab.map(aspas).join(';')].concat(linhas).join('\r\n');
   }
 
@@ -54,6 +54,18 @@
       } catch (e) { setSessao({ pode: false, authed: false }); }
     }, []);
     useEffect(() => { verSessao(); }, [verSessao]);
+    // botão "Justificar atraso" da lista de pedidos atrasados: abre o quadro já com o pedido (e a nota, se tiver) e a data de hoje
+    useEffect(() => {
+      const ao = (ev) => {
+        const d = (ev && ev.detail) || {};
+        setRascunho(Object.assign({}, VAZIO, { nf: d.nf || '', pedido: d.pedido || '', dataOcorrencia: O.mostrarData(O.hojeSP(new Date())) }));
+        setErro(''); setColar(null);
+        setAviso('Justificando o atraso do pedido ' + (d.pedido || '') + (d.cliente ? ' · ' + d.cliente : '') + '. Escreva o motivo em "Detalhes da Ocorrência" e quem resolve. Para registrar, entre com usuário e senha se ainda não entrou.');
+        setTimeout(() => { const e = root.document && root.document.getElementById('oc-detalhes'); if (e) e.focus({ preventScroll: true }); }, 80);
+      };
+      root.addEventListener('sc9-ocorrencia-nova', ao);
+      return () => root.removeEventListener('sc9-ocorrencia-nova', ao);
+    }, []);
     const pode = !embedded || Boolean(sessao && sessao.pode);
     const avisarPagina = () => { try { root.dispatchEvent(new root.Event('sc9-ocorrencias')); } catch (e) { /* sem página para avisar */ } };
     async function entrar() {
@@ -95,7 +107,7 @@
     const itens = useMemo(() => {
       if (!dados) return [];
       const lista = (dados.linhas || []).map((oc) => {
-        const info = (dados.notas || {})[oc.nf];
+        const info = (oc.nf && (dados.notas || {})[oc.nf]) || (oc.pedido && (dados.pedidos || {})[oc.pedido]) || undefined;
         const saida = info ? ((dados.saidas || {})[normPedido(info.pedido)] || '') : '';
         return { oc, info, av: O.avaliar(oc, info, saida, new Date(agora)) };
       });
@@ -111,7 +123,7 @@
         if (filtro === 'resolvidas' && av.situacao !== 'resolvida') return false;
         if (filtro === 'precisa' && !(av.nivel === 'urgente' || av.nivel === 'atencao')) return false;
         if (!q) return true;
-        return [oc.nf, oc.detalhes, oc.responsavel, oc.solucao, info && info.pedido, info && info.nome].join(' ').toLowerCase().includes(q);
+        return [oc.nf, oc.pedido, oc.detalhes, oc.responsavel, oc.solucao, info && info.pedido, info && info.nome].join(' ').toLowerCase().includes(q);
       });
     }, [itens, filtro, busca]);
 
@@ -119,8 +131,10 @@
 
     async function salvar() {
       setAviso(''); setErro('');
-      const nf = O.numeroDaNota(rascunho.nf);
-      if (!nf) return setErro('Digite o número da nota fiscal (só números).');
+      const nf = O.numeroDaNota(rascunho.nf), pedido = O.numeroDoPedido(rascunho.pedido);
+      if (rascunho.nf.trim() && !nf) return setErro('Número da nota fiscal inválido (só números, de 3 a 12 dígitos).');
+      if (rascunho.pedido.trim() && !pedido) return setErro('Número do pedido inválido (só números, de 3 a 12 dígitos).');
+      if (!nf && !pedido) return setErro('Digite o número da nota fiscal ou, se o pedido ainda não tem nota, o número do pedido.');
       const dataOcorrencia = O.lerData(rascunho.dataOcorrencia, new Date(agora));
       if (!dataOcorrencia) return setErro('A data da ocorrência é obrigatória. Escreva assim: 24/11/2026.');
       let dataSolucao = '';
@@ -130,7 +144,7 @@
       }
       setSalvando(true);
       try {
-        const j = await chamar({ method: 'POST', body: JSON.stringify({ acao: 'salvar', linha: { id: rascunho.id || undefined, nf, dataOcorrencia, detalhes: rascunho.detalhes, responsavel: rascunho.responsavel, solucao: rascunho.solucao, dataSolucao } }) });
+        const j = await chamar({ method: 'POST', body: JSON.stringify({ acao: 'salvar', linha: { id: rascunho.id || undefined, nf, pedido, dataOcorrencia, detalhes: rascunho.detalhes, responsavel: rascunho.responsavel, solucao: rascunho.solucao, dataSolucao } }) });
         setDados(j); setRascunho(Object.assign({}, VAZIO)); avisarPagina();
         setAviso(rascunho.id ? 'Alteração salva.' : 'Ocorrência registrada.');
         if (nfRef.current) nfRef.current.focus();
@@ -138,7 +152,7 @@
       setSalvando(false);
     }
     function editar(oc) {
-      setRascunho({ id: oc.id, nf: oc.nf, dataOcorrencia: O.mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: O.mostrarData(oc.dataSolucao) });
+      setRascunho({ id: oc.id, nf: oc.nf, pedido: oc.pedido || '', dataOcorrencia: O.mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: O.mostrarData(oc.dataSolucao) });
       setAviso(''); setErro('');
       if (root.scrollTo) root.scrollTo({ top: 0, behavior: 'smooth' });
       if (nfRef.current) nfRef.current.focus();
@@ -190,7 +204,7 @@
         h('section', { style: { background: '#fff', border: '1px solid ' + cor.border, borderRadius: 12, padding: 14 } },
           h('button', { type: 'button', onClick: () => setAjuda(!ajuda), style: { border: 0, background: 'transparent', fontWeight: 800, fontSize: 13, color: cor.accent, cursor: 'pointer', padding: 0 }, 'aria-expanded': ajuda }, (ajuda ? '▾' : '▸') + ' Como usar esta aba'),
           ajuda && pode && h('div', { style: { margin: '8px 0 0', fontSize: 13, color: cor.mute, lineHeight: 1.6 } },
-            h('div', null, h('b', null, '1. ' + 'Registre'), ': preencha a linha em branco da tabela (nota fiscal e data são obrigatórias) e clique em Registrar. Pode também colar várias linhas copiadas do Excel.'),
+            h('div', null, h('b', null, '1. ' + 'Registre'), ': preencha o quadro (nota fiscal OU pedido, mais a data) e clique em Registrar. Se o pedido ainda não tem nota, digite o número do pedido. Pode também colar várias linhas copiadas do Excel.'),
             h('div', null, h('b', null, '2. ' + 'O SC9 procura a nota'), ': mostra o pedido, o cliente, o armazém e se o pedido já saiu ou foi despachado. Você não digita isso.'),
             h('div', null, h('b', null, '3. ' + 'Acompanhe'), ': a coluna Status diz em que ponto está (Aberta, Em andamento, Resolvida) e "O que fazer" diz o próximo passo. Ocorrência aberta há 3 dias ou mais fica em vermelho.'),
             h('div', null, h('b', null, '4. ' + 'Feche'), ': quando resolver, escreva a solução e a data da solução (ou clique em Editar na linha).'))),
@@ -214,20 +228,21 @@
 
         pode && h('section', { style: { background: '#fff', border: '1px solid ' + cor.border, borderRadius: 12, padding: 14 } },
           h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 } },
-            h('strong', { style: { fontSize: 14 } }, rascunho.id ? 'Editando a ocorrência da nota ' + rascunho.nf : 'Nova ocorrência'),
+            h('strong', { style: { fontSize: 14 } }, rascunho.id ? 'Editando a ocorrência ' + (rascunho.nf ? 'da nota ' + rascunho.nf : 'do pedido ' + rascunho.pedido) : 'Nova ocorrência (justificativa do atraso)'),
             h('div', { style: { display: 'flex', gap: 8 } }, botao(colar == null ? 'Colar do Excel' : 'Fechar colagem', () => setColar(colar == null ? '' : null)))),
           h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(135px,1fr))', gap: 10 } },
-            h('div', null, rotulo('Nº da Nota Fiscal', '*'), entrada('nf', 'ex.: 885234', { ref: nfRef, inputMode: 'numeric' })),
+            h('div', null, rotulo('Nº da Nota Fiscal', 'ou o pedido'), entrada('nf', 'ex.: 885234', { ref: nfRef, inputMode: 'numeric' })),
+            h('div', null, rotulo('Nº do Pedido', 'se ainda não tem nota'), entrada('pedido', 'ex.: 355386', { inputMode: 'numeric' })),
             h('div', null, rotulo('Data da Ocorrência', '* dd/mm/aaaa'), entrada('dataOcorrencia', 'ex.: 24/11/2026')),
-            h('div', { style: { gridColumn: 'span 2' } }, rotulo('Detalhes da Ocorrência', 'o que aconteceu'), entrada('detalhes', 'ex.: endereço insuficiente, vendedor verificando')),
+            h('div', { style: { gridColumn: 'span 2' } }, rotulo('Detalhes da Ocorrência', 'o que aconteceu'), entrada('detalhes', 'ex.: endereço insuficiente, vendedor verificando', { id: 'oc-detalhes' })),
             h('div', null, rotulo('Responsável', 'quem resolve'), entrada('responsavel', 'ex.: Juliana')),
             h('div', { style: { gridColumn: 'span 2' } }, rotulo('Solução da Ocorrência', 'deixe vazio se ainda não resolveu'), entrada('solucao', 'ex.: cadastro atualizado, pedido liberado')),
             h('div', null, rotulo('Data da Solução', 'dd/mm/aaaa'), entrada('dataSolucao', 'ex.: 25/11/2026'))),
           h('div', { style: { display: 'flex', gap: 8, marginTop: 12 } },
             botao(salvando ? 'Salvando…' : rascunho.id ? 'Salvar alteração' : 'Registrar ocorrência', salvar, { disabled: salvando, style: { border: 0, background: cor.accent, color: '#fff', borderRadius: 8, padding: '9px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }),
-            (rascunho.id || rascunho.nf) && botao('Limpar', () => setRascunho(Object.assign({}, VAZIO)))),
+            (rascunho.id || rascunho.nf || rascunho.pedido) && botao('Limpar', () => setRascunho(Object.assign({}, VAZIO)))),
           colar != null && h('div', { style: { marginTop: 12 } },
-            h('div', { style: { fontSize: 12, color: cor.mute, marginBottom: 4 } }, 'No Excel, selecione as linhas (colunas na ordem: Nota, Data da ocorrência, Detalhes, Responsável, Solução, Data da solução), copie e cole aqui. Notas que já estão na lista com a mesma data e detalhe são puladas.'),
+            h('div', { style: { fontSize: 12, color: cor.mute, marginBottom: 4 } }, 'No Excel, selecione as linhas (colunas na ordem: Nota, Data da ocorrência, Detalhes, Responsável, Solução, Data da solução), copie e cole aqui. Notas que já estão na lista com a mesma data e detalhe são puladas. Para ocorrência de pedido sem nota, ponha o número do pedido numa 7ª coluna.'),
             h('textarea', { value: colar, onChange: (e) => setColar(e.target.value), rows: 5, 'aria-label': 'Linhas copiadas do Excel', style: { width: '100%', boxSizing: 'border-box', border: '1px solid ' + cor.border, borderRadius: 8, padding: 8, fontSize: 12, fontFamily: 'monospace' } }),
             h('div', { style: { marginTop: 6 } }, botao('Importar linhas coladas', importar, { disabled: !colar.trim() })))),
 
@@ -244,11 +259,11 @@
                 th('Nº da Nota Fiscal', 90), th('Pedido e cliente (automático)', 200), th('Data da Ocorrência', 90), th('Detalhes da Ocorrência', 220), th('Responsável', 110), th('Solução da Ocorrência', 190), th('Data da Solução', 90),
                 th('Status (automático)', 150), th('O que fazer (automático)', 220), pode && th('', 90))),
               h('tbody', null, visiveis.map(({ oc, info, av }) => h('tr', { key: oc.id, style: { background: av.nivel === 'urgente' ? '#fff7f6' : undefined } },
-                td(h('strong', null, oc.nf)),
+                td(oc.nf ? h('strong', null, oc.nf) : h('div', null, h('strong', null, 'Pedido ' + oc.pedido), h('div', { style: { color: cor.mute, fontSize: 11 } }, 'sem nota ainda'))),
                 td(info ? h('div', null,
                   h('div', { style: { fontWeight: 700 } }, info.nome || 'Cliente sem nome na base'),
                   h('div', { style: { color: cor.mute, fontSize: 11.5 } }, 'Pedido ' + info.pedido + (info.armazem ? ' · ' + info.armazem : '') + (info.transportadora ? ' · ' + info.transportadora : '') + (info.valor ? ' · ' + moeda(info.valor) : '')),
-                  h('div', { style: { color: cor.mute, fontSize: 11.5 } }, av.pedido.texto)) : h('span', { style: { color: cor.amber, fontSize: 12 } }, 'Nota não encontrada na base do SC9. Confira o número ou aguarde a próxima atualização da base.')),
+                  h('div', { style: { color: cor.mute, fontSize: 11.5 } }, av.pedido.texto)) : h('span', { style: { color: cor.amber, fontSize: 12 } }, (oc.nf ? 'Nota' : 'Pedido') + ' não encontrado na base do SC9. Confira o número ou aguarde a próxima atualização da base.')),
                 td(O.mostrarData(oc.dataOcorrencia) + ' ', { whiteSpace: 'nowrap' }),
                 td(oc.detalhes),
                 td(oc.responsavel),

@@ -79,7 +79,11 @@
     for (const a of analises) for (const it of a.reg.itens) { const k = chave(it); if (!historico.has(k)) historico.set(k, []); historico.get(k).push(a.reg.dia); }
     const diasExp = Object.keys(exp).sort();
     const ocorr = new Map(); // nota fiscal → ocorrências registradas pela expedição
-    for (const l of (data && data.ocorrencias) || []) { const n = nfNum(l && l.nf); if (!n) continue; if (!ocorr.has(n)) ocorr.set(n, []); ocorr.get(n).push(l); }
+    for (const l of (data && data.ocorrencias) || []) {
+      // ligada pela nota fiscal; sem nota, pelo número do pedido (chave "p" + pedido)
+      const chaves = [nfNum(l && l.nf), nfNum(l && l.pedido) ? 'p' + nfNum(l.pedido) : ''].filter(Boolean);
+      for (const n of chaves) { if (!ocorr.has(n)) ocorr.set(n, []); ocorr.get(n).push(l); }
+    }
     return { analises, porDia, exp, fat, meses, historico, diasExp, entregues, saidas, ocorr };
   }
 
@@ -124,7 +128,8 @@
   // ---------- ocorrências da expedição e "o que fazer" ----------
   // Ocorrência do pedido (achada pela nota fiscal): a mais importante, com o status já calculado. null se não há.
   function ocorrenciaDoPedido(p, it, agora) {
-    const lista = p && p.ocorr && p.ocorr.get(nfNum(extra(it).nf));
+    const nfDoPedido = nfNum(extra(it).nf);
+    const lista = p && p.ocorr && [...new Set([].concat((nfDoPedido && p.ocorr.get(nfDoPedido)) || [], p.ocorr.get('p' + nfNum(it[0])) || []))];
     if (!lista || !lista.length) return null;
     const info = { pedido: String(it[0]), liberadoEm: it[2] || '', despachadoEm: entregaDe(p.entregues, it[0]) };
     const quando = agora || new Date();
@@ -482,8 +487,21 @@
     return caixa;
   }
 
-  // Célula "Ocorrência (expedição)" da tabela.
+  // Botão "Justificar atraso": leva o pedido (e a nota, se tiver) para o quadro de ocorrências no fim da página.
+  function justificar(it) {
+    const e = extra(it);
+    root.dispatchEvent(new root.CustomEvent('sc9-ocorrencia-nova', { detail: { nf: nfNum(e.nf), pedido: nfNum(it[0]), cliente: e.n || '' } }));
+    const c = document.getElementById('ocorrencias-box');
+    if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  const painelDeOcorrencias = () => Boolean(root.React && root.ReactDOM && root.ReactDOM.createRoot && root.SC9Ocorrencias && root.SC9Ocorrencias.Panel && document.getElementById('ocorrencias-box'));
+
+  // Célula "Ocorrência (expedição)" da tabela, com o botão de justificar o atraso.
   function celulaOcorrencia(v, it) {
+    const botao = painelDeOcorrencias() && v.st.tipo !== 'desp' ? h('button', { class: 'btn peq', type: 'button', title: 'Registrar o motivo deste pedido estar atrasado (ocorrência), por exemplo cliente, endereço ou cadastro', onclick: (ev) => { ev.stopPropagation(); justificar(it); } }, v.ocor ? '+ Ocorrência' : 'Justificar atraso') : null;
+    return h('div', null, celulaOcorrenciaTexto(v, it), botao);
+  }
+  function celulaOcorrenciaTexto(v, it) {
     if (!v.ocor) return h('span', { class: it[6] >= 5 && v.st.tipo !== 'desp' ? 'peq forte' : 'mudo peq', text: it[6] >= 5 && v.st.tipo !== 'desp' ? 'sem registro' : '—' });
     const o = v.ocor;
     return h('div', null, h('span', { class: 'tag oc-' + o.av.nivel, text: o.av.status }), h('div', { class: 'mudo peq', text: (o.oc.responsavel || 'sem responsável') + (o.total > 1 ? ' · +' + (o.total - 1) : '') }));
