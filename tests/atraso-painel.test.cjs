@@ -240,3 +240,12 @@ test('com o detalhe por armazém, despachados e faturados acompanham o filtro e 
   assert.equal(r.lista.find((x) => x.nome === 'BH').pctBase, 10); // 2 em atraso de 20
   assert.equal(P.armazens(H.preparar(dados()), '2026-11-19', P.filtroVazio()).temBase, false);
 });
+
+test('modo TV e impressão existem e o painel sai do modo TV com Esc', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'atraso-painel-ui.js'), 'utf8');
+  assert.ok(ui.includes("get('modo') === 'tv'"));
+  assert.ok(ui.includes("ev.key === 'Escape'"));
+  assert.ok(ui.includes('@page { size:A4 landscape'));
+  assert.ok(ui.includes('tabelaCriticos'));
+});

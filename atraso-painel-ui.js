@@ -42,7 +42,8 @@
 
   // ---------- estado do painel (período e filtros globais; vai para a URL) ----------
   const q = new URLSearchParams(location.search);
-  const S = { per: ['7', '15', '30', 'mes', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, prod: 'pedidos', mais: false };
+  const TV = q.get('modo') === 'tv';
+  const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, prod: 'pedidos', mais: false };
   function guardarNaUrl() {
     try {
       const u = new URL(location.href);
@@ -112,10 +113,27 @@
   .pn-nota { font-size:12px; color:#6b7890; margin-top:8px; }
   .pn-vazio { text-align:center; padding:26px 10px; color:#5b6a84; font-weight:600; }
   .pn-sep { margin:10px 0 -6px; font-size:13px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:#5b6a84; }
+  .pn-so-print { display:none; }
+  body.modo-tv { background:#0c1b36; } body.modo-tv #app { max-width:none; padding:18px 30px 30px; }
+  body.modo-tv #app > :not(#pn-raiz), body.modo-tv #ocorrencias-box { display:none !important; }
+  body.modo-tv .pn-barra, body.modo-tv .pn-link, body.modo-tv .pn-seg, body.modo-tv .pn-mais, body.modo-tv .pn-sep, body.modo-tv .pn-nota, body.modo-tv .pn-fluxo, body.modo-tv .pn-dow { display:none !important; }
+  .pn-cards.cinco { grid-template-columns:repeat(5,minmax(0,1fr)); }
+  .pn-mini { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; justify-content:space-between; color:#fff; padding:12px 18px; border-radius:16px; background:linear-gradient(135deg,#0c2347,#123b7a); } .pn-mini b { font-size:22px; } .pn-mini span { font-size:15px; color:#cfe0ff; }
+  body.modo-tv .pn-slide { display:none; flex-direction:column; gap:18px; } body.modo-tv .pn-slide.ativo { display:flex; }
+  body.modo-tv .pn-hero { box-shadow:none; border:1px solid rgba(255,255,255,.15); }
+  .pn-tv-rodape { display:flex; justify-content:space-between; align-items:center; gap:12px; color:#9fb4d6; font-size:13px; }
+  .pn-pontos { display:flex; gap:8px; } .pn-pontos i { width:34px; height:6px; border-radius:99px; background:rgba(255,255,255,.25); } .pn-pontos i.ativo { background:#fff; }
+  .pn-prio-grid { display:grid; grid-template-columns:1fr 1fr; gap:22px; } .pn-prio-item { display:grid; grid-template-columns:58px 1fr; gap:10px; align-items:baseline; padding:8px 0; border-top:1px solid var(--line); font-size:14px; }
+  .pn-prio-item:first-child { border-top:0; } .pn-prio-item b { font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; text-align:right; } .pn-prio-item.crit b { color:var(--red); } .pn-prio-item small { display:block; color:#6b7890; font-size:12px; }
+  body.modo-tv .pn-linha { padding:22px 8px; } body.modo-tv .pn-linha .nome { font-size:17px; } body.modo-tv .pn-linha .num { font-size:15px; } body.modo-tv .pn-trilho { height:26px; }
+  body.modo-tv #pn-distribuicao { grid-column:span 5; } body.modo-tv #pn-prioridades { grid-column:span 7; } body.modo-tv .pn-prio-item { padding:5px 0; } body.modo-tv .pn-colunas { height:230px; }
+  @media (min-width:1700px) { body.modo-tv .pn { zoom:1.4; } }
+  @media (min-width:2400px) { body.modo-tv .pn { zoom:2; } }
+  @media (max-width:1100px) { .pn-prio-grid { grid-template-columns:1fr; } }
   @media (max-width:1100px) { .pn-cards { grid-template-columns:repeat(3,minmax(0,1fr)); } .pn-mais .pn-cards { grid-template-columns:repeat(3,minmax(0,1fr)); } .pn-bloco.m7,.pn-bloco.m5,.pn-bloco.m4,.pn-bloco.m6 { grid-column:span 12; } }
   @media (max-width:640px) { .pn-hero { padding:20px 18px; } .pn-h1 { font-size:23px; } .pn-frase { font-size:16px; } .pn-cards,.pn-mais .pn-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .pn-card.destaque { grid-column:span 2; } .pn-card .v { font-size:30px; } .pn-card.destaque .v { font-size:46px; } .pn-linha { grid-template-columns:96px 1fr; } .pn-linha .num { grid-column:1 / -1; text-align:left; } .pn-bloco { padding:16px; } }
   @media (prefers-reduced-motion:no-preference) { .pn-card { transition:box-shadow .15s, border-color .15s, transform .15s; } }
-  @media print { .pn-barra .grupo-c, .pn-seg, .pn-mais summary, .pn-link { display:none !important; } .pn-card, .pn-bloco, .pn-hero { break-inside:avoid; } .pn-par { display:block; } .pn-bloco { margin-bottom:12px; } @page { size:A4 landscape; margin:10mm; } * { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+  @media print { body.com-painel #app > :not(#pn-raiz), body.com-painel #ocorrencias-box, .pn-barra, .pn-tv-rodape { display:none !important; } .pn-so-print { display:block; } .pn-hero { box-shadow:none; padding:16px 20px; } .pn-h1 { font-size:22px; } .pn-frase { font-size:15px; } .pn-cards { grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; } .pn-card .v { font-size:26px; } .pn-card.destaque .v { font-size:36px; } .pn-card svg.spark { display:none; } .pn-card:hover { transform:none; } .pn-bloco { padding:12px 14px; } .pn-tab { font-size:10.5px; } .pn-rolagem { max-height:none; overflow:visible; border:0; } .pn-quebra { break-before:page; } body { background:#fff !important; } .pn-par { display:grid !important; grid-template-columns:1fr 1fr; gap:10px; margin:10px 0; } .pn-bloco, .pn-bloco.m7, .pn-bloco.m5, .pn-bloco.m6 { grid-column:span 1 !important; margin:0 !important; } #pn-distribuicao { grid-column:span 2 !important; } .pn-fluxo, .pn-dow, .pn-sep, .pn-leg span:last-child { display:none !important; } .pn-colunas { height:130px; } .pn-linha { padding:3px 4px; } .pn-svg { max-height:165px; } .pn-hero-meta { margin-top:8px; } .pn-sub, .pn-bloco .sub { margin-bottom:4px; } .pn-so-print .pn-tab td { padding:3px 8px; } .pn-barra .grupo-c, .pn-seg, .pn-mais summary, .pn-link { display:none !important; } .pn-card, .pn-bloco, .pn-hero { break-inside:avoid; } .pn-par { display:block; } .pn-bloco { margin-bottom:12px; } @page { size:A4 landscape; margin:10mm; } * { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
   `;
   function garantirEstilo() { if (!document.getElementById('pn-estilo')) document.head.appendChild(h('style', { id: 'pn-estilo', text: CSS })); }
 
@@ -232,7 +250,7 @@
         if (serieDias.length <= 16) grupo.appendChild(s('text', { x: x + bw / 2, y: yt - 4, 'text-anchor': 'middle', text: fmtI(d.foto.tot), style: 'font-weight:700;fill:#14233d' }));
         grupo.appendChild(campoFoco(d, i, c, ddmmaaaa(d.dia) + ': ' + fmtI(d.foto.tot) + ' em atraso (estoque ' + fmtI(d.foto.e) + ', faturamento ' + fmtI(d.foto.f) + '). Clique para abrir o dia.', () => T().escolherDia(d.dia, false), d.dia === dia));
         return grupo;
-      }, 'Pedidos em atraso por dia, em estoque e faturamento, com a média móvel de 5 dias. ' + sub);
+      }, 'Pedidos em atraso por dia, em estoque e faturamento, com a média móvel de 5 dias. ' + sub, { Ht: TV ? 440 : 290 });
       const pts = []; serieDias.forEach((d, i) => { if (mm[i] != null) pts.push((g.M.l + i * g.slot + g.slot / 2).toFixed(1) + ',' + g.y(mm[i]).toFixed(1)); });
       if (pts.length > 1) g.svg.appendChild(s('polyline', { points: pts.join(' '), fill: 'none', stroke: COR.linha, 'stroke-width': 2, 'stroke-dasharray': '5 4', 'stroke-linejoin': 'round' }));
       return h('div', null, g.svg, h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), 'Estoque'), h('span', null, h('i', { style: 'background:' + COR.faturamento }), 'Faturamento'), h('span', null, h('i', { class: 'linha', style: 'background:' + COR.linha }), 'Média dos últimos 5 dias com posição'), h('span', null, h('i', { style: 'background:repeating-linear-gradient(45deg,#cfd7e4,#cfd7e4 2px,#fff 2px,#fff 4px)' }), 'Dia sem posição gravada (não é zero)')));
@@ -256,7 +274,7 @@
       svg.appendChild(s('title', { text: ddmmaaaa(d.dia) + ': entraram ' + d.entraram + ', saíram ' + d.sairam + ' (saldo ' + (d.saldo > 0 ? '+' : '') + d.saldo + ')' }));
       if (i % rotuloEixoDias(fx.length) === 0) svg.appendChild(s('text', { x: x + bw / 2, y: Ht - 6, 'text-anchor': 'middle', text: ddmm(d.dia) }));
     });
-    return h('div', { style: 'margin-top:14px' }, h('h3', { text: 'Fluxo do atraso: quem entrou e quem saiu', style: 'font-size:14px;margin-bottom:4px' }), svg,
+    return h('div', { class: 'pn-fluxo', style: 'margin-top:14px' }, h('h3', { text: 'Fluxo do atraso: quem entrou e quem saiu', style: 'font-size:14px;margin-bottom:4px' }), svg,
       h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:#c63828' }), '▲ Entraram no atraso (acima)'), h('span', null, h('i', { style: 'background:#1f8a4c' }), '▼ Saíram do atraso (abaixo)'), null));
   }
 
@@ -280,7 +298,7 @@
           grupo.appendChild(campoFoco(d, i, c, ddmmaaaa(d.dia) + ': ' + fmtI(v) + ' ' + unidade + ' despachados' + (d.fat ? ', ' + fmtI(d.fat[campo]) + ' faturados' : '') + '.', () => { if (T().temDia(d.dia)) T().escolherDia(d.dia, false); }, d.dia === dia));
         } else if (d.foto || d.fat) grupo.appendChild(s('title', { text: ddmmaaaa(d.dia) + ': sem registro de despacho' }));
         return grupo;
-      }, 'Pedidos despachados por dia e faturados. ' + sub, { W: 560, Ht: 250, fmtY: (v) => (v >= 1000 ? fmtN(v / 1000) + ' mil' : fmtI(v)) });
+      }, 'Pedidos despachados por dia e faturados. ' + sub, { W: 560, Ht: TV ? 380 : 250, fmtY: (v) => (v >= 1000 ? fmtN(v / 1000) + ' mil' : fmtI(v)) });
       const pts = []; serieDias.forEach((d, i) => { if (d.fat) pts.push([(g.M.l + i * g.slot + g.slot / 2).toFixed(1), g.y(d.fat[campo]).toFixed(1)]); });
       if (pts.length) { if (pts.length > 1) g.svg.appendChild(s('polyline', { points: pts.map((x) => x.join(',')).join(' '), fill: 'none', stroke: '#5f6c84', 'stroke-width': 2 })); pts.forEach(([x, yy]) => g.svg.appendChild(s('circle', { cx: x, cy: yy, r: 3.5, fill: '#fff', stroke: '#5f6c84', 'stroke-width': 2 }))); }
       if (mediaP != null) { const ym = g.y(mediaP); g.svg.appendChild(s('line', { x1: g.M.l, x2: g.W - g.M.r, y1: ym, y2: ym, stroke: COR.ref, 'stroke-dasharray': '4 4' })); }
@@ -289,7 +307,7 @@
     const tabela = () => tabelaDe(['Dia', 'Pedidos despachados', 'Peças despachadas', 'Pedidos faturados', 'Peças faturadas'], serieDias.filter((d) => d.exp || d.fat).map((d) => [ddmmaaaa(d.dia) + ' ' + d.semana, d.exp ? fmtI(d.exp.pedidos) : null, d.exp ? fmtI(d.exp.pecas) : null, d.fat ? fmtI(d.fat.pedidos) : null, d.fat ? fmtI(d.fat.pecas) : null]));
     const semana = pr.semana.filter((x) => x.n);
     const mx = Math.max(1, ...semana.map((x) => (medida === 'pecas' ? x.pecasDespachadas : x.despachados) || 0));
-    const dow = semana.length ? h('div', { style: 'margin-top:14px' }, h('h3', { text: 'Média por dia da semana (despachados)', style: 'font-size:14px;margin-bottom:6px' }),
+    const dow = semana.length ? h('div', { class: 'pn-dow', style: 'margin-top:14px' }, h('h3', { text: 'Média por dia da semana (despachados)', style: 'font-size:14px;margin-bottom:6px' }),
       semana.map((x) => { const v = (medida === 'pecas' ? x.pecasDespachadas : x.despachados) || 0; return h('div', { class: 'pn-linha', style: 'cursor:default;grid-template-columns:50px 1fr 90px' }, h('span', { class: 'nome', text: x.semana }), h('div', { class: 'pn-trilho' }, h('span', { style: 'width:' + (v / mx * 100).toFixed(1) + '%;background:' + COR.estoque })), h('span', { class: 'num', text: fmtI(v) + ' · ' + x.n + (x.n === 1 ? ' dia' : ' dias') })); })) : null;
     return blocoGrafico('produtividade', 'Produtividade da expedição', sub, ctl, corpo, tabela, dow, 'm5');
   }
@@ -344,6 +362,37 @@
     return blocoGrafico('distribuicao', 'Há quanto tempo estão atrasados', 'Quanto mais à direita, mais antigo.', null, corpo, tabela, null, 'm12');
   }
 
+  function urlModoTv() { const u = new URL(location.href); u.searchParams.set('painel', '1'); u.searchParams.set('modo', 'tv'); return u.pathname + u.search + u.hash; }
+  function urlSairTv() { const u = new URL(location.href); u.searchParams.delete('modo'); return u.pathname + u.search + u.hash; }
+
+  // Prioridades (só leitura, em JS puro: não depende do painel React de ocorrências): o que fazer agora e as ocorrências abertas mais antigas.
+  function prioridadesBloco(p, a, g, agora) {
+    if (!a) return null;
+    const Hh = root.SC9HistoricoAtraso, itens = P().selecionar(a.reg.itens, g);
+    const pr = Hh.prioridades(p, itens, a.reg.dia, agora);
+    const abertas = [];
+    for (const it of itens) { const v = Hh.avaliarPedido(p, it, a.reg.dia, agora); if (v.ocor && !v.ocor.av.resolvida) abertas.push({ it, o: v.ocor }); }
+    abertas.sort((x, y) => y.o.av.dias - x.o.av.dias);
+    return h('section', { class: 'pn-bloco', id: 'pn-prioridades', 'aria-label': 'Prioridades e ocorrências' },
+      h('h2', { text: 'Prioridades e ocorrências' }), h('p', { class: 'sub', text: 'O que fazer agora e as ocorrências abertas há mais tempo.' }),
+      h('div', { class: 'pn-prio-grid' },
+        h('div', null, pr.grupos.length ? pr.grupos.map((gr) => h('div', { class: 'pn-prio-item' + (gr.cod === 'ocorrencia' || gr.cod === 'fechar' ? ' crit' : '') }, h('b', { text: fmtI(gr.qtd) }), h('span', null, gr.titulo, h('small', { text: fmtI(gr.pecas) + ' peças' + (gr.antigos ? ' · ' + gr.antigos + ' com 5+ dias' : '') })))) : h('p', { class: 'pn-vazio', text: 'Nada pendente nesta posição.' }),
+          pr.semOcorrencia.qtd ? h('div', { class: 'pn-prio-item crit' }, h('b', { text: fmtI(pr.semOcorrencia.qtd) }), h('span', null, 'atrasados há 5+ dias sem motivo registrado', h('small', { text: 'a expedição precisa informar na aba Ocorrências' }))) : null),
+        h('div', null, h('h3', { text: abertas.length + (abertas.length === 1 ? ' ocorrência aberta' : ' ocorrências abertas'), style: 'font-size:15px;margin-bottom:4px' }), abertas.slice(0, 6).map((x) => h('div', { class: 'pn-prio-item' + (x.o.av.dias >= 3 ? ' crit' : '') }, h('b', { text: fmtI(x.o.av.dias) + 'd' }), h('span', null, 'Pedido ' + x.it[0] + ' · ' + x.it[1], h('small', { text: (x.o.oc.detalhes || 'sem detalhes').slice(0, 90) + ' · ' + (x.o.oc.responsavel || 'sem responsável') })))), !abertas.length ? h('p', { class: 'pn-vazio', text: 'Nenhuma ocorrência aberta.' }) : null)));
+  }
+
+  // Só aparece na impressão: os pedidos mais críticos (a lista completa continua no CSV da página).
+  function tabelaCriticos(p, a, g, agora) {
+    if (!a) return null;
+    const Hh = root.SC9HistoricoAtraso;
+    const lista = P().selecionar(a.reg.itens, g).slice().sort((x, y) => (y[6] || 0) - (x[6] || 0)).slice(0, 20);
+    if (!lista.length) return null;
+    return h('section', { class: 'pn-bloco pn-so-print pn-quebra', 'aria-label': 'Pedidos mais críticos' },
+      h('h2', { text: 'Os 20 pedidos mais atrasados' }), h('p', { class: 'sub', text: 'Posição de ' + ddmmaaaa(a.reg.dia) + '. A lista completa está na página (Baixar lista em CSV).' }),
+      tabelaDe(['Pedido', 'Cliente', 'Armazém', 'Etapa', 'Dias', 'Peças', 'O que fazer'], lista.map((it) => { const x = Hh.extra(it), v = Hh.avaliarPedido(p, it, a.reg.dia, agora); return [it[0], (x.n || '').slice(0, 28), it[1], (Hh.ETAPA[x.e] || '').replace(/ \(.*\)/, ''), fmtI(it[6]), fmtI(it[3]), v.acao.texto.slice(0, 70)]; })),
+      h('p', { class: 'pn-nota', text: 'Gerado em ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) + ' · SC9 Control' }));
+  }
+
   // ---------- barra de controle ----------
   function barra(p, fr) {
     const ops = P().opcoesGlobais(p);
@@ -356,7 +405,7 @@
         sel('Armazém', S.arm, ops.armazens, (v) => { S.arm = v; }, 'Todos'),
         sel('Transportadora', S.transp, ops.transportadoras, (v) => { S.transp = v; }, 'Todas'),
         S.arm || S.transp ? h('button', { type: 'button', class: 'btn', onclick: () => mudar(() => { S.arm = ''; S.transp = ''; }), text: 'Limpar filtros ✕' }) : null),
-      h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, h('button', { type: 'button', class: 'btn', onclick: () => root.print(), text: 'Imprimir' })));
+      h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, h('a', { class: 'btn', href: urlModoTv(), text: 'Apresentar (TV)' }), h('button', { type: 'button', class: 'btn', onclick: () => root.print(), text: 'Imprimir' })));
   }
 
   // ---------- montagem ----------
@@ -384,21 +433,45 @@
     const topo = cs ? cs.cartoes.filter((c) => ['atraso', 'cinco', 'aguardando', 'despachados', 'faturados', 'ocorrencias'].includes(c.id)).map((c) => Object.assign(c, c.id === 'atraso' ? { destaque: true } : {})) : [];
     const mais = cs ? cs.cartoes.filter((c) => !['atraso', 'cinco', 'aguardando', 'despachados', 'faturados', 'ocorrencias'].includes(c.id)) : [];
     document.body.classList.add('com-painel');
-    return h('div', { class: 'pn', id: 'pn-raiz' },
-      h('section', { class: 'pn-hero', 'aria-label': 'Resumo do dia' },
+    document.body.classList.toggle('modo-tv', TV);
+    const hero = h('section', { class: 'pn-hero', 'aria-label': 'Resumo do dia' },
         h('div', { class: 'pn-hero-topo' },
           h('div', null, h('p', { class: 'pn-kicker', text: 'SC9 Control · Histórico de atraso' }), h('div', { class: 'pn-h1', role: 'heading', 'aria-level': '2', text: dia ? semanaLonga(dia) + ', ' + ddmmaaaa(dia) : 'Sem dados' })),
           selo(fr)),
         h('p', { class: 'pn-frase', text: frase }),
         h('div', { class: 'pn-hero-meta' },
           a && a.cmp ? h('span', { class: 'pn-veredito-chip ' + tomVer }, tomVer === 'bom' ? '▼ Melhorou' : tomVer === 'ruim' ? '▲ Piorou' : '= Igual', ' vs ' + ddmm(a.cmp.ant.dia)) : null,
-          h('span', { text: 'Período: ' + ddmm(de) + ' a ' + ddmm(ate || de) + (filtroTxt ? ' · ' + filtroTxt : '') + ' · ' + comFoto + ' de ' + dias.length + ' dias com posição gravada' + (comFoto < 3 ? ' (o histórico está começando)' : '') }))),
-      barra(p, fr),
-      fr.estado === 'desatualizado' || fr.estado === 'atencao' ? h('p', { class: 'pn-aviso', role: 'status', text: 'A última posição gravada é de ' + ddmmaaaa(fr.dia) + ' (' + fr.diasUteis + (fr.diasUteis === 1 ? ' dia útil' : ' dias úteis') + ' atrás). Os números são dessa posição; exporte o Histórico de Atraso no SC9 para atualizar.' }) : null,
-      cs ? h('div', { class: 'pn-cards' }, topo.map((c) => cartao(c, dias))) : null,
-      cs ? h('details', { class: 'pn-mais', open: S.mais, ontoggle: (ev) => { S.mais = ev.target.open; } }, h('summary', { text: 'Mais indicadores' }), h('div', { class: 'pn-cards' }, mais.map((c) => cartao(c, dias)))) : null,
+          h('span', { text: 'Período: ' + ddmm(de) + ' a ' + ddmm(ate || de) + (filtroTxt ? ' · ' + filtroTxt : '') + ' · ' + comFoto + ' de ' + dias.length + ' dias com posição gravada' + (comFoto < 3 ? ' (o histórico está começando)' : '') })));
+    const aviso = fr.estado === 'desatualizado' || fr.estado === 'atencao' ? h('p', { class: 'pn-aviso', role: 'status', text: 'A última posição gravada é de ' + ddmmaaaa(fr.dia) + ' (' + fr.diasUteis + (fr.diasUteis === 1 ? ' dia útil' : ' dias úteis') + ' atrás). Os números são dessa posição; exporte o Histórico de Atraso no SC9 para atualizar.' }) : null;
+    const cartoesEl = cs ? h('div', { class: 'pn-cards' }, topo.map((c) => cartao(c, dias))) : null;
+    const maisEl = cs ? h('details', { class: 'pn-mais', open: S.mais, ontoggle: (ev) => { S.mais = ev.target.open; } }, h('summary', { text: 'Mais indicadores' }), h('div', { class: 'pn-cards' }, mais.map((c) => cartao(c, dias)))) : null;
+    if (TV) {
+      iniciarTv();
+      const N = 4;
+      const pontos = h('div', { class: 'pn-pontos', 'aria-hidden': 'true' }, Array.from({ length: N }, (_, i) => h('i', { class: i === S.slide ? 'ativo' : '' })));
+      const mini = h('div', { class: 'pn-mini' }, h('b', { text: dia ? semanaLonga(dia) + ', ' + ddmmaaaa(dia) : 'Sem dados' }), h('span', { text: frase }), selo(fr));
+      const slide = (i, ...filhos) => h('div', { class: 'pn-slide' + (S.slide === i ? ' ativo' : '') }, filhos);
+      return h('div', { class: 'pn', id: 'pn-raiz' }, S.slide === 0 ? hero : mini, aviso,
+        slide(0, cartoesEl, cs ? h('div', { class: 'pn-cards cinco' }, mais.map((c) => cartao(c, dias))) : null),
+        slide(1, h('div', { class: 'pn-par' }, evolucao(dias, fx, dia), produtividade(dias, dia))),
+        slide(2, h('div', { class: 'pn-par' }, gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)))),
+        slide(3, h('div', { class: 'pn-par' }, distribuicaoBloco(P().distribuicao(p, dia, g)), prioridadesBloco(p, a, g, agora))),
+        h('div', { class: 'pn-tv-rodape' }, pontos, h('span', null, 'Troca sozinha a cada 20 s · setas ← → mudam a tela · ', h('a', { href: urlSairTv(), style: 'color:#cfe0ff', text: 'Sair (Esc)' }))));
+    }
+    return h('div', { class: 'pn', id: 'pn-raiz' },
+      hero, barra(p, fr), aviso, cartoesEl, maisEl,
       h('div', { class: 'pn-par' }, evolucao(dias, fx, dia), produtividade(dias, dia), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g))),
+      tabelaCriticos(p, a, g, agora),
       h('p', { class: 'pn-sep', text: 'Detalhe do dia e pedidos' }));
+  }
+
+  // Modo TV: 2 telas em rodízio (25 s), setas do teclado trocam, Esc sai. Para quando a aba está escondida.
+  let tvIniciado = false;
+  function iniciarTv() {
+    if (tvIniciado) return; tvIniciado = true;
+    const ir = (n) => { S.slide = ((S.slide + n) % 4 + 4) % 4; T().desenhar(); };
+    S.timer = setInterval(() => { if (!document.hidden) ir(1); }, 20000);
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'ArrowRight') ir(1); else if (ev.key === 'ArrowLeft') ir(-1); else if (ev.key === 'Escape') location.href = urlSairTv(); });
   }
 
   root.SC9AtrasoPainelUI = { montar, estado: S };
