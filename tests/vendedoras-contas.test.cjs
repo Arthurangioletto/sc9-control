@@ -218,3 +218,58 @@ test('servidor: cada vendedora vê só o que é dela (solicitações e consultas
     assert.ok(adm[0].historico.some((h) => h.acao === 'reforco' && h.conta === 'bia.v' && h.texto === 'nota da Bia'));
   } finally { await new Promise((resolve) => server.close(resolve)); }
 });
+
+test('servidor: pedido que ainda não está no SC9 pode ser incluído; a equipe é sinalizada e o aviso some quando o SC9 é recarregado', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-fora-'));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  const data = path.join(dir, 'data'); fs.mkdirSync(data);
+  const linha = (o) => Object.assign({ pedido: '0355386', armazem: 'Cambuci', nf: '', nome: 'CLIENTE ALFA', cliente: '001', dt: '2026-11-18', dtLiberacaoHora: '2026-11-18T12:10:00.000Z', qt: 5, itens: 2, status: 'Liberado', separador: '', conferente: '' }, o);
+  const gravarSnap = (orders, savedAt) => fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify({ savedAt, orders, faturamento: [], entregaInfo: [], valores: [] }));
+  gravarSnap([linha({ pedido: '355386' })], '2026-11-24T14:00:00.000Z');
+  delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
+  process.env.PORT = '0'; process.env.APP_PASSWORD = crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomUUID(); process.env.NODE_ENV = 'test';
+  const server = require(path.join(dir, 'server.js'));
+  if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const call = async (url, body, { cookie } = {}) => {
+    const r = await fetch(base + url, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1', ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json().catch(() => ({})) };
+  };
+  try {
+    const admin = (await (await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1' }, body: JSON.stringify({ password: process.env.APP_PASSWORD }) })).headers.get('set-cookie') || '').split(';')[0];
+    const k = (await call('/api/vendedoras-link', { acao: 'gerar' }, { cookie: admin })).data.token;
+    const U = (rota) => '/api/vendedoras/' + rota + (rota.includes('?') ? '&' : '?') + 'k=' + k;
+    const pedido = { pedido: '888777', nivel: 'alta', motivo: 'cliente_aguardando', pedidoPor: 'Bia' };
+
+    // o pedido não está no SC9: a consulta diz que não achou, mas a solicitação entra
+    assert.equal((await call(U('pedido?pedido=888777'))).data.achado, false);
+    const enviada = await call(U('prioridade'), pedido);
+    assert.equal(enviada.status, 200); assert.equal(enviada.data.naoAchado, true); assert.equal(enviada.data.linha.foraDoSc9, true);
+    const id = enviada.data.linha.id;
+    assert.equal((await call(U('prioridades?ids=' + id + '&nome=Bia'))).data.meus[0].foraDoSc9, true, 'a vendedora vê que ele ainda não está no SC9');
+
+    // equipe: o painel recebe o pedido sem situação (fora do SC9) e a hora da última carga para decidir "recarregar" x "conferir o número"
+    let painel = (await call('/api/prioridades', null, { cookie: admin })).data;
+    assert.equal(painel.baseEm, '2026-11-24T14:00:00.000Z');
+    const ativo = painel.ativos.find((l) => l.pedido === '888777');
+    assert.equal(ativo.situacao, null); assert.ok(Date.parse(ativo.criadoEm) > Date.parse(painel.baseEm), 'pedido feito depois da carga: é só recarregar');
+    assert.equal(painel.ativos.filter((l) => l.situacao === null).length, 1);
+
+    // o SC9 é recarregado (aqui: uma instância nova com a base nova e os mesmos dados) e o pedido entra: o aviso some sozinho nos dois lados
+    await new Promise((resolve) => server.close(resolve));
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-fora2-')); fs.cpSync(dir, dir2, { recursive: true });
+    fs.writeFileSync(path.join(dir2, 'data', 'latest.json'), JSON.stringify({ savedAt: new Date().toISOString(), orders: [linha({ pedido: '355386' }), linha({ pedido: '888777', nome: 'CLIENTE NOVO' })], faturamento: [], entregaInfo: [], valores: [] }));
+    const server2 = require(path.join(dir2, 'server.js'));
+    if (!server2.listening) await new Promise((resolve) => server2.once('listening', resolve));
+    try {
+      const base2 = 'http://127.0.0.1:' + server2.address().port;
+      const call2 = async (url, cookie) => { const r = await fetch(base2 + url, { headers: { 'X-Sc9-App': '1', ...(cookie ? { Cookie: cookie } : {}) } }); return r.json(); };
+      painel = await call2('/api/prioridades', admin);
+      assert.ok(painel.ativos.find((l) => l.pedido === '888777').situacao, 'agora tem situação');
+      assert.equal(painel.ativos.filter((l) => l.situacao === null).length, 0);
+      assert.equal((await call2(U('prioridades?ids=' + id + '&nome=Bia'))).meus[0].foraDoSc9, false);
+      assert.equal((await call2(U('pedido?pedido=888777'))).achado, true);
+    } finally { await new Promise((resolve) => server2.close(resolve)); }
+    return;
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});

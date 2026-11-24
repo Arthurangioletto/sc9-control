@@ -184,8 +184,8 @@
   /* ---------- exportar ---------- */
   const historicoTexto = (l) => (l.historico || []).map((x) => C.dataHoraCsv(x.em) + ' - ' + (x.status ? C.STATUS[x.status] || x.status : 'Atualização') + (x.texto ? ' - ' + x.texto : '')).join(' | ');
   const EXPORTAR = {
-    minhas: () => C.baixarCsv(C.nomeArquivo('minhas-solicitacoes'), ['Protocolo', 'Pedido', 'Prioridade', 'Motivo', 'Status', 'Pedida em', 'Atualizada em', 'Observação', 'Resposta da logística', 'Histórico'],
-      ((estado.prio && estado.prio.meus) || []).map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.MOTIVO[l.motivo] || '', C.STATUS[l.status], C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.observacao, l.resposta, historicoTexto(l)])),
+    minhas: () => C.baixarCsv(C.nomeArquivo('minhas-solicitacoes'), ['Protocolo', 'Pedido', 'Prioridade', 'Motivo', 'Status', 'Pedida em', 'Atualizada em', 'Observação', 'Resposta da logística', 'No SC9 agora?', 'Histórico'],
+      ((estado.prio && estado.prio.meus) || []).map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.MOTIVO[l.motivo] || '', C.STATUS[l.status], C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.observacao, l.resposta, ['recebida', 'em_analise', 'aprovada', 'em_atendimento'].includes(l.status) ? (l.foraDoSc9 ? 'Não' : 'Sim') : '', historicoTexto(l)])),
     consultas: () => C.baixarCsv(C.nomeArquivo('pedidos-consultados'), ['Pedido', 'Consultado em', 'Situação na hora', 'Filial', 'Cliente'], listaConsultas().map((x) => [x.pedido, C.dataHoraCsv(x.em), x.situacao, x.filial, x.cliente]))
   };
   // Com acesso (login) as consultas vêm do servidor (qualquer aparelho); sem acesso, só as deste aparelho.
@@ -218,10 +218,10 @@
     else if (estado.erro) blocos.push(h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro));
     else if (estado.varios) blocos.push(h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Seus pedidos' }), h('span', { class: 'mudo peq', text: estado.varios.length + ' consultados' })),
       estado.varios.map((r) => h('button', { class: 'cartao-lista', type: 'button', disabled: !r.achado, onclick: () => { estado.digitado = r.pedido; consultar(r.pedido); } },
-        h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + r.pedido }), r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Não achado', 'normal')),
-        h('div', { class: 'l2' }, h('span', { text: r.achado ? r.resumo.texto : (r.erro || 'Não achamos este pedido na base.') }))))));
+        h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + r.pedido }), r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Fora do SC9', 'alta')),
+        h('div', { class: 'l2' }, h('span', { text: r.achado ? r.resumo.texto : (r.erro || 'Ainda não está no SC9. Se o número está certo, peça prioridade: a equipe é avisada para recarregar.') }))))));
     else if (estado.consulta && estado.consulta.achado) blocos.push(cartaoResultado(estado.consulta));
-    else if (estado.consulta) blocos.push(h('section', { class: 'card' }, C.vazio('busca', 'Não achamos o pedido ' + estado.consulta.pedido, 'Confira o número. Se o pedido é de hoje, ele pode ainda não ter chegado: a base só atualiza a cada carga do SC9.' + (estado.consulta.atualizadoEm ? ' Última atualização: ' + C.dataHora(estado.consulta.atualizadoEm) + '.' : '')),
+    else if (estado.consulta) blocos.push(h('section', { class: 'card' }, C.vazio('atualizar', 'O pedido ' + estado.consulta.pedido + ' ainda não está no SC9', 'Confira o número. Se o pedido é de hoje, ele pode ainda não ter chegado: a base só atualiza a cada carga do SC9. Se o número está certo, peça prioridade mesmo assim: a equipe é avisada para recarregar o SC9.' + (estado.consulta.atualizadoEm ? ' Última atualização: ' + C.dataHora(estado.consulta.atualizadoEm) + '.' : '')),
       h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn peq', type: 'button', onclick: () => consultar(estado.digitado) }, ic('atualizar'), 'Tentar de novo'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaPrioridade(estado.consulta.pedido) }, ic('raio'), 'Pedir prioridade mesmo assim'))));
     else blocos.push(dicas());
     return blocos;
@@ -266,7 +266,7 @@
     ['normal', 'media', 'alta', 'urgente'].map((n) => h('label', null, h('input', { type: 'radio', name: 'nivel', value: n, checked: estado.f.nivel === n, onchange: () => { estado.f.nivel = n; } }), h('span', { class: 'op' }, C.NIVEL[n], h('small', { text: C.NIVEL_DICA[n] }))))));
   function previaPedido(r) {
     const d = r.detalhes || {};
-    if (!r.achado) return h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'Não achamos o pedido ' + r.pedido + ' na base. ' }), 'Confira o número. Você pode enviar mesmo assim: a equipe vai conferir.'));
+    if (!r.achado) return h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'O pedido ' + r.pedido + ' ainda não está no SC9. ' }), 'Ele (a base só atualiza a cada carga). Se o número está certo, você pode enviar a solicitação mesmo assim: a equipe é avisada para recarregar o SC9 e mostrar as informações.'));
     return h('div', { class: 'previa', role: 'group', 'aria-label': 'Dados do pedido ' + r.pedido },
       h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, h('b', { class: 'num', style: 'font-size:18px', text: 'Pedido ' + r.pedido }), C.selo(rotuloResumo(r), r.resumo.nivel)), h('p', { class: 'mudo', style: 'margin-top:4px', text: r.resumo.texto }),
       h('div', { class: 'fatos' }, C.fato('pessoa', 'Cliente', d.cliente), C.fato('predio', 'Filial', d.armazem), C.fato('caminhao', 'Transportadora', d.transportadora), C.fato('pacote', 'Itens', d.pecas ? d.pecas + ' peças' : ''), C.fato('calendario', 'Liberado em', d.liberadoEm ? C.dataHora(d.liberadoEm) : '')));
@@ -279,7 +279,7 @@
         h('div', { class: 'processo compacta forte', role: 'status' }, ic('relogio'), h('p', null, h('b', { text: 'Agora é só aguardar. ' }), 'A equipe do SC9 vai analisar e a resposta aparece em "Minhas solicitações". Não precisa enviar de novo nem cobrar por mensagem.')),
         h('div', { class: 'codigo', text: l.protocolo || '' }),
         h('div', { class: 'resumo-lista' }, [['Pedido', l.pedido], ['Prioridade', C.NIVEL[l.nivel]], ['Data e horário', C.dataHora(l.criadoEm)], ['Status', C.STATUS[l.status]]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
-        f.enviada.naoAchado ? h('div', { class: 'aviso', style: 'width:100%' }, ic('alerta'), 'Não achamos este pedido na base. A equipe vai conferir o número.') : null,
+        f.enviada.naoAchado ? h('div', { class: 'aviso', style: 'width:100%' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar o SC9. Assim que ele entrar, o andamento aparece em "Acompanhar pedidos". Se o número estava errado, fale com a expedição.')) : null,
         h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn primario', type: 'button', onclick: () => { estado.tela = 'minhas'; estado.visao = 'minhas'; desenhar(); root.scrollTo(0, 0); } }, ic('lista'), 'Ver minhas solicitações'), h('button', { class: 'btn', type: 'button', onclick: () => { f.etapa = 'form'; f.enviada = null; desenhar(); } }, 'Nova solicitação'))))];
     }
     const cab = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,32px);font-weight:800;letter-spacing:-.02em', text: 'Precisa de prioridade no pedido?' }), h('p', { class: 'mudo', style: 'margin-top:6px;font-size:16px', text: 'Informe o pedido, explique a necessidade e acompanhe a análise da logística.' })), faixaProcesso('prioridade'));
@@ -316,7 +316,7 @@
   }
   const cartaoSolicitacao = (l) => h('button', { class: 'cartao-lista', type: 'button', onclick: () => { estado.aberta = l.id; desenhar(); } },
     h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + l.pedido }), C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status), l.reforco ? C.selo('Você reforçou', 'normal', true) : null, h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
-    h('div', { class: 'l2' }, h('span', { text: 'Pedida em ' + C.dataHora(l.criadoEm) }), h('span', { text: 'Atualizada há ' + C.duracao(l.atualizadoEm || l.criadoEm) }), l.resposta ? h('span', { style: 'color:var(--tinta-2)', text: 'Equipe: ' + l.resposta }) : null, ['recebida', 'em_analise'].includes(l.status) ? h('span', { class: 'aguarde', text: 'Aguarde: a equipe do SC9 ainda vai analisar.' }) : null));
+    h('div', { class: 'l2' }, h('span', { text: 'Pedida em ' + C.dataHora(l.criadoEm) }), h('span', { text: 'Atualizada há ' + C.duracao(l.atualizadoEm || l.criadoEm) }), l.resposta ? h('span', { style: 'color:var(--tinta-2)', text: 'Equipe: ' + l.resposta }) : null, l.foraDoSc9 ? h('span', { class: 'aguarde', text: 'Este pedido ainda não está no SC9: a equipe foi avisada para recarregar.' }) : null, ['recebida', 'em_analise'].includes(l.status) ? h('span', { class: 'aguarde', text: 'Aguarde: a equipe do SC9 ainda vai analisar.' }) : null));
   function gavetaSolicitacao(l) {
     const fecha = () => { estado.aberta = null; estado.gavAnim = null; desenhar(); };
     const abre = estado.gavAnim !== l.id ? ' abre' : ''; estado.gavAnim = l.id;
@@ -324,6 +324,7 @@
       h('aside', { class: 'gaveta' + abre, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Solicitação ' + (l.protocolo || l.pedido) },
         h('div', { class: 'gaveta-cab' }, h('div', null, h('p', { class: 'mudo peq', text: l.protocolo || 'Solicitação' }), h('h3', { class: 'num', text: 'Pedido ' + l.pedido }), h('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' }, C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status))), h('button', { class: 'btn peq fantasma', type: 'button', 'aria-label': 'Fechar', onclick: fecha }, ic('fechar'))),
         h('div', { class: 'gaveta-corpo' },
+          l.foraDoSc9 ? h('div', { class: 'aviso' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar o SC9. Quando ele entrar, o andamento aparece em "Acompanhar pedidos".')) : null,
           h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Motivo', C.MOTIVO[l.motivo] || '—'], ['Pedida em', C.dataHora(l.criadoEm)], ['Observação', l.observacao || '—'], ['Última atualização', C.dataHora(l.atualizadoEm)]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
           l.resposta ? h('div', { class: 'ok', style: 'background:var(--azul-claro);border-color:var(--azul-borda);color:var(--azul-escuro)' }, ic('comentario'), h('div', null, h('b', { style: 'display:block', text: 'Resposta da logística' }), l.resposta)) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico da solicitação' }, (l.historico || []).slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? C.STATUS[x.status] || x.status : '' }), x.texto ? (x.status ? ' · ' : '') + x.texto : ''))))))];
