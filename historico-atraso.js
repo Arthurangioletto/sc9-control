@@ -536,9 +536,9 @@
     if (j.dataSolucao.trim()) { dataSolucao = OC().lerData(j.dataSolucao, new Date()); if (!dataSolucao) { j.erro = 'Não entendi a data da solução. Escreva assim: 24/11/2026.'; return desenhar(); } }
     j.salvando = true; desenhar();
     try {
-      const r = await fetch('/api/ocorrencias', { method: 'POST', credentials: 'same-origin', headers: CAB_POST, body: JSON.stringify({ acao: 'salvar', linha: { id: j.id || undefined, nf, pedido, dataOcorrencia, detalhes: j.detalhes, responsavel: j.responsavel, solucao: j.solucao, dataSolucao } }) });
+      const r = await fetch(comChave('/api/ocorrencias'), { method: 'POST', credentials: 'same-origin', headers: CAB_POST, body: JSON.stringify({ acao: 'salvar', linha: { id: j.id || undefined, nf, pedido, dataOcorrencia, detalhes: j.detalhes, responsavel: j.responsavel, solucao: j.solucao, dataSolucao } }) });
       const resp = await r.json().catch(() => ({}));
-      if (r.status === 401 || r.status === 403) { await carregarSessao(); throw new Error('Sem acesso para registrar. Entre com usuário e senha de quem tem o acesso "Ocorrências".'); }
+      if (r.status === 401 || r.status === 403) { await carregarSessao(); throw new Error(chaveLink ? 'O link não vale mais. Peça um link novo ao administrador.' : 'Sem acesso para registrar. Entre com usuário e senha de quem tem o acesso "Ocorrências".'); }
       if (!r.ok) throw new Error(resp.error || 'Não consegui salvar.');
       estado.data.ocorrencias = (resp.linhas || []).map((l) => ({ nf: l.nf, pedido: l.pedido || '', dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id }));
       ultimaSaidas = JSON.stringify([estado.data.saidas || {}, estado.data.ocorrencias]);
@@ -551,7 +551,7 @@
   function formularioDeJustificativa(it, k) {
     const lista = ocorrenciasDoPedido(estado.p, it);
     const j = estado.just && estado.just.k === k ? estado.just : null;
-    const pode = Boolean(estado.sessao && estado.sessao.pode);
+    const pode = Boolean((estado.sessao && estado.sessao.pode) || chaveLink); // o link do histórico também registra e edita
     const campo = (rot, id, chave, opc) => h('label', { class: 'campo' + ((opc && opc.larga) ? ' larga' : '') }, h('span', { text: rot }),
       opc && opc.area ? h('textarea', { id, rows: 2, placeholder: opc.dica || '', oninput: (ev) => { j[chave] = ev.target.value; } }, j[chave])
         : h('input', { id, value: j[chave], placeholder: (opc && opc.dica) || '', oninput: (ev) => { j[chave] = ev.target.value; } }));
@@ -588,7 +588,7 @@
     caixa.appendChild(h('div', { class: 'acoes-just' },
       h('button', { class: 'btn primario', type: 'button', disabled: j.salvando, onclick: () => salvarJustificativa(it), text: j.salvando ? 'Salvando…' : j.id ? 'Salvar alteração' : 'Registrar ocorrência' }),
       j.id ? h('button', { class: 'btn', type: 'button', onclick: () => { estado.just = justVazia(k); desenhar(); }, text: 'Cancelar edição' }) : null,
-      h('span', { class: 'mudo peq', text: 'Entrou como ' + (estado.sessao.nome || 'usuário') + ' · ' }), h('button', { class: 'btn peq', type: 'button', onclick: sairDaConta, text: 'Sair' })));
+      estado.sessao.pode ? [h('span', { class: 'mudo peq', text: 'Entrou como ' + (estado.sessao.nome || 'usuário') + ' · ' }), h('button', { class: 'btn peq', type: 'button', onclick: sairDaConta, text: 'Sair' })] : h('span', { class: 'mudo peq', text: 'Registrando pelo link do histórico' })));
     if (j.erro) caixa.appendChild(h('p', { class: 'erro', role: 'alert', text: j.erro }));
     return caixa;
   }

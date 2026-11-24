@@ -89,8 +89,8 @@ textarea.entrada { min-height: 90px; resize: vertical; }
 .selo { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--suave); color: var(--tinta-2); white-space: nowrap; }
 .selo::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .85; }
 .selo.sem-ponto::before { display: none; }
-.selo.azul, .selo.recebida, .selo.andamento, .selo.media { background: var(--azul-claro); color: var(--azul-escuro); }
-.selo.verde, .selo.concluida, .selo.concluido, .selo.aprovada { background: var(--verde-claro); color: #0b6b42; }
+.selo.azul, .selo.recebida, .selo.recebido, .selo.andamento, .selo.media, .selo.em_andamento { background: var(--azul-claro); color: var(--azul-escuro); }
+.selo.verde, .selo.concluida, .selo.concluido, .selo.aprovada, .selo.resolvido { background: var(--verde-claro); color: #0b6b42; }
 .selo.laranja, .selo.alta, .selo.em_analise { background: var(--laranja-claro); color: #8a4207; }
 .selo.pronto { background: #dcf5ee; color: #0a6354; }
 .selo.vermelho, .selo.urgente, .selo.atraso, .selo.nao_aprovada { background: var(--vermelho-claro); color: #9e2217; }

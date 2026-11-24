@@ -1883,6 +1883,16 @@ async function handleApi(req, res, pathname) {
   };
   const nomeLimpo = (v) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
   // Liga à conta as solicitações que a vendedora já tinha feito neste aparelho (mesmo nome, ainda sem conta).
+  const vincularAvisos = async (ids, conta) => {
+    if (!Array.isArray(ids) || !ids.length) return;
+    try {
+      const A = require("./avisos-store.js");
+      await comFila("avisos-vendedoras", async () => {
+        const feito = A.vincularConta(A.normalizarLista(await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null)), ids, conta.nome, conta.login);
+        if (feito.mudou) await objSave("avisos-vendedoras.json", { linhas: feito.linhas });
+      });
+    } catch (e) { console.error("Erro ao ligar avisos à conta:", e); }
+  };
   const vincularSolicitacoes = async (ids, conta) => {
     if (!Array.isArray(ids) || !ids.length) return;
     try {
@@ -1921,6 +1931,7 @@ async function handleApi(req, res, pathname) {
         try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
         const acao = corpo && corpo.acao;
         const ids = Array.isArray(corpo && corpo.ids) ? corpo.ids.map(String).slice(0, 100) : [];
+        const idsAvisos = Array.isArray(corpo && corpo.idsAvisos) ? corpo.idsAvisos.map(String).slice(0, 100) : [];
         if (acao === "criar") {
           const login = V.normalizarLogin(corpo.login), nome = nomeLimpo(corpo.nome);
           if (!login) return sendJson(res, 400, { error: "Login: de 3 a 24 caracteres, só letras, números, ponto, hífen ou sublinhado." });
@@ -1940,7 +1951,7 @@ async function handleApi(req, res, pathname) {
             resultado = { conta };
           });
           if (resultado.erro) return sendJson(res, resultado.status, { error: resultado.erro });
-          await vincularSolicitacoes(ids, resultado.conta);
+          await vincularSolicitacoes(ids, resultado.conta); await vincularAvisos(idsAvisos, resultado.conta);
           return sendJson(res, 200, { ok: true, token: V.emitirSessao(SESSION_SECRET, resultado.conta), conta: V.visaoPublica(resultado.conta) });
         }
         if (acao === "entrar" || acao === "trocar-codigo") {
@@ -1972,7 +1983,7 @@ async function handleApi(req, res, pathname) {
               conta = contas[i];
               await objSave("vendedoras-contas.json", { contas });
             });
-            await vincularSolicitacoes(ids, conta);
+            await vincularSolicitacoes(ids, conta); await vincularAvisos(idsAvisos, conta);
           }
           return sendJson(res, 200, { ok: true, token: V.emitirSessao(SESSION_SECRET, conta), conta: V.visaoPublica(conta) });
         }
@@ -1984,6 +1995,40 @@ async function handleApi(req, res, pathname) {
         if (!conta) return sendJson(res, 200, { conta: null, consultas: [] });
         const consultas = (await consultasVendedoras(conta.login, 500)).map((l) => ({ pedido: l.pedido, em: l.em, achado: l.achado, situacao: l.situacao, filial: l.filial, cliente: l.cliente }));
         return sendJson(res, 200, { conta: { login: conta.login, nome: conta.nome }, consultas });
+      }
+      if (pathname === "/api/vendedoras/aviso" && method === "POST") {
+        // Com login o limite é por vendedora (várias dividem o mesmo IP da empresa); sem login, por IP.
+        const quemLimite = req.headers["x-vend-token"] ? await contaDoToken(req) : null;
+        if (limiteVendedoras(quemLimite ? "va|c|" + quemLimite.login : "va|" + ip, quemLimite ? 10 : 8, 10 * 60 * 1000) || limiteVendedoras("va-total", 60, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitos avisos em pouco tempo. Aguarde alguns minutos ou fale com a expedição." });
+        let corpo;
+        try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const A = require("./avisos-store.js"), P = require("./prioridades-store.js");
+        const pedido = P.numeroDoPedido(corpo && corpo.pedido);
+        if (!pedido) return sendJson(res, 400, { error: "Número do pedido inválido (só números, de 4 a 10 dígitos)." });
+        const r = await rastrearPedido(pedido, []);
+        const contaAviso = await contaDoToken(req); // com acesso, o nome e o login vêm da conta
+        let resultado, linhas;
+        await comFila("avisos-vendedoras", async () => {
+          const atual = await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null);
+          const feito = A.aplicar(A.normalizarLista(atual), { acao: "criar", pedido, tipo: corpo.tipo, texto: corpo.texto, pedidoPor: contaAviso ? contaAviso.nome : corpo.pedidoPor, conta: contaAviso ? contaAviso.login : "", filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, "", Date.now());
+          if (feito.erro) { resultado = { erro: feito.erro }; return; }
+          resultado = feito.resultado; linhas = feito.linhas;
+          await objSave("avisos-vendedoras.json", { linhas });
+        });
+        if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
+        return sendJson(res, 200, { ok: true, naoAchado: !r.achado, linha: Object.assign(A.visaoMeu(linhas.find((l) => l.id === resultado.id)), { foraDoSc9: !r.achado }) });
+      }
+      if (pathname === "/api/vendedoras/avisos" && method === "GET") {
+        if (limiteVendedoras("vc|" + ip, 40, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
+        const A = require("./avisos-store.js"), V = require("./vendedoras-contas.js"), Rastreio = require("./rastreio.js");
+        const conta = await contaDoToken(req), snap = await loadSnapshot().catch(() => null);
+        const meus = new Set(String(consulta.get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 100));
+        const linhas = A.normalizarLista(await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null));
+        // cada vendedora só recebe os avisos que ela mesma enviou
+        return sendJson(res, 200, {
+          meus: linhas.filter((l) => meus.has(l.id) || A.ehDela(l, conta && conta.login)).map((l) => Object.assign(A.visaoMeu(l), { foraDoSc9: A.ATIVOS.includes(l.status) && !Rastreio.montarRastreio(snap, l.pedido, { agora: new Date() }).achado })),
+          conta: conta ? V.visaoPublica(conta) : null, agora: new Date().toISOString()
+        });
       }
       if (pathname === "/api/vendedoras/prioridades" && method === "GET") {
         if (limiteVendedoras("vc|" + ip, 40, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
@@ -2005,7 +2050,8 @@ async function handleApi(req, res, pathname) {
         });
       }
       if (pathname === "/api/vendedoras/prioridade" && method === "POST") {
-        if (limiteVendedoras("vp|" + ip, 5, 10 * 60 * 1000) || limiteVendedoras("vp-total", 60, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitos pedidos de prioridade em pouco tempo. Aguarde alguns minutos ou fale com a expedição." });
+        const quemLimite = req.headers["x-vend-token"] ? await contaDoToken(req) : null; // com login o limite é por vendedora (várias dividem o IP da empresa)
+        if (limiteVendedoras(quemLimite ? "vp|c|" + quemLimite.login : "vp|" + ip, quemLimite ? 10 : 8, 10 * 60 * 1000) || limiteVendedoras("vp-total", 60, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitos pedidos de prioridade em pouco tempo. Aguarde alguns minutos ou fale com a expedição." });
         let corpo;
         try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
         const P = require("./prioridades-store.js");
@@ -2089,6 +2135,39 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       console.error("Erro nos acessos das vendedoras:", e);
       return sendJson(res, 500, erroPublico(e, "erro nos acessos das vendedoras"));
+    }
+  }
+
+  // Equipe (logada, perfil "ocorrencias" ou administrador): avisos que as vendedoras mandaram para a expedição; assume, responde e resolve.
+  if (pathname === "/api/avisos" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    const A = require("./avisos-store.js");
+    try {
+      const responder = async (linhas) => {
+        const Rastreio = require("./rastreio.js"), snap = await loadSnapshot().catch(() => null);
+        const ordem = { recebido: 0, em_andamento: 1 };
+        const ativos = linhas.filter((l) => A.ATIVOS.includes(l.status)).sort((a, b) => (ordem[a.status] - ordem[b.status]) || String(a.criadoEm).localeCompare(String(b.criadoEm)));
+        const demais = linhas.filter((l) => !A.ATIVOS.includes(l.status)).sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 300);
+        const situacao = (l) => { const r = Rastreio.montarRastreio(snap, l.pedido, { agora: new Date() }); return r.achado ? { texto: r.resumo.texto, nivel: r.resumo.nivel, cliente: r.detalhes.cliente, armazem: r.detalhes.armazem } : null; };
+        return sendJson(res, 200, { ativos: ativos.map((l) => Object.assign({}, l, { situacao: situacao(l) })), demais, baseEm: snap && snap.savedAt ? new Date(snap.savedAt).toISOString() : null, agora: new Date().toISOString() });
+      };
+      if (method === "GET") return responder(A.normalizarLista(await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null)));
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      let resultado, linhas;
+      await comFila("avisos-vendedoras", async () => {
+        const atual = await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null);
+        const feito = A.aplicar(A.normalizarLista(atual), Object.assign({}, corpo, { acao: ["status", "assumir", "interno"].includes(corpo && corpo.acao) ? corpo.acao : "status" }), sess.usuario, Date.now());
+        if (feito.erro) { resultado = { erro: feito.erro }; return; }
+        linhas = feito.linhas; resultado = feito.resultado;
+        await objSave("avisos-vendedoras.json", { linhas });
+      });
+      if (resultado.erro) return sendJson(res, resultado.erro.includes("não encontrado") ? 404 : 400, { error: resultado.erro });
+      return responder(linhas);
+    } catch (e) {
+      console.error("Erro nos avisos das vendedoras:", e);
+      return sendJson(res, 500, erroPublico(e, "erro nos avisos"));
     }
   }
 
@@ -2180,9 +2259,14 @@ async function handleApi(req, res, pathname) {
   // (cliente, pedido, despacho, Saída p/ Expedição). Na primeira abertura entram as 3 linhas que a expedição já tinha na planilha.
   if (pathname === "/api/ocorrencias" && (method === "GET" || method === "POST")) {
     // ler: quem tem acesso, ou o link sem senha do Histórico de Atraso (?k=); registrar/apagar/importar: sempre usuário e senha
-    let sess = null;
+    // Gravar (só "salvar": registrar ou editar) também vale com o link do histórico, para quem recebeu o link (ex.: a Erica) poder
+    // justificar atrasos sem usuário e senha. Apagar e importar do Excel continuam exigindo usuário e senha. Fica registrado como "Link do histórico".
+    let sess = null, viaLink = false;
     if (method === "GET" && (await linkAtrasoValido(req))) { /* leitura liberada pelo link com código */ }
-    else { sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return; }
+    else if (method === "POST" && !(await getSession(req)) && (await linkAtrasoValido(req))) {
+      viaLink = true;
+      if (limiteVendedoras("oc-link|" + ipDe(req), 60, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas alterações em pouco tempo. Aguarde alguns minutos." });
+    } else { sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return; }
     const Oc = require("./ocorrencias-store.js");
     const Lookup = require("./ocorrencias-lookup.js");
     res.setHeader("Cache-Control", "no-store");
@@ -2207,10 +2291,11 @@ async function handleApi(req, res, pathname) {
       }
       let corpo;
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      if (viaLink && !(corpo && corpo.acao === "salvar")) return sendJson(res, 403, { error: "Com o link só dá para registrar e editar. Para apagar ou importar, entre com usuário e senha." });
       let resultado;
       await comFila("ocorrencias", async () => {
         const dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
-        resultado = Oc.aplicar(Oc.normalizarLista(dado), corpo, sess.usuario, Date.now());
+        resultado = Oc.aplicar(Oc.normalizarLista(dado), corpo, sess ? sess.usuario : "Link do histórico", Date.now());
         if (!resultado.erro) await objSave("ocorrencias-expedicao.json", { linhas: resultado.linhas });
       });
       if (resultado.erro) return sendJson(res, resultado.erro.startsWith("Linha não encontrada") ? 404 : 400, { error: resultado.erro });
