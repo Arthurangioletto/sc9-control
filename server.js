@@ -407,6 +407,8 @@ SERVABLE.add("atraso-historico-ui.js");
 SERVABLE.add("pedidos-fixados.js");
 SERVABLE.add("ocorrencias.js");
 SERVABLE.add("ocorrencias-ui.js");
+SERVABLE.add("central.css");
+SERVABLE.add("central-ui.js");
 SERVABLE.add("vendedoras.html");
 SERVABLE.add("vendedoras.js");
 SERVABLE.add("prioridades.html");
@@ -431,7 +433,7 @@ function serveStatic(req, res, urlPath) {
     const cabecalhos = { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache", "ETag": e.etag, "Vary": "Accept-Encoding" };
     if (name === "vendedoras.html" || name === "prioridades.html") {
       // páginas sem React e sem scripts de terceiros: só o próprio servidor
-      cabecalhos["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+      cabecalhos["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
       cabecalhos["Referrer-Policy"] = "no-referrer"; cabecalhos["X-Content-Type-Options"] = "nosniff"; cabecalhos["X-Robots-Tag"] = "noindex, nofollow";
     }
     if (name === "conferencia-de-lotes.html" || name === "transferencia-de-lotes.html") {

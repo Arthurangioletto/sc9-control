@@ -105,7 +105,7 @@ test('prioridades: protocolo, motivo, 4 níveis, não duplica, assume, comenta, 
 
 test('servidor: link das vendedoras, rastreio sem vazar dados, pedido de prioridade com limites e painel da equipe', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-vend-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   const data = path.join(dir, 'data'); fs.mkdirSync(data);
   const hoje = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
   fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify(snap([
@@ -191,5 +191,7 @@ test('servidor: link das vendedoras, rastreio sem vazar dados, pedido de priorid
     const pagina = await fetch(base + '/vendedoras.html');
     assert.match(pagina.headers.get('content-security-policy') || '', /default-src 'none'/);
     assert.match(pagina.headers.get('referrer-policy') || '', /no-referrer/);
+    assert.match(pagina.headers.get('content-security-policy') || '', /style-src 'self'/);
+    for (const arq of ['central.css', 'central-ui.js']) assert.equal((await fetch(base + '/' + arq)).status, 200, arq + ' precisa ser servido');
   } finally { await new Promise((resolve) => server.close(resolve)); }
 });
