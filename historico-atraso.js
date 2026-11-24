@@ -66,8 +66,11 @@
     const analises = X().analisar(aplicarSaidas((data && data.meses) || {}, data && data.saidas));
     const exp = {};
     for (const m of Object.values((data && data.expedicao) || {})) Object.assign(exp, m);
+    const fat = {}; // pedidos e peças faturados por dia (data de emissão da nota)
+    for (const m of Object.values((data && data.faturados) || {})) Object.assign(fat, m);
     const dias = new Set(analises.map((a) => a.reg.dia));
     Object.keys(exp).forEach((d) => dias.add(d));
+    Object.keys(fat).forEach((d) => dias.add(d));
     const meses = [...new Set([...dias].map((d) => d.slice(0, 7)))].sort().reverse();
     const porDia = new Map(analises.map((a) => [a.reg.dia, a]));
     const entregues = (data && data.entregues) || {};
@@ -77,7 +80,7 @@
     const diasExp = Object.keys(exp).sort();
     const ocorr = new Map(); // nota fiscal → ocorrências registradas pela expedição
     for (const l of (data && data.ocorrencias) || []) { const n = nfNum(l && l.nf); if (!n) continue; if (!ocorr.has(n)) ocorr.set(n, []); ocorr.get(n).push(l); }
-    return { analises, porDia, exp, meses, historico, diasExp, entregues, saidas, ocorr };
+    return { analises, porDia, exp, fat, meses, historico, diasExp, entregues, saidas, ocorr };
   }
 
   // Quantas fotos seguidas o pedido está em atraso, terminando no dia escolhido.
@@ -391,22 +394,25 @@
     const atraso = dias.filter((d) => estado.p.porDia.has(d)).map((d) => ({ dia: d, v: estado.p.porDia.get(d).resumo.tot }));
     const desp = dias.filter((d) => estado.p.exp[d]).map((d) => ({ dia: d, v: estado.p.exp[d].pedidos }));
     const pecas = dias.filter((d) => estado.p.exp[d]).map((d) => ({ dia: d, v: estado.p.exp[d].pecas }));
+    const fatur = dias.filter((d) => estado.p.fat[d]).map((d) => ({ dia: d, v: estado.p.fat[d].pedidos }));
     return h('section', { class: 'cartao', 'aria-label': 'Gráficos do mês' },
       h('h2', { text: 'O mês em números' }),
       h('p', { class: 'mudo', text: 'Cada barra é um dia (clique para destacar o dia; o número aparece na barra escolhida ou ao passar o mouse). Em atraso: quantos pedidos estavam atrasados na foto. Despachados: pedidos da planilha de Entrega com a data daquele dia.' }),
       h('div', { class: 'graficos' },
         barras('Pedidos em atraso por dia', 'Estoque + faturamento', atraso, '#c63828', (v) => fmtN(v)),
         barras('Pedidos despachados por dia', 'Pedidos da planilha de Entrega', desp, '#1f8a4c', (v) => fmtN(v)),
+        fatur.length ? barras('Pedidos faturados por dia', 'Notas emitidas (pode faturar mais do que despachar)', fatur, '#b87708', (v) => fmtN(v)) : null,
         barras('Peças despachadas por dia', 'Soma das peças desses pedidos', pecas, '#123b7a', (v) => (v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil' : fmtN(v)))));
   }
 
   function tabelaDoMes() {
-    const dias = diasDoMes(estado.mes).filter((d) => estado.p.porDia.has(d) || estado.p.exp[d]);
+    const dias = diasDoMes(estado.mes).filter((d) => estado.p.porDia.has(d) || estado.p.exp[d] || estado.p.fat[d]);
     if (!dias.length) return null;
-    let sd = 0, sp = 0, nd = 0;
+    let sd = 0, sp = 0, nd = 0, sf = 0, sfp = 0, nf = 0;
     const linhas = dias.map((d) => {
-      const a = estado.p.porDia.get(d), ex = estado.p.exp[d];
+      const a = estado.p.porDia.get(d), ex = estado.p.exp[d], ft = estado.p.fat[d];
       if (ex) { sd += ex.pedidos; sp += ex.pecas; nd++; }
+      if (ft) { sf += ft.pedidos; sfp += ft.pecas; nf++; }
       const ant = a && a.cmp ? a.cmp.resumoAnt.tot : null;
       return h('tr', { class: 'clicavel' + (d === estado.dia ? ' sel' : ''), onclick: () => escolherDia(d) },
         h('td', { class: 'ped', text: ddmm(d) + ' · ' + semana(d, 'short').replace('.', '') }),
@@ -416,15 +422,17 @@
         h('td', { class: 'num', 'data-l': '% dos pedidos', text: a ? pct(a.resumo.tot, a.resumo.total) : '—' }),
         h('td', { class: 'num', 'data-l': 'Mudou vs dia anterior' }, a && ant != null ? seta(a.resumo.tot, ant, true) : (a ? h('span', { class: 'mudo', text: 'primeiro dia' }) : '—')),
         h('td', { class: 'num', 'data-l': 'Pedidos despachados', text: ex ? fmtN(ex.pedidos) : '—' }),
-        h('td', { class: 'num', 'data-l': 'Peças despachadas', text: ex ? fmtN(ex.pecas) : '—' }));
+        h('td', { class: 'num', 'data-l': 'Peças despachadas', text: ex ? fmtN(ex.pecas) : '—' }),
+        h('td', { class: 'num', 'data-l': 'Pedidos faturados', text: ft ? fmtN(ft.pedidos) : '—' }),
+        h('td', { class: 'num', 'data-l': 'Peças faturadas', text: ft ? fmtN(ft.pecas) : '—' }));
     });
     return h('section', { class: 'cartao', 'aria-label': 'Dia a dia do mês' },
       h('h2', { text: 'Dia a dia de ' + rotuloMes(estado.mes) }),
       h('p', { class: 'mudo', text: 'Todos os dias do mês em uma tabela. Clique na linha para abrir os pedidos do dia.' }),
       h('div', { class: 'rolagem' }, h('table', { class: 'tab mes' },
-        h('thead', null, h('tr', null, ['Dia', 'Em atraso', 'Estoque', 'Faturamento', '% dos pedidos', 'Mudou vs dia anterior', 'Pedidos despachados', 'Peças despachadas'].map((t, i) => h('th', { class: i ? 'num' : '', text: t })))),
+        h('thead', null, h('tr', null, ['Dia', 'Em atraso', 'Estoque', 'Faturamento', '% dos pedidos', 'Mudou vs dia anterior', 'Pedidos despachados', 'Peças despachadas', 'Pedidos faturados', 'Peças faturadas'].map((t, i) => h('th', { class: i ? 'num' : '', title: i === 7 || i === 8 ? 'Pedidos com nota fiscal emitida neste dia (aba SF2 do SC9). Pode faturar mais do que despachar.' : '', text: t })))),
         h('tbody', null, linhas),
-        nd ? h('tfoot', null, h('tr', null, h('td', { text: 'Total do mês' }), h('td', { colspan: 5, class: 'mudo', text: nd + (nd === 1 ? ' dia com despacho' : ' dias com despacho') + ' · média de ' + fmtN(sd / nd) + ' pedidos e ' + fmtN(sp / nd) + ' peças por dia' }), h('td', { class: 'num', text: fmtN(sd) }), h('td', { class: 'num', text: fmtN(sp) }))) : null)));
+        nd || nf ? h('tfoot', null, h('tr', null, h('td', { text: 'Total do mês' }), h('td', { colspan: 5, class: 'mudo', text: [nd ? nd + (nd === 1 ? ' dia com despacho' : ' dias com despacho') + ' · média de ' + fmtN(sd / nd) + ' pedidos por dia' : '', nf ? nf + (nf === 1 ? ' dia com faturamento' : ' dias com faturamento') + ' · média de ' + fmtN(sf / nf) + ' pedidos por dia' : ''].filter(Boolean).join(' · ') }), h('td', { class: 'num', text: nd ? fmtN(sd) : '—' }), h('td', { class: 'num', text: nd ? fmtN(sp) : '—' }), h('td', { class: 'num', text: nf ? fmtN(sf) : '—' }), h('td', { class: 'num', text: nf ? fmtN(sfp) : '—' }))) : null)));
   }
 
   function cartaoKpi(titulo, valor, sub, delta, tom, dica) {
@@ -458,6 +466,12 @@
     kpis.append(
       cartaoKpi('Pedidos despachados', dp.atual ? fmtN(dp.atual.pedidos) : '—', dp.atual ? 'na planilha de Entrega neste dia' : 'sem pedidos na planilha de Entrega', dp.atual && dp.ref ? h('span', { class: 'ks' }, seta(dp.atual.pedidos, dp.ref.pedidos, false), ' vs ' + ddmm(dp.refDia)) : null, 'ok', 'Pedidos da planilha de Entrega com a data deste dia (cada pedido conta uma vez).'),
       cartaoKpi('Peças despachadas', dp.atual ? fmtN(dp.atual.pecas) : '—', dp.atual ? 'peças desses pedidos' : '', dp.atual && dp.ref ? h('span', { class: 'ks' }, seta(dp.atual.pecas, dp.ref.pecas, false), ' vs ' + ddmm(dp.refDia)) : null, 'ok', 'Soma das peças dos pedidos despachados neste dia (itens do pedido na base do SC9).'));
+    const ft = estado.p.fat[dia];
+    const diasFat = Object.keys(estado.p.fat).sort().filter((d) => d < dia);
+    const ftRef = diasFat.length ? estado.p.fat[diasFat[diasFat.length - 1]] : null;
+    kpis.append(
+      cartaoKpi('Pedidos faturados', ft ? fmtN(ft.pedidos) : '—', ft ? (dp.atual ? (ft.pedidos > dp.atual.pedidos ? 'faturou ' + fmtN(ft.pedidos - dp.atual.pedidos) + ' a mais do que despachou' : ft.pedidos < dp.atual.pedidos ? 'faturou ' + fmtN(dp.atual.pedidos - ft.pedidos) + ' a menos do que despachou' : 'o mesmo que despachou') : 'notas emitidas neste dia') : 'sem faturamento registrado neste dia', ft && ftRef ? h('span', { class: 'ks' }, seta(ft.pedidos, ftRef.pedidos, false), ' vs ' + ddmm(diasFat[diasFat.length - 1])) : null, 'ok', 'Pedidos com nota fiscal emitida neste dia (data de emissão da aba SF2 do SC9); cada pedido conta uma vez. Pode faturar mais do que despachar.'),
+      cartaoKpi('Peças faturadas', ft ? fmtN(ft.pecas) : '—', ft ? 'peças desses pedidos' : '', ft && ftRef ? h('span', { class: 'ks' }, seta(ft.pecas, ftRef.pecas, false), ' vs ' + ddmm(diasFat[diasFat.length - 1])) : null, 'ok', 'Soma das peças dos pedidos faturados neste dia (itens do pedido na base do SC9).'));
     caixa.appendChild(kpis);
     const painel = a ? painelDeAcoes(a) : null;
     if (painel) caixa.appendChild(painel);
