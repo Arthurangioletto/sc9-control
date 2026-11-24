@@ -54,6 +54,12 @@
       } catch (e) { setSessao({ pode: false, authed: false }); }
     }, []);
     useEffect(() => { verSessao(); }, [verSessao]);
+    // a lista de pedidos atrasados da página registrou uma ocorrência: recarrega
+    useEffect(() => {
+      const ao = () => { carregar(); };
+      root.addEventListener('sc9-ocorrencias-mudou', ao);
+      return () => root.removeEventListener('sc9-ocorrencias-mudou', ao);
+    }, [carregar]);
     // botão "Justificar atraso" da lista de pedidos atrasados: abre o quadro já com o pedido (e a nota, se tiver) e a data de hoje
     useEffect(() => {
       const ao = (ev) => {
