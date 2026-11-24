@@ -9,7 +9,7 @@
   const ACAO = { criado: 'Pedido criado', reforco: 'Pedido reforçado', status: 'Status', assumir: 'Assumiu', interno: 'Comentário interno' };
   const VAZIO = { nivel: '', status: '', vendedora: '', filial: '', de: '', ate: '' };
   const ATIVOS = ['recebida', 'em_analise', 'aprovada', 'em_atendimento'];
-  const estado = { sessao: null, login: { usuario: '', senha: '', erro: '', entrando: false }, dados: null, erro: '', respostas: {}, internos: {}, filtro: Object.assign({}, VAZIO), aberta: null, gavAnim: null, salvando: '', vistos: null, novos: new Set(), link: null, linkErro: '', mostraLink: false, carregando: true, aba: 'fila', contas: null, contasErro: '', codigoTemp: null };
+  const estado = { sessao: null, login: { usuario: '', senha: '', erro: '', entrando: false }, dados: null, erro: '', respostas: {}, internos: {}, filtro: Object.assign({}, VAZIO), aberta: null, gavAnim: null, salvando: '', vistos: null, novos: new Set(), link: null, linkErro: '', mostraLink: false, carregando: true, aba: 'fila', contas: null, contasErro: '', codigoTemp: null, consultas: null, filtroConta: '' };
 
   async function pedir(url, opcoes) {
     const r = await root.fetch(url, Object.assign({ cache: 'no-store', credentials: 'same-origin' }, opcoes, { headers: CAB }));
@@ -50,7 +50,7 @@
   }
   async function carregarContas() {
     if (!estado.sessao || !estado.sessao.admin) return;
-    try { estado.contas = (await pedir('/api/vendedoras-contas')).contas; estado.contasErro = ''; } catch (e) { estado.contasErro = e.message; }
+    try { estado.contas = (await pedir('/api/vendedoras-contas')).contas; estado.contasErro = ''; estado.consultas = (await pedir('/api/vendedoras-consultas?max=2000')).consultas; } catch (e) { estado.contasErro = e.message; }
     desenhar();
   }
   async function acaoConta(c, acao) {
@@ -143,6 +143,20 @@
   }
 
   /* ---------- acessos das vendedoras (só administrador) ---------- */
+  const consultasFiltradas = () => (estado.consultas || []).filter((x) => !estado.filtroConta || x.conta === estado.filtroConta);
+  function exportarConsultas() {
+    C.baixarCsv(C.nomeArquivo('consultas-das-vendedoras'), ['Consultado em', 'Vendedora', 'Login', 'Pedido', 'Situação na hora', 'Filial', 'Cliente'], consultasFiltradas().map((x) => [C.dataHoraCsv(x.em), x.nome, x.conta, x.pedido, x.situacao, x.filial, x.cliente]));
+  }
+  function cartaoConsultas() {
+    const lista = consultasFiltradas(), contas = estado.contas || [];
+    return h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('div', null, h('h2', { text: 'Pedidos consultados pelas vendedoras' }), h('p', { class: 'mudo peq', text: 'Só de quem entrou com login (quem usa só o link não é identificada). Cada vendedora vê apenas as próprias consultas; aqui você vê todas. Guarda 90 dias.' })),
+      h('button', { class: 'btn peq primario', type: 'button', disabled: !lista.length, onclick: exportarConsultas }, ic('baixar'), 'Baixar consultas (CSV)')),
+      h('div', { class: 'filtros', style: 'margin-bottom:12px' }, h('div', null, h('label', { class: 'rotulo', for: 'f-conta', text: 'Vendedora' }), h('select', { id: 'f-conta', class: 'entrada', onchange: (ev) => { estado.filtroConta = ev.target.value; desenhar(); } }, h('option', { value: '', text: 'Todas' }), contas.map((c) => h('option', { value: c.login, text: c.nome + ' (' + c.login + ')', selected: estado.filtroConta === c.login }))))),
+      !estado.consultas ? C.esqueleto(2) : !lista.length ? C.vazio('busca', 'Nenhuma consulta registrada ainda', 'Aparece aqui quando uma vendedora com login consultar um pedido.')
+        : h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' }, h('thead', null, h('tr', null, ['Quando', 'Vendedora', 'Pedido', 'Situação na hora', 'Filial'].map((t) => h('th', { scope: 'col', text: t })))),
+          h('tbody', null, lista.slice(0, 200).map((x) => h('tr', null, h('td', { text: C.dataHora(x.em) }), h('td', null, x.nome, h('span', { class: 'sub', text: 'login ' + x.conta })), h('td', null, h('span', { class: 'pedido', text: x.pedido })), h('td', { text: x.situacao || '—' }), h('td', { text: x.filial || '—' })))))),
+      lista.length > 200 ? h('p', { class: 'dica', text: 'Mostrando as 200 mais recentes de ' + lista.length + '. O CSV leva todas.' }) : null);
+  }
   function telaAcessos() {
     const cs = estado.contas;
     return h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('div', null, h('h2', { text: 'Acessos das vendedoras' }), h('p', { class: 'mudo peq', text: 'Login e código que elas criam (opcional) para acompanhar o que pediram em qualquer aparelho. O código ninguém vê, nem você: se esquecerem, redefina.' })), h('button', { class: 'btn peq', type: 'button', onclick: carregarContas }, ic('atualizar'), 'Atualizar')),
@@ -150,8 +164,8 @@
       estado.codigoTemp ? h('div', { class: 'aviso', style: 'flex-direction:column;align-items:stretch;margin-bottom:14px', role: 'status' }, h('div', null, h('b', { text: 'Código temporário de ' + estado.codigoTemp.nome + ' (login ' + estado.codigoTemp.login + '). ' }), 'Aparece só agora. Passe para ela (não por e-mail): ela entra com ele e depois troca em "Seu acesso".'),
         h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' }, h('span', { class: 'cx-codigo', text: estado.codigoTemp.codigo }), h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(estado.codigoTemp.codigo, 'Código copiado.') }, ic('copiar'), 'Copiar'), h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.codigoTemp = null; desenhar(); } }, 'Já passei, fechar'))) : null,
       !cs ? C.esqueleto(2) : !cs.length ? C.vazio('usuario', 'Nenhuma vendedora criou acesso ainda', 'Elas encontram a opção "Entrar" no alto da página do link das vendedoras.')
-        : h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' }, h('thead', null, h('tr', null, ['Nome', 'Login', 'Solicitações', 'Criado em', 'Último acesso', 'Situação', ''].map((t) => h('th', { scope: 'col', text: t })))),
-          h('tbody', null, cs.map((c) => h('tr', null, h('td', { text: c.nome }), h('td', { text: c.login }), h('td', { text: String(c.solicitacoes) }), h('td', { text: C.dataHora(c.criadoEm) }), h('td', { text: c.ultimoAcesso ? C.dataHora(c.ultimoAcesso) : '—' }), h('td', null, C.selo(c.ativo ? 'Ativo' : 'Desativado', c.ativo ? 'concluida' : 'nao_aprovada')),
+        : h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' }, h('thead', null, h('tr', null, ['Nome', 'Login', 'Solicitações', 'Consultas', 'Criado em', 'Último acesso', 'Situação', ''].map((t) => h('th', { scope: 'col', text: t })))),
+          h('tbody', null, cs.map((c) => h('tr', null, h('td', { text: c.nome }), h('td', { text: c.login }), h('td', { text: String(c.solicitacoes) }), h('td', { text: String(c.consultas || 0) }), h('td', { text: C.dataHora(c.criadoEm) }), h('td', { text: c.ultimoAcesso ? C.dataHora(c.ultimoAcesso) : '—' }), h('td', null, C.selo(c.ativo ? 'Ativo' : 'Desativado', c.ativo ? 'concluida' : 'nao_aprovada')),
             h('td', null, h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' }, h('button', { class: 'btn peq', type: 'button', onclick: () => acaoConta(c, 'redefinir') }, 'Redefinir código'), h('button', { class: 'btn peq' + (c.ativo ? ' perigo' : ''), type: 'button', onclick: () => acaoConta(c, c.ativo ? 'desativar' : 'ativar') }, c.ativo ? 'Desativar' : 'Ativar')))))))));
   }
   function abas() {
@@ -254,7 +268,7 @@
         abas(),
         estado.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro) : null,
         estado.mostraLink && estado.sessao.admin ? cartaoLink() : null,
-        estado.aba === 'exportar' ? (d ? telaExportar(linhas) : C.esqueleto(2)) : estado.aba === 'acessos' && estado.sessao.admin ? telaAcessos() : null,
+        estado.aba === 'exportar' ? (d ? telaExportar(linhas) : C.esqueleto(2)) : estado.aba === 'acessos' && estado.sessao.admin ? [telaAcessos(), cartaoConsultas()] : null,
         estado.aba !== 'fila' ? null : d ? indicadores() : C.esqueleto(2),
         estado.aba !== 'fila' ? null : d ? h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Solicitações' }), h('span', { class: 'mudo peq', text: linhas.length + (algumFiltro() ? ' de ' + todas().length : '') + (todas().length === 1 ? ' solicitação' : ' solicitações') })), barraFiltros(), h('div', { style: 'margin-top:14px' }, tabela(linhas))) : null);
     }

@@ -153,7 +153,7 @@ test('servidor: link das vendedoras, rastreio sem vazar dados, pedido de priorid
     assert.equal(sem.status, 403, 'POST sem o cabeçalho do app');
     r = await call('/api/vendedoras/prioridades?ids=' + id + '&k=' + k);
     assert.equal(r.data.meus.length, 1); assert.equal(r.data.meus[0].status, 'recebida'); assert.equal(r.data.meus[0].historico[0].status, 'recebida');
-    assert.deepEqual(Object.keys(r.data.fila[0]).sort(), ['criadoEm', 'nivel', 'pedido', 'status']);
+    assert.equal(r.data.fila, undefined, 'não existe mais lista geral para as vendedoras: cada uma vê só o que é dela');
     assert.equal((await call('/api/vendedoras/prioridades?ids=outro&k=' + k)).data.meus.length, 0, 'só vê o que é dela (id)');
 
     // equipe

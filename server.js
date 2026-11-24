@@ -1266,6 +1266,36 @@ const RATE_LIMIT_MAX = 240; // por IP, por minuto — ampla margem pra várias p
 const rateLimitPorIp = new Map();
 // Limites mais duros para a área das vendedoras (link com código, sem login): por IP e no total. Devolve true se passou do limite.
 const limitesVendedoras = new Map();
+// Registro das consultas de pedido feitas por vendedoras COM acesso (login): quem consultou qual pedido e quando, em vendedoras-consultas.json.
+// As consultas vão para uma fila na memória e são gravadas juntas a cada poucos segundos (não pesa o armazenamento a cada busca).
+// Sem login não há registro (não dá para saber quem é). Guarda 90 dias e no máximo 5000 linhas.
+const consultasPendentes = [], ultimaConsultaPorConta = new Map();
+let gravandoConsultasEm = null;
+function registrarConsultaVendedora(conta, r) {
+  const chave = conta.login + "|" + (r && r.pedido), agora = Date.now();
+  if (agora - (ultimaConsultaPorConta.get(chave) || 0) < 10 * 60 * 1000) return; // o mesmo pedido em 10 min conta uma vez
+  ultimaConsultaPorConta.set(chave, agora);
+  if (ultimaConsultaPorConta.size > 5000) for (const [k, t] of ultimaConsultaPorConta) if (agora - t > 10 * 60 * 1000) ultimaConsultaPorConta.delete(k);
+  const d = (r && r.detalhes) || {}, txt = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, n);
+  consultasPendentes.push({ conta: conta.login, nome: txt(conta.nome, 60), pedido: txt(r && r.pedido, 12), achado: Boolean(r && r.achado), situacao: r && r.achado && r.resumo ? txt(r.resumo.texto, 200) : "não achado na base", nivel: r && r.achado && r.resumo ? txt(r.resumo.nivel, 12) : "", filial: txt(d.armazem, 40), cliente: txt(d.cliente, 60), em: new Date(agora).toISOString() });
+  if (!gravandoConsultasEm) { gravandoConsultasEm = setTimeout(() => { gravandoConsultasEm = null; gravarConsultasVendedoras().catch((e) => console.error("Erro ao gravar consultas das vendedoras:", e)); }, 4000); if (gravandoConsultasEm.unref) gravandoConsultasEm.unref(); }
+}
+async function gravarConsultasVendedoras() {
+  if (!consultasPendentes.length) return;
+  const lote = consultasPendentes.splice(0);
+  await comFila("vendedoras-consultas", async () => {
+    const dado = await objLoad("vendedoras-consultas.json", { fresh: true }).catch(() => null);
+    const corte = Date.now() - 90 * 864e5;
+    const antigas = (dado && Array.isArray(dado.linhas) ? dado.linhas : []).filter((l) => l && Date.parse(l.em) >= corte);
+    await objSave("vendedoras-consultas.json", { linhas: antigas.concat(lote).slice(-5000) });
+  });
+}
+// Lê o registro (já com o que ainda estava na fila), da mais nova para a mais antiga; filtra por login se vier.
+async function consultasVendedoras(login, max) {
+  await gravarConsultasVendedoras();
+  const dado = await objLoad("vendedoras-consultas.json", { fresh: true }).catch(() => null);
+  return (dado && Array.isArray(dado.linhas) ? dado.linhas : []).filter((l) => l && (!login || l.conta === login)).reverse().slice(0, max || 500);
+}
 let ultimoFechamentoPrioridades = 0; // última vez que concluímos sozinhos os pedidos de prioridade já despachados (no máx. 1x por minuto)
 function limiteVendedoras(chave, max, janelaMs) {
   const agora = Date.now(), reg = limitesVendedoras.get(chave);
@@ -1879,6 +1909,7 @@ async function handleApi(req, res, pathname) {
         const Rastreio = require("./rastreio.js");
         if (!Rastreio.normalizarPedido(consulta.get("pedido"))) return sendJson(res, 400, { error: "Digite o número do pedido (só números)." });
         const r = await rastrearPedido(consulta.get("pedido"), await ocorrenciasLinhas().catch(() => []));
+        if (req.headers["x-vend-token"] && consulta.get("auto") !== "1") { const contaConsulta = await contaDoToken(req); if (contaConsulta) registrarConsultaVendedora(contaConsulta, r); } // só com acesso; a atualização automática não conta
         if (!r.achado && limiteVendedoras("vn|" + ip, 15, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas sem resultado. Confira os números e tente de novo em alguns minutos." });
         return sendJson(res, 200, r);
       }
@@ -1947,6 +1978,13 @@ async function handleApi(req, res, pathname) {
         }
         return sendJson(res, 400, { error: "ação inválida" });
       }
+      if (pathname === "/api/vendedoras/consultas" && method === "GET") {
+        if (limiteVendedoras("vc|" + ip, 40, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
+        const conta = await contaDoToken(req);
+        if (!conta) return sendJson(res, 200, { conta: null, consultas: [] });
+        const consultas = (await consultasVendedoras(conta.login, 500)).map((l) => ({ pedido: l.pedido, em: l.em, achado: l.achado, situacao: l.situacao, filial: l.filial, cliente: l.cliente }));
+        return sendJson(res, 200, { conta: { login: conta.login, nome: conta.nome }, consultas });
+      }
       if (pathname === "/api/vendedoras/prioridades" && method === "GET") {
         if (limiteVendedoras("vc|" + ip, 40, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
         const P = require("./prioridades-store.js"), V = require("./vendedoras-contas.js");
@@ -1955,9 +1993,10 @@ async function handleApi(req, res, pathname) {
         const conta = await contaDoToken(req);
         const meus = new Set(String(consulta.get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 100));
         const snap = await loadSnapshot().catch(() => null);
+        const quem = { login: conta && conta.login, nome: conta ? conta.nome : String(consulta.get("nome") || "") };
+        // Cada vendedora só recebe o que é dela (o que criou ou reforçou); não existe mais lista geral para elas.
         return sendJson(res, 200, {
-          meus: linhas.filter((l) => meus.has(l.id) || (conta && l.conta === conta.login)).map(P.visaoMeu),
-          fila: P.ordenarFila(linhas.filter((l) => P.ATIVOS.includes(l.status))).slice(0, 200).map(P.visaoFila),
+          meus: linhas.filter((l) => meus.has(l.id) || P.ehDela(l, conta && conta.login)).map((l) => P.visaoMeu(l, P.ehDono(l, quem))),
           conta: conta ? V.visaoPublica(conta) : null, sessaoRecusada: Boolean(req.headers["x-vend-token"] && !conta),
           baseEm: snap && snap.savedAt ? new Date(snap.savedAt).toISOString() : null,
           agora: new Date().toISOString()
@@ -1983,7 +2022,8 @@ async function handleApi(req, res, pathname) {
         });
         if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
         const linha = linhas.find((l) => l.id === resultado.id);
-        return sendJson(res, 200, { ok: true, duplicado: resultado.duplicado, naoAchado: !r.achado, linha: P.visaoMeu(linha) });
+        const quemPediu = { login: contaPedido && contaPedido.login, nome: contaPedido ? contaPedido.nome : corpo.pedidoPor };
+        return sendJson(res, 200, { ok: true, duplicado: resultado.duplicado, naoAchado: !r.achado, linha: P.visaoMeu(linha, P.ehDono(linha, quemPediu)) });
       }
       return sendJson(res, 404, { error: "não encontrado" });
     } catch (e) {
@@ -2022,7 +2062,8 @@ async function handleApi(req, res, pathname) {
     const V = require("./vendedoras-contas.js");
     const lista = async () => {
       const linhas = await prioridadesLinhas();
-      return { contas: (await contasLinhas()).map((c) => Object.assign(V.visaoAdmin(c), { solicitacoes: linhas.filter((l) => l.conta === c.login).length })) };
+      const consultas = await consultasVendedoras("", 5000);
+      return { contas: (await contasLinhas()).map((c) => Object.assign(V.visaoAdmin(c), { solicitacoes: linhas.filter((l) => l.conta === c.login).length, consultas: consultas.filter((x) => x.conta === c.login).length })) };
     };
     try {
       if (method === "GET") return sendJson(res, 200, await lista());
@@ -2046,6 +2087,21 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       console.error("Erro nos acessos das vendedoras:", e);
       return sendJson(res, 500, erroPublico(e, "erro nos acessos das vendedoras"));
+    }
+  }
+
+  // Administrador: quem (login) consultou qual pedido e quando — só das vendedoras com acesso. ?login=... filtra; ?max=N (até 5000).
+  if (pathname === "/api/vendedoras-consultas" && method === "GET") {
+    const sess = await exigir(req, res, ["admin"]); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const q = new URL(req.url, "http://x").searchParams;
+      const V = require("./vendedoras-contas.js"), login = V.normalizarLogin(q.get("login"));
+      const max = Math.min(5000, Math.max(1, Math.round(Number(q.get("max"))) || 200));
+      return sendJson(res, 200, { consultas: await consultasVendedoras(q.get("login") ? login || "(login inválido)" : "", max) });
+    } catch (e) {
+      console.error("Erro nas consultas das vendedoras:", e);
+      return sendJson(res, 500, erroPublico(e, "erro nas consultas das vendedoras"));
     }
   }
 

@@ -147,3 +147,74 @@ test('servidor: acesso opcional (criar/entrar/trocar), solicitações ligadas ao
     assert.equal((await call(U('conta'), { acao: 'entrar', login: 'ana.vendas', codigo: red.data.codigoTemporario })).status, 429);
   } finally { await new Promise((resolve) => server.close(resolve)); }
 });
+
+test('servidor: cada vendedora vê só o que é dela (solicitações e consultas gravadas no servidor); o administrador vê tudo', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-priv-'));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  const data = path.join(dir, 'data'); fs.mkdirSync(data);
+  const linha = (o) => Object.assign({ pedido: '0355386', armazem: 'Cambuci', nf: '', nome: 'CLIENTE ALFA', cliente: '001', dt: '2026-11-18', dtLiberacaoHora: '2026-11-18T12:10:00.000Z', qt: 5, itens: 2, status: 'Liberado', separador: '', conferente: '' }, o);
+  fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify({ savedAt: '2026-11-24T14:00:00.000Z', orders: [linha({ pedido: '355386' }), linha({ pedido: '355400' })], faturamento: [], entregaInfo: [], valores: [] }));
+  delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
+  process.env.PORT = '0'; process.env.APP_PASSWORD = crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomUUID(); process.env.NODE_ENV = 'test';
+  const server = require(path.join(dir, 'server.js'));
+  if (!server.listening) await new Promise((resolve) => server.once('listening', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const call = async (url, body, { cookie, token } = {}) => {
+    const r = await fetch(base + url, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1', ...(cookie ? { Cookie: cookie } : {}), ...(token ? { 'X-Vend-Token': token } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, data: await r.json().catch(() => ({})) };
+  };
+  try {
+    const admin = (await (await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1' }, body: JSON.stringify({ password: process.env.APP_PASSWORD }) })).headers.get('set-cookie') || '').split(';')[0];
+    const k = (await call('/api/vendedoras-link', { acao: 'gerar' }, { cookie: admin })).data.token;
+    const U = (rota) => '/api/vendedoras/' + rota + (rota.includes('?') ? '&' : '?') + 'k=' + k;
+    const nova = async (nome, login) => (await call(U('conta'), { acao: 'criar', nome, login, codigo: 'codigo-' + login + '-9' })).data.token;
+    const ana = await nova('Ana', 'ana.v'), bia = await nova('Bia', 'bia.v');
+    assert.ok(ana && bia);
+
+    // consultas: só com login, sem atualização automática, sem repetir o mesmo pedido em 10 min
+    await call(U('pedido?pedido=355386'), null, { token: ana });
+    await call(U('pedido?pedido=355386'), null, { token: ana });
+    await call(U('pedido?pedido=355400&auto=1'), null, { token: ana });
+    await call(U('pedido?pedido=999999'), null, { token: ana });
+    await call(U('pedido?pedido=355400'));
+    await call(U('pedido?pedido=355400'), null, { token: bia });
+    const minhas = (await call(U('consultas'), null, { token: ana })).data;
+    assert.equal(minhas.conta.login, 'ana.v');
+    assert.deepEqual(minhas.consultas.map((x) => x.pedido), ['999999', '355386'], 'da mais nova para a mais antiga, sem repetida, sem automática e sem a de outra');
+    assert.equal(minhas.consultas[0].achado, false); assert.match(minhas.consultas[1].situacao, /Atrasado/); assert.equal(minhas.consultas[1].filial, 'Cambuci');
+    assert.deepEqual((await call(U('consultas'))).data, { conta: null, consultas: [] }, 'sem login não há registro');
+    assert.deepEqual((await call(U('consultas'), null, { token: bia })).data.consultas.map((x) => x.pedido), ['355400']);
+
+    // administrador vê tudo; vendedora não acessa a rota do admin
+    assert.equal((await call('/api/vendedoras-consultas')).status, 401);
+    assert.equal((await call('/api/vendedoras-consultas', null, { cookie: 'x=1' })).status, 401);
+    const todas = (await call('/api/vendedoras-consultas', null, { cookie: admin })).data.consultas;
+    assert.equal(todas.length, 3); assert.deepEqual(todas.map((x) => x.conta).sort(), ['ana.v', 'ana.v', 'bia.v']);
+    assert.equal((await call('/api/vendedoras-consultas?login=BIA.v', null, { cookie: admin })).data.consultas.length, 1);
+    assert.equal((await call('/api/vendedoras-consultas?login=$$', null, { cookie: admin })).data.consultas.length, 0);
+    const contas = (await call('/api/vendedoras-contas', null, { cookie: admin })).data.contas;
+    assert.deepEqual(contas.map((c) => [c.login, c.consultas]).sort(), [['ana.v', 2], ['bia.v', 1]]);
+    const arq = fs.readFileSync(path.join(data, 'vendedoras-consultas.json'), 'utf8');
+    assert.ok(!arq.includes(ana) && !arq.includes(bia) && !/codigo-/.test(arq), 'o registro não guarda token nem código');
+
+    // solicitações: cada uma vê só a sua; quem reforça o pedido de outra não vê a observação dela
+    const pedido = { pedido: '355386', nivel: 'alta', motivo: 'cliente_aguardando' };
+    const dela = await call(U('prioridade'), Object.assign({}, pedido, { observacao: 'segredo da Ana: cliente VIP' }), { token: ana });
+    assert.equal(dela.data.linha.observacao, 'segredo da Ana: cliente VIP'); assert.equal(dela.data.linha.reforco, false);
+    const reforco = await call(U('prioridade'), Object.assign({}, pedido, { observacao: 'nota da Bia' }), { token: bia });
+    assert.equal(reforco.data.duplicado, true);
+    assert.equal(reforco.data.linha.observacao, '', 'não devolve a observação da outra'); assert.equal(reforco.data.linha.pedidoPor, ''); assert.equal(reforco.data.linha.motivo, ''); assert.equal(reforco.data.linha.reforco, true);
+    assert.ok(!JSON.stringify(reforco.data).includes('segredo da Ana'));
+    let g = (await call(U('prioridades'), null, { token: ana })).data;
+    assert.equal(g.fila, undefined, 'não existe lista geral'); assert.equal(g.meus.length, 1); assert.equal(g.meus[0].observacao, 'segredo da Ana: cliente VIP'); assert.equal(g.meus[0].reforco, false);
+    g = (await call(U('prioridades'), null, { token: bia })).data;
+    assert.equal(g.meus.length, 1, 'a Bia também acompanha o pedido que reforçou'); assert.equal(g.meus[0].reforco, true); assert.ok(!JSON.stringify(g).includes('segredo da Ana') && !JSON.stringify(g).includes('"Ana"'));
+    const carla = (await call(U('prioridades?ids=' + dela.data.linha.id + '&nome=Carla'))).data;
+    assert.equal(carla.meus[0].observacao, '', 'com o id mas sem ser a dona: sem observação');
+    assert.equal((await call(U('prioridades'))).data.meus.length, 0);
+    // o administrador vê tudo, inclusive quem reforçou
+    const adm = (await call('/api/prioridades', null, { cookie: admin })).data.ativos;
+    assert.equal(adm.length, 1); assert.equal(adm[0].observacao, 'segredo da Ana: cliente VIP'); assert.equal(adm[0].conta, 'ana.v');
+    assert.ok(adm[0].historico.some((h) => h.acao === 'reforco' && h.conta === 'bia.v' && h.texto === 'nota da Bia'));
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});

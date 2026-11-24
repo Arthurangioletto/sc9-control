@@ -46,7 +46,7 @@
     if (!silencioso) { estado.carregando = true; estado.erro = ''; desenhar(); }
     try {
       if (lista.length === 1) {
-        estado.consulta = await api('/api/vendedoras/pedido?pedido=' + lista[0]); estado.varios = null; estado.atualizadoEm = estado.consulta.atualizadoEm;
+        estado.consulta = await api('/api/vendedoras/pedido?pedido=' + lista[0] + (silencioso ? '&auto=1' : '')); estado.varios = null; estado.atualizadoEm = estado.consulta.atualizadoEm;
         if (estado.consulta.achado) { gravarLS(LS.recentes, [lista[0]].concat(lerLS(LS.recentes, []).filter((x) => x !== lista[0])).slice(0, 8)); if (!silencioso) registrarConsulta(estado.consulta); }
         try { const u = new URL(root.location.href); u.searchParams.set('pedido', lista[0]); root.history.replaceState(null, '', u.toString()); } catch (e) { /* sem histórico */ }
       } else {
@@ -159,6 +159,7 @@
     const c = estado.cf, cab = h('div', { style: 'margin-bottom:2px' }, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: estado.conta ? 'Seu acesso' : 'Criar acesso ou entrar' }), h('p', { class: 'mudo', style: 'margin-top:6px', text: 'Opcional. Sem acesso tudo continua funcionando; com ele, suas solicitações ficam ligadas ao seu login e aparecem em qualquer aparelho.' }));
     if (estado.conta) return [cab, h('section', { class: 'card' }, h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Nome', estado.conta.nome], ['Login', estado.conta.login]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
         h('p', { class: 'dica', style: 'margin-top:10px', text: 'As solicitações que você enviar daqui para frente ficam no seu nome, e a logística vê quem pediu.' }),
+        h('div', { class: 'processo compacta', style: 'margin-top:12px', role: 'note' }, ic('info'), h('p', null, h('b', { text: 'Fica registrado: ' }), 'com o acesso, os pedidos que você consulta (número, data, hora e a situação na hora) ficam gravados no seu login. Só você e a administração do SC9 veem. Nenhuma outra vendedora vê o que é seu.')),
         h('div', { class: 'acoes' }, h('button', { class: 'btn primario', type: 'button', onclick: () => { estado.tela = 'minhas'; desenhar(); } }, ic('lista'), 'Minhas solicitações'), h('button', { class: 'btn', type: 'button', onclick: () => { estado.tela = 'exportar'; desenhar(); } }, ic('baixar'), 'Exportar'), h('button', { class: 'btn', type: 'button', onclick: sairDaConta }, ic('sair'), 'Sair deste aparelho'))),
       h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Trocar meu código' })),
         h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); trocarCodigo(); } },
@@ -166,7 +167,7 @@
           h('button', { class: 'btn', type: 'submit', disabled: c.trocando, text: c.trocando ? 'Trocando…' : 'Trocar código' }),
           c.erroTroca ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), c.erroTroca) : null, c.okTroca ? h('div', { class: 'ok', role: 'status' }, ic('ok'), c.okTroca) : null))];
     const criar = c.modo === 'criar';
-    return [cab, h('section', { class: 'card' },
+    return [cab, criar ? h('div', { class: 'processo compacta', role: 'note' }, ic('info'), h('p', null, h('b', { text: 'Fica registrado: ' }), 'com o acesso, as solicitações e os pedidos que você consulta ficam gravados no seu login. Só você e a administração do SC9 veem.')) : null, h('section', { class: 'card' },
       h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'Criar acesso ou entrar', style: 'margin-bottom:14px' }, h('button', { type: 'button', 'aria-pressed': String(criar), onclick: () => { c.modo = 'criar'; c.erro = ''; desenhar(); }, text: 'Criar meu acesso' }), h('button', { type: 'button', 'aria-pressed': String(!criar), onclick: () => { c.modo = 'entrar'; c.erro = ''; desenhar(); }, text: 'Já tenho acesso' })),
       h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); enviarConta(c.modo); } },
         criar ? campoTexto('c-nome', 'Seu nome', 'nome', c, { autocomplete: 'name', maxlength: '60', placeholder: 'Ex.: Ana (Vendas)' }) : null,
@@ -185,19 +186,25 @@
   const EXPORTAR = {
     minhas: () => C.baixarCsv(C.nomeArquivo('minhas-solicitacoes'), ['Protocolo', 'Pedido', 'Prioridade', 'Motivo', 'Status', 'Pedida em', 'Atualizada em', 'Observação', 'Resposta da logística', 'Histórico'],
       ((estado.prio && estado.prio.meus) || []).map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.MOTIVO[l.motivo] || '', C.STATUS[l.status], C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.observacao, l.resposta, historicoTexto(l)])),
-    consultas: () => C.baixarCsv(C.nomeArquivo('pedidos-consultados'), ['Pedido', 'Consultado em', 'Situação na hora', 'Filial', 'Cliente'], lerLS(LS.consultas, []).map((x) => [x.pedido, C.dataHoraCsv(x.em), x.situacao, x.filial, x.cliente])),
-    fila: () => C.baixarCsv(C.nomeArquivo('fila-de-prioridades'), ['Pedido', 'Prioridade', 'Status', 'Pedida em'], ((estado.prio && estado.prio.fila) || []).map((l) => [l.pedido, C.NIVEL[l.nivel], C.STATUS[l.status], C.dataHoraCsv(l.criadoEm)]))
+    consultas: () => C.baixarCsv(C.nomeArquivo('pedidos-consultados'), ['Pedido', 'Consultado em', 'Situação na hora', 'Filial', 'Cliente'], listaConsultas().map((x) => [x.pedido, C.dataHoraCsv(x.em), x.situacao, x.filial, x.cliente]))
   };
+  // Com acesso (login) as consultas vêm do servidor (qualquer aparelho); sem acesso, só as deste aparelho.
+  const listaConsultas = () => (estado.conta ? (estado.consultasServ && estado.consultasServ.consultas) || [] : lerLS(LS.consultas, []));
+  async function carregarConsultas() {
+    if (!estado.conta) return;
+    try { estado.consultasServ = await api('/api/vendedoras/consultas'); estado.consultasErro = ''; } catch (e) { estado.consultasErro = e.message; }
+    if (estado.tela === 'exportar') desenhar();
+  }
   function telaExportar() {
-    const meus = (estado.prio && estado.prio.meus) || [], fila = (estado.prio && estado.prio.fila) || [], consultas = lerLS(LS.consultas, []);
+    const meus = (estado.prio && estado.prio.meus) || [], consultas = listaConsultas();
     const cartao = (icone, titulo, texto, n, chave, pronto) => h('section', { class: 'card cartao-exportar' }, h('div', { class: 'bola' }, ic(icone)), h('div', { class: 'meio' }, h('h2', { text: titulo }), h('p', { class: 'mudo', text: texto }), h('p', { class: 'peq', style: 'margin-top:4px', text: pronto ? n + (n === 1 ? ' linha' : ' linhas') : 'Carregando…' })),
       h('button', { class: 'btn primario', type: 'button', disabled: !pronto || !n, onclick: EXPORTAR[chave], 'aria-label': 'Baixar ' + titulo }, ic('baixar'), 'Baixar (CSV)'));
     if (!estado.prio && !estado.prioErro) carregarPrioridades(true);
-    return [h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Exportar' }), h('p', { class: 'mudo', style: 'margin-top:6px', text: 'Baixe suas informações em planilha (CSV). Abre direto no Excel.' })),
-      estado.prioErro ? h('div', { class: 'erro' }, ic('alerta'), estado.prioErro) : null,
+    if (estado.conta && !estado.consultasServ && !estado.consultasErro) carregarConsultas();
+    return [h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Exportar' }), h('p', { class: 'mudo', style: 'margin-top:6px', text: 'Baixe só o que é seu em planilha (CSV). Abre direto no Excel.' })),
+      estado.prioErro || estado.consultasErro ? h('div', { class: 'erro' }, ic('alerta'), estado.prioErro || estado.consultasErro) : null,
       cartao('lista', 'Minhas solicitações', 'Protocolo, prioridade, motivo, status, resposta da logística e histórico de cada pedido de prioridade.', meus.length, 'minhas', Boolean(estado.prio)),
-      cartao('busca', 'Pedidos que consultei', 'Cada pedido que você consultou, com data, hora e a situação que aparecia na hora. Fica guardado neste aparelho.', consultas.length, 'consultas', true),
-      cartao('caixaEntrada', 'Fila de prioridades em andamento', 'O que está na fila da logística agora: número do pedido, prioridade e status.', fila.length, 'fila', Boolean(estado.prio)),
+      cartao('busca', 'Pedidos que consultei', estado.conta ? 'Cada pedido que você consultou logada, com data, hora e a situação que aparecia na hora. Vem do seu login, de qualquer aparelho.' : 'Cada pedido que você consultou, com data, hora e a situação que aparecia na hora. Fica guardado só neste aparelho; com acesso criado, passa a valer em qualquer aparelho.', consultas.length, 'consultas', !estado.conta || Boolean(estado.consultasServ)),
       h('p', { class: 'dica', text: estado.conta ? 'Suas solicitações vêm do seu login, de qualquer aparelho.' : 'Sem acesso criado, "Minhas solicitações" e "Pedidos que consultei" são só deste aparelho. Crie seu acesso para ter as solicitações em qualquer lugar.' }),
       !estado.conta ? h('div', { class: 'acoes' }, h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.tela = 'conta'; desenhar(); root.scrollTo(0, 0); } }, ic('usuario'), 'Criar meu acesso')) : null];
   }
@@ -301,14 +308,14 @@
   async function carregarPrioridades(silencioso) {
     const antes = estado.atualizadoEm + '|' + (estado.conta && estado.conta.login);
     try {
-      const j = await api('/api/vendedoras/prioridades?ids=' + encodeURIComponent(lerLS(LS.meus, []).join(','))); estado.prio = j; estado.prioErro = '';
+      const j = await api('/api/vendedoras/prioridades?ids=' + encodeURIComponent(lerLS(LS.meus, []).join(',')) + '&nome=' + encodeURIComponent((estado.conta && estado.conta.nome) || lerLS(LS.nome, ''))); estado.prio = j; estado.prioErro = '';
       if (j.baseEm && (!estado.atualizadoEm || j.baseEm > estado.atualizadoEm)) estado.atualizadoEm = j.baseEm;
       if (j.sessaoRecusada && estado.conta) { estado.conta = null; gravarLS(LS.sessao, null); C.toast('Sua sessão acabou. Entre de novo para ver as solicitações do seu login.', 'erro'); }
     } catch (e) { estado.prioErro = e.message; }
     if (!silencioso || ['minhas', 'exportar'].includes(estado.tela) || antes !== estado.atualizadoEm + '|' + (estado.conta && estado.conta.login)) desenhar();
   }
   const cartaoSolicitacao = (l) => h('button', { class: 'cartao-lista', type: 'button', onclick: () => { estado.aberta = l.id; desenhar(); } },
-    h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + l.pedido }), C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status), h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
+    h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + l.pedido }), C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status), l.reforco ? C.selo('Você reforçou', 'normal', true) : null, h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
     h('div', { class: 'l2' }, h('span', { text: 'Pedida em ' + C.dataHora(l.criadoEm) }), h('span', { text: 'Atualizada há ' + C.duracao(l.atualizadoEm || l.criadoEm) }), l.resposta ? h('span', { style: 'color:var(--tinta-2)', text: 'Equipe: ' + l.resposta }) : null, ['recebida', 'em_analise'].includes(l.status) ? h('span', { class: 'aguarde', text: 'Aguarde: a equipe do SC9 ainda vai analisar.' }) : null));
   function gavetaSolicitacao(l) {
     const fecha = () => { estado.aberta = null; estado.gavAnim = null; desenhar(); };
@@ -322,14 +329,11 @@
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico da solicitação' }, (l.historico || []).slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? C.STATUS[x.status] || x.status : '' }), x.texto ? (x.status ? ' · ' : '') + x.texto : ''))))))];
   }
   function telaMinhas() {
-    const meus = (estado.prio && estado.prio.meus) || [], fila = (estado.prio && estado.prio.fila) || [];
-    const lista = estado.visao === 'minhas' ? meus : null;
-    const blocos = [faixaProcesso('minhas', true), h('div', { class: 'card-titulo' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Minhas solicitações' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Acompanhe a análise da logística sem precisar mandar mensagem.' })),
-      h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'O que mostrar' }, h('button', { type: 'button', 'aria-pressed': String(estado.visao === 'minhas'), onclick: () => { estado.visao = 'minhas'; desenhar(); }, text: 'Minhas' }), h('button', { type: 'button', 'aria-pressed': String(estado.visao === 'fila'), onclick: () => { estado.visao = 'fila'; desenhar(); }, text: 'Todas em andamento' })))];
+    const meus = (estado.prio && estado.prio.meus) || [];
+    const blocos = [faixaProcesso('minhas', true), h('div', { class: 'card-titulo' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Minhas solicitações' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Só o que é seu: acompanhe a análise da logística sem precisar mandar mensagem.' })))];
     if (estado.prioErro) blocos.push(h('div', { class: 'erro' }, ic('alerta'), estado.prioErro));
     if (!estado.prio && !estado.prioErro) blocos.push(C.esqueleto(2));
-    else if (lista) blocos.push(h('section', { class: 'card', 'aria-label': 'Minhas solicitações' }, meus.length ? [meus.map(cartaoSolicitacao), h('p', { class: 'dica', style: 'margin-top:12px', text: estado.conta ? 'Lista do seu login, em qualquer aparelho. Atualiza sozinha a cada minuto.' : 'Esta lista é deste aparelho. Crie seu acesso para vê-la em qualquer aparelho. Atualiza sozinha a cada minuto.' })] : C.vazio('caixaEntrada', 'Nenhuma solicitação ainda', 'Quando você pedir prioridade em um pedido, ele aparece aqui com o protocolo e o andamento.')));
-    else if (estado.prio) blocos.push(h('section', { class: 'card' }, h('p', { class: 'dica', style: 'margin:0 0 10px', text: 'Pedidos com prioridade pedida que a equipe ainda não terminou. Mostramos só o número, o nível e o status.' }), fila.length ? fila.map((l) => h('div', { class: 'cartao-lista', style: 'cursor:default' }, h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + l.pedido }), C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status), h('span', { class: 'mudo peq', style: 'margin-left:auto', text: 'há ' + C.duracao(l.criadoEm) })))) : C.vazio('okCirculo', 'Nenhuma prioridade na fila agora')));
+    else if (estado.prio) blocos.push(h('section', { class: 'card', 'aria-label': 'Minhas solicitações' }, meus.length ? [meus.map(cartaoSolicitacao), h('p', { class: 'dica', style: 'margin-top:12px', text: estado.conta ? 'Lista do seu login, em qualquer aparelho. Atualiza sozinha a cada minuto.' : 'Esta lista é deste aparelho. Crie seu acesso para vê-la em qualquer aparelho. Atualiza sozinha a cada minuto.' })] : C.vazio('caixaEntrada', 'Nenhuma solicitação ainda', 'Quando você pedir prioridade em um pedido, ele aparece aqui com o protocolo e o andamento.')));
     const aberta = estado.aberta && meus.find((x) => x.id === estado.aberta);
     if (aberta) blocos.push(...gavetaSolicitacao(aberta));
     return blocos;
