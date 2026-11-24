@@ -14,6 +14,7 @@
   const ddmm = (d) => d.slice(8, 10) + '/' + d.slice(5, 7);
   const ddmmaaaa = (d) => d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4);
   const brlCurto = (v) => (v >= 1e6 ? 'R$ ' + (v / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mi' : v >= 1e3 ? 'R$ ' + Math.round(v / 1e3).toLocaleString('pt-BR') + ' mil' : 'R$ ' + Math.round(v).toLocaleString('pt-BR'));
+  const semanaLonga = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'UTC' }).replace(/^./, (c) => c.toUpperCase());
   const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const TOM_TXT = { bom: 'melhor', ruim: 'pior', atencao: 'atenção', neutro: 'estável' };
   const TOM_ICONE = { bom: '✔', ruim: '✖', atencao: '⚠', neutro: '●' };
@@ -56,54 +57,65 @@
 
   // ---------- estilos ----------
   const CSS = `
-  .pn { display:flex; flex-direction:column; gap:16px; }
-  .pn-barra { position:sticky; top:0; z-index:5; background:rgba(238,242,248,.96); backdrop-filter:blur(4px); padding:10px 12px; border:1px solid var(--line); border-radius:12px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; justify-content:space-between; }
-  .pn-barra .grupo-c { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
-  .pn-barra label { display:flex; flex-direction:column; gap:3px; font-size:12px; font-weight:700; color:#43506a; }
-  .pn-selo { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:99px; font-size:12.5px; font-weight:700; border:1px solid var(--line); background:#fff; }
-  .pn-selo.em-dia { color:#0f6b3a; border-color:#bfe6cf; background:#effaf3; } .pn-selo.atencao { color:#8a5a00; border-color:#f1d78f; background:#fff4d6; } .pn-selo.desatualizado { color:#a62a1c; border-color:#f3cfc9; background:#fdf1ef; }
-  .pn-veredito { background:#fff; border:1px solid var(--line); border-left:6px solid #9fb0cc; border-radius:14px; padding:16px 18px; }
-  .pn-veredito.bom { border-left-color:var(--green); } .pn-veredito.ruim { border-left-color:var(--red); } .pn-veredito.atencao { border-left-color:#e8a200; }
-  .pn-veredito h2 { font-size:15px; font-weight:700; color:#43506a; margin:0 0 4px; } .pn-veredito .frase-grande { font-size:20px; font-weight:700; line-height:1.3; margin:0; }
-  .pn-veredito .meta { margin-top:6px; font-size:13px; color:#43506a; }
-  .pn-aviso { background:#fff4d6; border:1px solid #f1d78f; color:#6d4700; border-radius:10px; padding:9px 12px; font-size:13px; font-weight:600; }
-  .pn-cards { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:12px; }
-  .pn-card { grid-column:span 1; text-align:left; font:inherit; background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px 14px 12px; cursor:pointer; position:relative; overflow:hidden; display:flex; flex-direction:column; gap:3px; min-width:0; color:var(--ink); }
-  .pn-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:5px; background:#c9d2e0; } .pn-card.bom::before { background:var(--green); } .pn-card.ruim::before { background:var(--red); } .pn-card.atencao::before { background:#e8a200; }
-  .pn-card:hover { border-color:#9fb4d6; box-shadow:0 2px 8px rgba(20,35,61,.08); }
-  .pn-card.destaque { grid-column:span 2; } .pn-card .t { font-size:13px; font-weight:700; color:#43506a; }
-  .pn-card .v { font-size:36px; font-weight:800; line-height:1.1; letter-spacing:-.02em; font-variant-numeric:tabular-nums; } .pn-card.destaque .v { font-size:44px; }
+  body.com-painel header.topo .sobre, body.com-painel header.topo h1, body.com-painel header.topo .mudo, body.com-painel header.topo .atualizado { display:none; }
+  body.com-painel header.topo { justify-content:flex-end; margin-bottom:-4px; }
+  .pn { display:flex; flex-direction:column; gap:18px; }
+  .pn-hero { position:relative; overflow:hidden; border-radius:20px; padding:26px 28px 22px; color:#fff; background:linear-gradient(135deg,#0c2347 0%,#123b7a 55%,#1c5cab 100%); box-shadow:0 10px 30px rgba(18,59,122,.25); }
+  .pn-hero::after { content:''; position:absolute; right:-60px; top:-80px; width:300px; height:300px; border-radius:50%; background:rgba(255,255,255,.06); }
+  .pn-hero-topo { display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:flex-start; position:relative; z-index:1; }
+  .pn-kicker { margin:0; font-size:12px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:#b9cdf0; }
+  .pn-h1 { margin:4px 0 0; font-size:30px; font-weight:800; letter-spacing:-.02em; line-height:1.15; }
+  .pn-frase { position:relative; z-index:1; margin:14px 0 0; font-size:19px; line-height:1.4; font-weight:600; color:#eaf1ff; max-width:980px; }
+  .pn-hero-meta { position:relative; z-index:1; margin-top:14px; display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; font-size:13px; color:#b9cdf0; }
+  .pn-veredito-chip { display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:99px; font-weight:800; font-size:13.5px; background:rgba(255,255,255,.16); color:#fff; }
+  .pn-veredito-chip.bom { background:#1f8a4c; } .pn-veredito-chip.ruim { background:#c63828; } .pn-veredito-chip.atencao { background:#e8a200; color:#1b1500; }
+  .pn-barra { background:#fff; border:1px solid var(--line); border-radius:14px; padding:10px 14px; display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; justify-content:space-between; box-shadow:0 1px 2px rgba(20,35,61,.04); }
+  .pn-barra .grupo-c { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
+  .pn-barra label { display:flex; flex-direction:column; gap:3px; font-size:11.5px; font-weight:700; color:#5b6a84; letter-spacing:.02em; }
+  .pn-selo { display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:99px; font-size:12.5px; font-weight:700; background:rgba(255,255,255,.14); color:#fff; border:1px solid rgba(255,255,255,.25); }
+  .pn-selo.atencao { background:#fff4d6; color:#7a5200; border-color:#f1d78f; } .pn-selo.desatualizado { background:#fdf1ef; color:#a62a1c; border-color:#f3cfc9; }
+  .pn-aviso { background:#fff4d6; border:1px solid #f1d78f; color:#6d4700; border-radius:12px; padding:10px 14px; font-size:13px; font-weight:600; }
+  .pn-cards { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:14px; }
+  .pn-card { grid-column:span 1; text-align:left; font:inherit; background:#fff; border:1px solid var(--line); border-radius:16px; padding:16px 16px 14px; cursor:pointer; position:relative; overflow:hidden; display:flex; flex-direction:column; gap:4px; min-width:0; color:var(--ink); box-shadow:0 1px 2px rgba(20,35,61,.04); }
+  .pn-card::before { content:''; position:absolute; left:0; right:0; top:0; height:4px; background:#d3dae7; } .pn-card.bom::before { background:var(--green); } .pn-card.ruim::before { background:var(--red); } .pn-card.atencao::before { background:#e8a200; }
+  .pn-card:hover { border-color:#9fb4d6; box-shadow:0 6px 18px rgba(20,35,61,.10); transform:translateY(-1px); }
+  .pn-card.destaque { grid-column:span 2; background:linear-gradient(180deg,#fff,#f6f9ff); } .pn-card .t { font-size:12.5px; font-weight:700; color:#5b6a84; min-height:2.4em; line-height:1.2; }
+  .pn-card .v { font-size:38px; font-weight:800; line-height:1.05; letter-spacing:-.03em; font-variant-numeric:tabular-nums; } .pn-card.destaque .v { font-size:56px; }
   .pn-card .v.brl { font-size:28px; }
-  .pn-card .d { font-size:12.5px; font-weight:700; display:flex; flex-wrap:wrap; gap:4px 8px; align-items:center; }
-  .pn-chip { display:inline-flex; gap:4px; align-items:center; padding:2px 8px; border-radius:99px; font-size:12px; font-weight:700; background:#eef1f6; color:#43506a; }
-  .pn-chip.bom { background:#effaf3; color:#0f6b3a; } .pn-chip.ruim { background:#fdf1ef; color:#a62a1c; } .pn-chip.atencao { background:#fff4d6; color:#7a5200; }
-  .pn-card .s { font-size:12px; color:#5b6a84; } .pn-card svg.spark { margin-top:4px; }
-  .pn-mais summary { cursor:pointer; font-weight:700; color:var(--accent); font-size:13.5px; margin:2px 0 10px; }
+  .pn-card .d { font-size:12px; font-weight:700; display:flex; flex-wrap:wrap; gap:4px 6px; align-items:center; margin-top:2px; }
+  .pn-chip { display:inline-flex; gap:4px; align-items:center; padding:3px 9px; border-radius:99px; font-size:12px; font-weight:700; background:#eef1f6; color:#43506a; white-space:nowrap; }
+  .pn-chip.bom { background:#e6f6ec; color:#0f6b3a; } .pn-chip.ruim { background:#fdeceb; color:#a62a1c; } .pn-chip.atencao { background:#fff1cc; color:#7a5200; }
+  .pn-tom { font-size:12px; font-weight:800; color:#5b6a84; } .pn-tom.bom { color:#0f6b3a; } .pn-tom.ruim { color:#a62a1c; } .pn-tom.atencao { color:#7a5200; }
+  .pn-card .s { font-size:11.5px; color:#6b7890; } .pn-card svg.spark { margin-top:6px; }
+  .pn-split { display:flex; height:8px; border-radius:99px; overflow:hidden; background:#eef1f6; margin-top:8px; } .pn-split span { display:block; height:100%; }
+  .pn-mais summary { cursor:pointer; font-weight:700; color:var(--accent); font-size:13.5px; margin:0 0 12px; list-style:none; } .pn-mais summary::-webkit-details-marker { display:none; } .pn-mais summary::before { content:'＋ '; } .pn-mais[open] summary::before { content:'－ '; }
   .pn-mais .pn-cards { grid-template-columns:repeat(5,minmax(0,1fr)); }
-  .pn-par { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:16px; }
-  .pn-bloco { grid-column:span 12; background:#fff; border:1px solid var(--line); border-radius:14px; padding:16px 18px; min-width:0; }
+  .pn-par { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:18px; }
+  .pn-bloco { grid-column:span 12; background:#fff; border:1px solid var(--line); border-radius:18px; padding:20px 22px; min-width:0; box-shadow:0 1px 2px rgba(20,35,61,.04); }
   .pn-bloco.m7 { grid-column:span 7; } .pn-bloco.m5 { grid-column:span 5; } .pn-bloco.m4 { grid-column:span 4; } .pn-bloco.m6 { grid-column:span 6; }
-  .pn-bloco h2 { font-size:17px; margin:0; } .pn-bloco .sub { font-size:13px; color:#43506a; margin:2px 0 8px; font-weight:600; }
+  .pn-bloco h2 { font-size:18px; margin:0; letter-spacing:-.01em; } .pn-bloco .sub { font-size:13px; color:#5b6a84; margin:3px 0 10px; font-weight:500; }
   .pn-topo { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:flex-start; }
-  .pn-seg { display:inline-flex; border:1px solid var(--line); border-radius:9px; overflow:hidden; } .pn-seg button { font:inherit; font-size:12.5px; font-weight:700; padding:6px 10px; border:0; background:#fff; color:#43506a; cursor:pointer; }
-  .pn-seg button[aria-pressed=true] { background:var(--accent); color:#fff; }
-  .pn-leg { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12.5px; color:#43506a; margin-top:6px; } .pn-leg i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-2px; } .pn-leg i.linha { height:3px; border-radius:2px; vertical-align:3px; }
-  .pn-svg { width:100%; height:auto; display:block; } .pn-svg text { font:11px system-ui,sans-serif; fill:#5b6a84; } .pn-svg .ponto { cursor:pointer; outline:none; } .pn-svg .ponto:focus-visible rect.foco { stroke:#123b7a; stroke-width:2; }
+  .pn-seg { display:inline-flex; background:#eef1f6; border-radius:10px; padding:3px; gap:2px; } .pn-seg button { font:inherit; font-size:12.5px; font-weight:700; padding:5px 12px; border:0; border-radius:8px; background:transparent; color:#43506a; cursor:pointer; }
+  .pn-seg button[aria-pressed=true] { background:#fff; color:var(--accent); box-shadow:0 1px 3px rgba(20,35,61,.15); }
+  .pn-link { font:inherit; font-size:12.5px; font-weight:700; color:var(--accent); background:none; border:0; padding:6px 4px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+  .pn-leg { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12px; color:#5b6a84; margin-top:8px; } .pn-leg i { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:5px; vertical-align:-1px; } .pn-leg i.linha { height:3px; border-radius:2px; vertical-align:3px; }
+  .pn-svg { width:100%; height:auto; display:block; } .pn-svg text { font:11px system-ui,sans-serif; fill:#6b7890; } .pn-svg .ponto { cursor:pointer; outline:none; } .pn-svg .ponto:focus-visible rect.foco { stroke:#123b7a; stroke-width:2; }
   .pn-svg .ponto:hover rect.fundo { fill:#123b7a; fill-opacity:.08; }
-  .pn-tab { width:100%; border-collapse:collapse; font-size:13px; } .pn-tab th { text-align:left; background:var(--soft); padding:6px 8px; font-size:12px; } .pn-tab td { padding:5px 8px; border-top:1px solid var(--line); font-variant-numeric:tabular-nums; } .pn-tab .num { text-align:right; }
-  .pn-rolagem { max-height:320px; overflow:auto; border:1px solid var(--line); border-radius:10px; }
-  .pn-linha { display:grid; grid-template-columns:130px 1fr 150px; gap:10px; align-items:center; width:100%; text-align:left; font:inherit; background:none; border:0; padding:6px 4px; border-radius:8px; cursor:pointer; color:var(--ink); } .pn-linha:hover { background:#f3f6fb; } .pn-linha.sel { background:#eaf1ff; }
-  .pn-linha .nome { font-weight:700; font-size:13.5px; } .pn-linha .nome small { display:block; font-weight:600; font-size:11.5px; color:#5b6a84; } .pn-linha .num { font-size:12.5px; color:#43506a; text-align:right; font-variant-numeric:tabular-nums; }
-  .pn-trilho { display:flex; height:22px; background:#f1f4f9; border-radius:6px; overflow:hidden; } .pn-trilho span { display:block; height:100%; }
-  .pn-colunas { display:flex; align-items:flex-end; gap:10px; height:200px; padding-top:22px; } .pn-col { flex:1 1 0; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; gap:3px; font-size:12px; min-width:0; }
-  .pn-col .barra { width:100%; border-radius:5px 5px 0 0; min-height:3px; position:relative; } .pn-col .fantasma { position:absolute; left:0; right:0; bottom:0; border:2px dashed #14233d; border-bottom:0; border-radius:5px 5px 0 0; pointer-events:none; }
-  .pn-col .qtd { font-weight:800; font-size:14px; } .pn-col .lab { font-size:11.5px; color:#43506a; text-align:center; line-height:1.2; }
-  .pn-nota { font-size:12px; color:#5b6a84; margin-top:8px; }
+  .pn-tab { width:100%; border-collapse:collapse; font-size:13px; } .pn-tab th { text-align:left; background:var(--soft); padding:7px 9px; font-size:12px; } .pn-tab td { padding:6px 9px; border-top:1px solid var(--line); font-variant-numeric:tabular-nums; } .pn-tab .num { text-align:right; }
+  .pn-rolagem { max-height:320px; overflow:auto; border:1px solid var(--line); border-radius:12px; }
+  .pn-linha { display:grid; grid-template-columns:150px minmax(120px,1fr) 210px; gap:12px; align-items:center; width:100%; text-align:left; font:inherit; background:none; border:0; padding:8px 6px; border-radius:10px; cursor:pointer; color:var(--ink); } .pn-linha:hover { background:#f3f6fb; } .pn-linha.sel { background:#eaf1ff; }
+  .pn-linha .nome { font-weight:700; font-size:14px; } .pn-linha .nome small { display:block; font-weight:500; font-size:11.5px; color:#6b7890; } .pn-linha .num { font-size:12.5px; color:#43506a; text-align:right; font-variant-numeric:tabular-nums; line-height:1.3; }
+  .pn-trilho { display:flex; height:20px; background:#f1f4f9; border-radius:99px; overflow:hidden; } .pn-trilho span { display:block; height:100%; }
+  .pn-colunas { display:flex; align-items:flex-end; gap:14px; height:190px; padding-top:14px; } .pn-col { flex:1 1 0; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; gap:3px; font-size:12px; min-width:0; }
+  .pn-col .barra { width:100%; border-radius:8px 8px 0 0; min-height:3px; } .pn-col .fantasma { position:absolute; left:0; right:0; bottom:0; border:2px dashed #14233d; border-bottom:0; border-radius:8px 8px 0 0; pointer-events:none; }
+  .pn-col .qtd { font-weight:800; font-size:20px; line-height:1; } .pn-col .lab { font-size:12px; color:#43506a; text-align:center; line-height:1.2; font-weight:600; }
+  .pn-nota { font-size:12px; color:#6b7890; margin-top:8px; }
   .pn-vazio { text-align:center; padding:26px 10px; color:#5b6a84; font-weight:600; }
+  .pn-sep { margin:10px 0 -6px; font-size:13px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; color:#5b6a84; }
   @media (max-width:1100px) { .pn-cards { grid-template-columns:repeat(3,minmax(0,1fr)); } .pn-mais .pn-cards { grid-template-columns:repeat(3,minmax(0,1fr)); } .pn-bloco.m7,.pn-bloco.m5,.pn-bloco.m4,.pn-bloco.m6 { grid-column:span 12; } }
-  @media (max-width:640px) { .pn-cards,.pn-mais .pn-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .pn-card.destaque { grid-column:span 2; } .pn-card .v { font-size:30px; } .pn-card.destaque .v { font-size:38px; } .pn-linha { grid-template-columns:96px 1fr; } .pn-linha .num { grid-column:1 / -1; text-align:left; } .pn-barra { position:static; } }
-  @media (prefers-reduced-motion:no-preference) { .pn-card { transition:box-shadow .15s, border-color .15s; } }
-  @media print { .pn-barra .grupo-c, .pn-seg, .pn-mais summary { display:none !important; } .pn-barra { position:static; border:0; background:none; } .pn-card, .pn-bloco, .pn-veredito { break-inside:avoid; } .pn-par { display:block; } .pn-bloco { margin-bottom:12px; } @page { size:A4 landscape; margin:10mm; } * { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+  @media (max-width:640px) { .pn-hero { padding:20px 18px; } .pn-h1 { font-size:23px; } .pn-frase { font-size:16px; } .pn-cards,.pn-mais .pn-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .pn-card.destaque { grid-column:span 2; } .pn-card .v { font-size:30px; } .pn-card.destaque .v { font-size:46px; } .pn-linha { grid-template-columns:96px 1fr; } .pn-linha .num { grid-column:1 / -1; text-align:left; } .pn-bloco { padding:16px; } }
+  @media (prefers-reduced-motion:no-preference) { .pn-card { transition:box-shadow .15s, border-color .15s, transform .15s; } }
+  @media print { .pn-barra .grupo-c, .pn-seg, .pn-mais summary, .pn-link { display:none !important; } .pn-card, .pn-bloco, .pn-hero { break-inside:avoid; } .pn-par { display:block; } .pn-bloco { margin-bottom:12px; } @page { size:A4 landscape; margin:10mm; } * { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
   `;
   function garantirEstilo() { if (!document.getElementById('pn-estilo')) document.head.appendChild(h('style', { id: 'pn-estilo', text: CSS })); }
 
@@ -111,7 +123,7 @@
   function selo(fr) {
     const txt = fr.estado === 'vazio' ? 'Sem posição gravada' : fr.estado === 'em-dia' ? 'Dados em dia' : fr.estado === 'atencao' ? 'Atenção: última posição de ' + ddmm(fr.dia) : 'Desatualizado: última posição de ' + ddmm(fr.dia);
     const hora = fr.atualizadoEm ? new Date(fr.atualizadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) : '';
-    return h('span', { class: 'pn-selo ' + fr.estado, role: 'status', title: 'A posição do dia só é gravada quando o Histórico de Atraso é exportado no SC9.' }, (fr.estado === 'em-dia' ? '● ' : '⚠ ') + txt + (hora ? ' · posição de ' + hora : ''));
+    return h('span', { class: 'pn-selo ' + fr.estado, role: 'status', title: 'A posição do dia só é gravada quando o Histórico de Atraso é exportado no SC9.' }, (fr.estado === 'em-dia' ? '● ' : '⚠ ') + txt + (hora ? ' · ' + hora : ''));
   }
 
   function sparkline(valores, tomCor) {
@@ -127,11 +139,11 @@
   const corDoTom = { bom: '#1f8a4c', ruim: '#c63828', atencao: '#e8a200', neutro: '#6b7890' };
 
   function chipDelta(c) {
-    if (c.delta == null) return h('span', { class: 'pn-chip', text: c.id === 'ocorrencias' ? 'sem comparação' : 'sem dia para comparar' });
+    if (c.delta == null) return h('span', { class: 'pn-chip', text: c.id === 'ocorrencias' ? 'agora' : 'sem comparação' });
     const seta = c.delta > 0 ? '▲ +' : c.delta < 0 ? '▼ ' : '';
     const val = c.formato === 'brl' ? brlCurto(Math.abs(c.delta)) : fmtN(c.delta);
     const pct = c.pct != null && c.delta ? ' (' + (c.pct > 0 ? '+' : '') + c.pct.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%)' : '';
-    return h('span', { class: 'pn-chip ' + c.tom, title: 'Comparado com ' + (c.refDia ? ddmmaaaa(c.refDia) : 'o dia anterior') }, c.delta ? seta + (c.formato === 'brl' ? (c.delta < 0 ? '−' : '') + val : val) + pct : '= igual', ' · ', TOM_ICONE[c.tom] + ' ' + TOM_TXT[c.tom]);
+    return [h('span', { class: 'pn-chip ' + c.tom, title: 'Comparado com ' + (c.refDia ? ddmmaaaa(c.refDia) : 'o dia anterior') }, c.delta ? seta + (c.formato === 'brl' ? (c.delta < 0 ? '−' : '') + val : val) + pct : '= igual'), h('span', { class: 'pn-tom ' + c.tom, text: TOM_ICONE[c.tom] + ' ' + TOM_TXT[c.tom] })];
   }
 
   function cartao(c, serieDias) {
@@ -144,13 +156,13 @@
       if (c.alvo) { const el = document.getElementById('pn-' + c.alvo); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
       T().irParaLista(Object.assign({}, c.filtro, S.arm ? { arm: S.arm } : {}, S.transp ? { transp: S.transp } : {}));
     };
-    return h('button', { type: 'button', class: 'pn-card ' + (c.tom || '') + (c.destaque ? ' destaque' : ''), 'aria-label': rotulo + (c.alvo ? '. Abre o gráfico.' : '. Abre os pedidos.'), title: c.alvo ? 'Ver o gráfico' : 'Clique para ver os pedidos', onclick: aoClicar },
+    return h('button', { type: 'button', class: 'pn-card ' + (c.tom || '') + (c.destaque ? ' destaque' : ''), 'aria-label': rotulo + (c.alvo ? '. Abre o gráfico.' : '. Abre os pedidos.'), title: (c.nota ? c.nota + '. ' : '') + (c.semFiltroArmazem ? 'Despachados e faturados são sempre do total da empresa (o dado não tem armazém). ' : '') + (c.alvo ? 'Clique para ver o gráfico.' : 'Clique para ver os pedidos.'), onclick: aoClicar },
       h('span', { class: 't', text: c.titulo }),
       h('span', { class: 'v' + (c.formato === 'brl' ? ' brl' : ''), text: valor, title: c.formato === 'brl' && c.valor != null ? brl(c.valor) : '' }),
       h('span', { class: 'd' }, chipDelta(c), c.refDia ? h('span', { class: 's', text: 'vs ' + ddmm(c.refDia) }) : null),
-      c.destaque && c.estoque != null ? h('span', { class: 's', text: 'Estoque ' + fmtI(c.estoque) + ' · Faturamento ' + fmtI(c.faturamento) + (c.base ? ' · ' + (c.valor / c.base * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% dos ' + fmtI(c.base) + ' pedidos' : '') }) : null,
-      c.nota ? h('span', { class: 's', text: c.nota }) : null,
-      c.semFiltroArmazem ? h('span', { class: 'pn-chip', text: 'Total geral, não filtrado por armazém' }) : null,
+      c.destaque && c.estoque != null ? h('span', { class: 's', text: 'Estoque ' + fmtI(c.estoque) + ' · Faturamento ' + fmtI(c.faturamento) + (c.base ? ' · ' + (c.valor / c.base * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '% da base' : '') }) : null,
+      c.destaque && c.estoque != null && c.valor ? h('span', { class: 'pn-split', 'aria-hidden': 'true' }, h('span', { style: 'width:' + (c.estoque / c.valor * 100).toFixed(1) + '%;background:' + COR.estoque }), h('span', { style: 'width:' + (c.faturamento / c.valor * 100).toFixed(1) + '%;background:' + COR.faturamento })) : null,
+      c.semFiltroArmazem ? h('span', { class: 'pn-chip', text: 'Total geral' }) : null,
       spark);
   }
 
@@ -164,7 +176,7 @@
   const rotuloEixoDias = (n) => Math.max(1, Math.ceil(n / 12));
 
   function graficoBase(dias, max, desenharDia, rotulo, opts) {
-    const W = 760, Ht = 290, M = { l: 46, r: 10, t: 12, b: 34 }, iw = W - M.l - M.r, ih = Ht - M.t - M.b;
+    const W = (opts && opts.W) || 760, Ht = (opts && opts.Ht) || 290, M = { l: 46, r: 10, t: 12, b: 34 }, iw = W - M.l - M.r, ih = Ht - M.t - M.b;
     const esc = escalaY(max), slot = iw / Math.max(1, dias.length), y = (v) => M.t + ih - (v / esc.topo) * ih;
     const svg = s('svg', { class: 'pn-svg', viewBox: '0 0 ' + W + ' ' + Ht, role: 'img', 'aria-label': rotulo });
     svg.appendChild(s('defs', null, s('pattern', { id: 'pn-hach', width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, s('line', { x1: 0, y1: 0, x2: 0, y2: 6, stroke: '#cfd7e4', 'stroke-width': 1.5 }))));
@@ -197,7 +209,7 @@
     const emTabela = Boolean(S.ver[id]);
     return h('section', { class: 'pn-bloco ' + (classe || ''), id: 'pn-' + id, 'aria-label': titulo },
       h('div', { class: 'pn-topo' }, h('div', null, h('h2', { text: titulo }), sub ? h('p', { class: 'sub', text: sub }) : null),
-        h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, controles || null, h('button', { type: 'button', class: 'btn', 'aria-pressed': emTabela, onclick: () => { S.ver[id] = !S.ver[id]; T().desenhar(); }, text: emTabela ? 'Ver gráfico' : 'Ver como tabela' }))),
+        h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:center' }, controles || null, h('button', { type: 'button', class: 'pn-link', 'aria-pressed': emTabela, onclick: () => { S.ver[id] = !S.ver[id]; T().desenhar(); }, text: emTabela ? 'Ver gráfico' : 'Ver como tabela' }))),
       emTabela ? corpoTabela() : corpoGrafico(), extra || null);
   }
 
@@ -207,7 +219,7 @@
     const pico = comFoto.length ? comFoto.reduce((m, d) => (d.foto.tot > m.foto.tot ? d : m), comFoto[0]) : null;
     const hoje = serieDias.find((d) => d.dia === dia);
     const max = Math.max(1, ...comFoto.map((d) => d.foto.tot));
-    const sub = !comFoto.length ? 'Nenhuma posição gravada neste período.' : 'Em ' + ddmm(dia) + ': ' + (hoje && hoje.foto ? fmtI(hoje.foto.tot) : 'sem posição') + ' em atraso · pico do período: ' + fmtI(pico.foto.tot) + ' (' + ddmm(pico.dia) + ')' + (hoje && hoje.foto && pico.foto.tot ? ' · ' + (((hoje.foto.tot - pico.foto.tot) / pico.foto.tot) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '% desde o pico' : '') + ' · ' + comFoto.length + ' de ' + serieDias.length + ' dias com posição gravada';
+    const sub = !comFoto.length ? 'Nenhuma posição gravada neste período.' : 'Pico de ' + fmtI(pico.foto.tot) + ' em ' + ddmm(pico.dia) + (hoje && hoje.foto && pico.foto.tot && hoje.foto.tot !== pico.foto.tot ? ' · hoje ' + (((hoje.foto.tot - pico.foto.tot) / pico.foto.tot) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '% ' + (hoje.foto.tot < pico.foto.tot ? 'abaixo' : 'acima') + ' do pico' : '');
     const corpo = () => {
       if (!comFoto.length) return h('p', { class: 'pn-vazio', text: 'Sem dados neste período. A posição do dia é gravada quando o Histórico de Atraso é exportado no SC9.' });
       const g = graficoBase(serieDias, max, (d, i, c) => {
@@ -245,7 +257,7 @@
       if (i % rotuloEixoDias(fx.length) === 0) svg.appendChild(s('text', { x: x + bw / 2, y: Ht - 6, 'text-anchor': 'middle', text: ddmm(d.dia) }));
     });
     return h('div', { style: 'margin-top:14px' }, h('h3', { text: 'Fluxo do atraso: quem entrou e quem saiu', style: 'font-size:14px;margin-bottom:4px' }), svg,
-      h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:#c63828' }), '▲ Entraram no atraso (acima)'), h('span', null, h('i', { style: 'background:#1f8a4c' }), '▼ Saíram do atraso (abaixo)'), h('span', { text: 'Comparado com a posição gravada imediatamente antes.' })));
+      h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:#c63828' }), '▲ Entraram no atraso (acima)'), h('span', null, h('i', { style: 'background:#1f8a4c' }), '▼ Saíram do atraso (abaixo)'), null));
   }
 
   function produtividade(serieDias, dia) {
@@ -257,7 +269,7 @@
     const unidade = medida === 'pecas' ? 'peças' : 'pedidos';
     const ctl = h('div', { class: 'pn-seg', role: 'group', 'aria-label': 'Medida' }, [['pedidos', 'Pedidos'], ['pecas', 'Peças']].map(([k, t]) => h('button', { type: 'button', 'aria-pressed': S.prod === k, onclick: () => mudar(() => { S.prod = k; }), text: t })));
     const mel = pr.despachados.pedidos.melhor, pio = pr.despachados.pedidos.pior;
-    const sub = pr.despachados.dias ? 'Média de ' + fmtI(mediaP) + ' ' + unidade + ' despachados por dia (' + pr.despachados.dias + ' dias com registro)' + (mel && medida === 'pedidos' ? ' · melhor dia: ' + ddmm(mel.dia) + ' (' + fmtI(mel.v) + ') · pior: ' + ddmm(pio.dia) + ' (' + fmtI(pio.v) + ')' : '') : 'Sem despachos registrados neste período.';
+    const sub = pr.despachados.dias ? 'Média de ' + fmtI(mediaP) + ' ' + unidade + ' por dia' + (mel && medida === 'pedidos' ? ' · melhor dia ' + ddmm(mel.dia) + ' (' + fmtI(mel.v) + ') · pior ' + ddmm(pio.dia) + ' (' + fmtI(pio.v) + ')' : '') : 'Sem despachos registrados neste período.';
     const corpo = () => {
       if (!pr.despachados.dias && !pr.faturados.dias) return h('p', { class: 'pn-vazio', text: 'Sem despachos ou faturamento registrados neste período.' });
       const g = graficoBase(serieDias, max, (d, i, c) => {
@@ -268,11 +280,11 @@
           grupo.appendChild(campoFoco(d, i, c, ddmmaaaa(d.dia) + ': ' + fmtI(v) + ' ' + unidade + ' despachados' + (d.fat ? ', ' + fmtI(d.fat[campo]) + ' faturados' : '') + '.', () => { if (T().temDia(d.dia)) T().escolherDia(d.dia, false); }, d.dia === dia));
         } else if (d.foto || d.fat) grupo.appendChild(s('title', { text: ddmmaaaa(d.dia) + ': sem registro de despacho' }));
         return grupo;
-      }, 'Pedidos despachados por dia e faturados. ' + sub, { fmtY: (v) => (v >= 1000 ? fmtN(v / 1000) + ' mil' : fmtI(v)) });
+      }, 'Pedidos despachados por dia e faturados. ' + sub, { W: 560, Ht: 250, fmtY: (v) => (v >= 1000 ? fmtN(v / 1000) + ' mil' : fmtI(v)) });
       const pts = []; serieDias.forEach((d, i) => { if (d.fat) pts.push([(g.M.l + i * g.slot + g.slot / 2).toFixed(1), g.y(d.fat[campo]).toFixed(1)]); });
       if (pts.length) { if (pts.length > 1) g.svg.appendChild(s('polyline', { points: pts.map((x) => x.join(',')).join(' '), fill: 'none', stroke: '#5f6c84', 'stroke-width': 2 })); pts.forEach(([x, yy]) => g.svg.appendChild(s('circle', { cx: x, cy: yy, r: 3.5, fill: '#fff', stroke: '#5f6c84', 'stroke-width': 2 }))); }
       if (mediaP != null) { const ym = g.y(mediaP); g.svg.appendChild(s('line', { x1: g.M.l, x2: g.W - g.M.r, y1: ym, y2: ym, stroke: COR.ref, 'stroke-dasharray': '4 4' })); }
-      return h('div', null, g.svg, h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' despachados'), h('span', null, h('i', { class: 'linha', style: 'background:#5f6c84' }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' faturados'), h('span', null, h('i', { class: 'linha', style: 'background:' + COR.ref }), 'Média de despachados'), h('span', { text: 'Dia sem barra = sem registro (não é zero). Subir é melhor.' })));
+      return h('div', null, g.svg, h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' despachados'), h('span', null, h('i', { class: 'linha', style: 'background:#5f6c84' }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' faturados'), h('span', null, h('i', { class: 'linha', style: 'background:' + COR.ref }), 'Média de despachados'), h('span', { text: 'Dia sem barra = sem registro.' })));
     };
     const tabela = () => tabelaDe(['Dia', 'Pedidos despachados', 'Peças despachadas', 'Pedidos faturados', 'Peças faturadas'], serieDias.filter((d) => d.exp || d.fat).map((d) => [ddmmaaaa(d.dia) + ' ' + d.semana, d.exp ? fmtI(d.exp.pedidos) : null, d.exp ? fmtI(d.exp.pecas) : null, d.fat ? fmtI(d.fat.pedidos) : null, d.fat ? fmtI(d.fat.pecas) : null]));
     const semana = pr.semana.filter((x) => x.n);
@@ -294,7 +306,7 @@
         h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:#86b6ef' }), 'até 4 dias'), h('span', null, h('i', { style: 'background:#c63828' }), '5 dias ou mais'), h('span', { text: '⚑ maior gargalo (mais pedidos com 5+ dias)' })), gar.semEtapa ? h('p', { class: 'pn-nota', text: gar.semEtapa + ' pedidos sem etapa registrada nesta posição.' }) : null);
     };
     const tabela = () => (gar ? tabelaDe(['Etapa', 'Pedidos', '%', 'Peças', '5+ dias', 'Parado em média (dias)'], gar.etapas.map((e) => [e.rotulo, fmtI(e.qtd), fmtN(e.pct) + '%', fmtI(e.pecas), fmtI(e.cinco), e.paradoMedio != null ? fmtN(e.paradoMedio) : null])) : h('p', { class: 'pn-vazio', text: 'Sem posição neste dia.' }));
-    return blocoGrafico('gargalos', 'Onde os pedidos estão parados', 'Na ordem do processo. Clique numa etapa para ver os pedidos.', null, corpo, tabela, null, 'm6');
+    return blocoGrafico('gargalos', 'Onde os pedidos estão parados', 'Na ordem do processo. Clique para ver os pedidos.', null, corpo, tabela, null, 'm6');
   }
 
   function armazensBloco(arm) {
@@ -305,11 +317,11 @@
         h('span', { class: 'nome' }, a.nome, h('small', { text: 'idade média ' + fmtN(a.idadeMedia) + ' d' })),
         h('div', { class: 'pn-trilho' }, h('span', { style: 'width:' + (a.e / max * 100).toFixed(1) + '%;background:' + COR.estoque }), h('span', { style: 'width:' + (a.f / max * 100).toFixed(1) + '%;background:' + COR.faturamento })),
         h('span', { class: 'num' }, fmtI(a.tot) + ' · ' + fmtI(a.pecas) + ' peças · ' + a.cinco + ' c/ 5+ d'))),
-        h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), 'Estoque'), h('span', null, h('i', { style: 'background:' + COR.faturamento }), 'Faturamento'), h('span', { text: 'Clique para filtrar o painel por armazém.' })),
-        h('p', { class: 'pn-nota', text: 'Armazéns comparados em números absolutos: a base total de pedidos só existe para a empresa toda.' }));
+        h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), 'Estoque'), h('span', null, h('i', { style: 'background:' + COR.faturamento }), 'Faturamento'), null),
+        h('p', { class: 'pn-nota', text: 'Comparação em números absolutos: a base total de pedidos só existe para a empresa toda.' }));
     };
     const tabela = () => (arm ? tabelaDe(['Armazém', 'Em atraso', 'Estoque', 'Faturamento', 'Peças', '5+ dias', 'Idade média (dias)'], arm.lista.map((a) => [a.nome, fmtI(a.tot), fmtI(a.e), fmtI(a.f), fmtI(a.pecas), fmtI(a.cinco), fmtN(a.idadeMedia)])) : h('p', { class: 'pn-vazio', text: 'Sem posição neste dia.' }));
-    return blocoGrafico('armazens', 'Armazéns', 'Quem concentra o atraso.', null, corpo, tabela, null, 'm6');
+    return blocoGrafico('armazens', 'Armazéns', 'Clique para filtrar o painel.', null, corpo, tabela, null, 'm6');
   }
 
   function distribuicaoBloco(dist) {
@@ -329,7 +341,7 @@
         h('p', { class: 'pn-nota', text: fmtI(dist.cincoAtual) + ' pedidos (' + fmtN(dist.atual.total ? dist.cincoAtual / dist.atual.total * 100 : 0) + '%) com 5 dias ou mais' + (dist.cincoAntes != null ? ' · há 7 dias eram ' + fmtI(dist.cincoAntes) : '') + '.' }));
     };
     const tabela = () => (dist ? tabelaDe(['Faixa', 'Pedidos', '%', 'Peças', dist.antes ? 'Pedidos há 7 dias' : ''].filter(Boolean), dist.atual.lista.map((f, i) => [f.rotulo, fmtI(f.qtd), fmtN(f.pct) + '%', fmtI(f.pecas)].concat(dist.antes ? [fmtI(dist.antes.lista[i].qtd)] : []))) : h('p', { class: 'pn-vazio', text: 'Sem posição neste dia.' }));
-    return blocoGrafico('distribuicao', 'Há quanto tempo estão atrasados', 'Quanto mais à direita, mais antigo o atraso.', null, corpo, tabela, null, 'm12');
+    return blocoGrafico('distribuicao', 'Há quanto tempo estão atrasados', 'Quanto mais à direita, mais antigo.', null, corpo, tabela, null, 'm12');
   }
 
   // ---------- barra de controle ----------
@@ -344,7 +356,7 @@
         sel('Armazém', S.arm, ops.armazens, (v) => { S.arm = v; }, 'Todos'),
         sel('Transportadora', S.transp, ops.transportadoras, (v) => { S.transp = v; }, 'Todas'),
         S.arm || S.transp ? h('button', { type: 'button', class: 'btn', onclick: () => mudar(() => { S.arm = ''; S.transp = ''; }), text: 'Limpar filtros ✕' }) : null),
-      h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, selo(fr), h('button', { type: 'button', class: 'btn', onclick: () => root.print(), text: 'Imprimir' })));
+      h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, h('button', { type: 'button', class: 'btn', onclick: () => root.print(), text: 'Imprimir' })));
   }
 
   // ---------- montagem ----------
@@ -371,16 +383,22 @@
     const filtroTxt = [g.arm ? 'armazém ' + g.arm : '', g.transp ? 'transportadora ' + g.transp : ''].filter(Boolean).join(' · ');
     const topo = cs ? cs.cartoes.filter((c) => ['atraso', 'cinco', 'aguardando', 'despachados', 'faturados', 'ocorrencias'].includes(c.id)).map((c) => Object.assign(c, c.id === 'atraso' ? { destaque: true } : {})) : [];
     const mais = cs ? cs.cartoes.filter((c) => !['atraso', 'cinco', 'aguardando', 'despachados', 'faturados', 'ocorrencias'].includes(c.id)) : [];
+    document.body.classList.add('com-painel');
     return h('div', { class: 'pn', id: 'pn-raiz' },
+      h('section', { class: 'pn-hero', 'aria-label': 'Resumo do dia' },
+        h('div', { class: 'pn-hero-topo' },
+          h('div', null, h('p', { class: 'pn-kicker', text: 'SC9 Control · Histórico de atraso' }), h('div', { class: 'pn-h1', role: 'heading', 'aria-level': '2', text: dia ? semanaLonga(dia) + ', ' + ddmmaaaa(dia) : 'Sem dados' })),
+          selo(fr)),
+        h('p', { class: 'pn-frase', text: frase }),
+        h('div', { class: 'pn-hero-meta' },
+          a && a.cmp ? h('span', { class: 'pn-veredito-chip ' + tomVer }, tomVer === 'bom' ? '▼ Melhorou' : tomVer === 'ruim' ? '▲ Piorou' : '= Igual', ' vs ' + ddmm(a.cmp.ant.dia)) : null,
+          h('span', { text: 'Período: ' + ddmm(de) + ' a ' + ddmm(ate || de) + (filtroTxt ? ' · ' + filtroTxt : '') + ' · ' + comFoto + ' de ' + dias.length + ' dias com posição gravada' + (comFoto < 3 ? ' (o histórico está começando)' : '') }))),
       barra(p, fr),
-      fr.estado === 'desatualizado' || fr.estado === 'atencao' ? h('p', { class: 'pn-aviso', role: 'status', text: 'A última posição gravada é de ' + ddmmaaaa(fr.dia) + ' (' + fr.diasUteis + (fr.diasUteis === 1 ? ' dia útil' : ' dias úteis') + ' atrás). Os números abaixo são dessa posição; exporte o Histórico de Atraso no SC9 para atualizar.' }) : null,
-      h('section', { class: 'pn-veredito ' + tomVer, 'aria-label': 'Resumo do dia' },
-        h('h2', { text: dia ? 'Posição de ' + ddmmaaaa(dia) + ' · período de ' + ddmm(de) + ' a ' + ddmm(ate || de) + (filtroTxt ? ' · ' + filtroTxt : '') : 'Sem dados' }),
-        h('p', { class: 'frase-grande', text: frase }),
-        h('p', { class: 'meta', text: comFoto + ' de ' + dias.length + ' dias do período têm posição gravada.' + (comFoto < 3 ? ' O histórico está começando: os gráficos ficam mais completos a cada exportação.' : '') + (filtroTxt ? ' Despachados e faturados são sempre do total da empresa.' : '') })),
+      fr.estado === 'desatualizado' || fr.estado === 'atencao' ? h('p', { class: 'pn-aviso', role: 'status', text: 'A última posição gravada é de ' + ddmmaaaa(fr.dia) + ' (' + fr.diasUteis + (fr.diasUteis === 1 ? ' dia útil' : ' dias úteis') + ' atrás). Os números são dessa posição; exporte o Histórico de Atraso no SC9 para atualizar.' }) : null,
       cs ? h('div', { class: 'pn-cards' }, topo.map((c) => cartao(c, dias))) : null,
       cs ? h('details', { class: 'pn-mais', open: S.mais, ontoggle: (ev) => { S.mais = ev.target.open; } }, h('summary', { text: 'Mais indicadores' }), h('div', { class: 'pn-cards' }, mais.map((c) => cartao(c, dias)))) : null,
-      h('div', { class: 'pn-par' }, evolucao(dias, fx, dia), produtividade(dias, dia), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g))));
+      h('div', { class: 'pn-par' }, evolucao(dias, fx, dia), produtividade(dias, dia), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g))),
+      h('p', { class: 'pn-sep', text: 'Detalhe do dia e pedidos' }));
   }
 
   root.SC9AtrasoPainelUI = { montar, estado: S };
