@@ -1648,6 +1648,11 @@ async function handleApi(req, res, pathname) {
     const dado = await objLoad("atraso-expedicao-" + mes + ".json", { fresh: true }).catch(() => null);
     return (dado && dado.dias) || {};
   };
+  // Pedidos faturados por dia (data de emissão da nota na aba SF2): mesmo arquivo do mês, campo "faturados".
+  const faturadosDoMes = async (mes) => {
+    const dado = await objLoad("atraso-expedicao-" + mes + ".json", { fresh: true }).catch(() => null);
+    return (dado && dado.faturados) || {};
+  };
   // Onde cada pedido das fotos aparece na Saída p/ Expedição (1º registro): { pedido: ISO }. Fica guardado em atraso-saidas.json
   // para não se perder quando o administrador exporta e apaga dias antigos da saída.
   // Ocorrências da expedição (lista compartilhada). Na primeira leitura entram as 3 linhas que a expedição já tinha.
@@ -1688,14 +1693,18 @@ async function handleApi(req, res, pathname) {
       return saida;
     });
   }
-  async function guardarDespacho(AtrasoHistorico, despachados) {
-    const porMes = {};
+  async function guardarDespacho(AtrasoHistorico, despachados, faturados) {
+    const porMes = {}, fatPorMes = {};
     for (const [dia, v] of Object.entries(despachados)) (porMes[dia.slice(0, 7)] = porMes[dia.slice(0, 7)] || {})[dia] = v;
-    for (const [mes, novos] of Object.entries(porMes)) {
+    for (const [dia, v] of Object.entries(faturados || {})) (fatPorMes[dia.slice(0, 7)] = fatPorMes[dia.slice(0, 7)] || {})[dia] = v;
+    for (const mes of new Set([...Object.keys(porMes), ...Object.keys(fatPorMes)])) {
       const nome = "atraso-expedicao-" + mes + ".json";
       await comFila(nome, async () => {
         const atual = await objLoad(nome, { fresh: true }).catch(() => null);
-        await objSave(nome, { mes, dias: AtrasoHistorico.mesclarDespachados(atual && atual.dias, novos) });
+        const novo = { mes, dias: AtrasoHistorico.mesclarDespachados(atual && atual.dias, porMes[mes]) };
+        const fat = AtrasoHistorico.mesclarDespachados(atual && atual.faturados, fatPorMes[mes]);
+        if (Object.keys(fat).length) novo.faturados = fat;
+        await objSave(nome, novo);
       });
     }
   }
@@ -1809,7 +1818,7 @@ async function handleApi(req, res, pathname) {
       if (method === "GET") {
         const consulta = new URL(req.url, "http://x").searchParams;
         const n = Math.min(24, Math.max(1, Math.round(Number(consulta.get("meses"))) || 6));
-        const meses = {}, expedicao = {};
+        const meses = {}, expedicao = {}, faturados = {};
         if (consulta.get("so") === "saidas") {
           // atualização em tempo real da página: só o cruzamento com a Saída p/ Expedição (barato; não mexe nas fotos)
           for (const mes of AtrasoHistorico.ultimosMeses(mesSP(), n)) {
@@ -1823,10 +1832,12 @@ async function handleApi(req, res, pathname) {
           if (dado && dado.dias && Object.keys(dado.dias).length) meses[mes] = dado;
           const exp = await expedicaoDoMes(mes).catch(() => null);
           if (exp && Object.keys(exp).length) expedicao[mes] = exp;
+          const fat = await faturadosDoMes(mes).catch(() => null);
+          if (fat && Object.keys(fat).length) faturados[mes] = fat;
         }
         const dadoEntregues = await objLoad("atraso-entregues.json", { fresh: true }).catch(() => null);
         const saidas = await saidasDosPedidos(meses).catch(() => ({}));
-        return sendJson(res, 200, { meses, expedicao, entregues: (dadoEntregues && dadoEntregues.pedidos) || {}, saidas, ocorrencias: await ocorrenciasParaPagina() });
+        return sendJson(res, 200, { meses, expedicao, faturados, entregues: (dadoEntregues && dadoEntregues.pedidos) || {}, saidas, ocorrencias: await ocorrenciasParaPagina() });
       }
       let corpo;
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
@@ -1840,7 +1851,7 @@ async function handleApi(req, res, pathname) {
         await objSave(AtrasoHistorico.nomeDoMes(mes), AtrasoHistorico.mesclarDia(atual, registro));
       });
       const despachados = AtrasoHistorico.normalizarDespachados(corpo.despachados);
-      await guardarDespacho(AtrasoHistorico, despachados);
+      await guardarDespacho(AtrasoHistorico, despachados, AtrasoHistorico.normalizarDespachados(corpo.faturados));
       const entregues = AtrasoHistorico.normalizarEntregues(corpo.entregues);
       if (Object.keys(entregues).length) {
         await comFila("atraso-entregues", async () => {

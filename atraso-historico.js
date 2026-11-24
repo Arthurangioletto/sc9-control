@@ -129,4 +129,4 @@ function mesclarEntregues(guardado, novos, hoje) {
   return saida;
 }
 
-module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses, normalizarDespachados, mesclarDespachados, normalizarEntregues, mesclarEntregues };
+module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses, normalizarDespachados, mesclarDespachados, normalizarFaturados: normalizarDespachados, normalizarEntregues, mesclarEntregues };

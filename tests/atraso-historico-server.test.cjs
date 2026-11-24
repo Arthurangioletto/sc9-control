@@ -28,7 +28,7 @@ test('rota do histórico de atraso: só administrador, grava por mês, troca só
     cookie = (await req('/api/login', { password: process.env.APP_PASSWORD })).cookie;
 
     const vazio = (await req('/api/atraso-historico')).data;
-    assert.deepEqual(Object.assign({}, vazio, { ocorrencias: undefined }), { meses: {}, expedicao: {}, entregues: {}, saidas: {}, ocorrencias: undefined });
+    assert.deepEqual(Object.assign({}, vazio, { ocorrencias: undefined }), { meses: {}, expedicao: {}, faturados: {}, entregues: {}, saidas: {}, ocorrencias: undefined });
     assert.deepEqual(vazio.ocorrencias.map((o) => o.nf).sort(), ['885234', '886039', '886511'], 'a página recebe as ocorrências da expedição (lista inicial)');
     assert.equal((await req('/api/atraso-historico', registro(ontem, 50, [['P1', 'Cambuci', ontem, 3, 'E', 'A', 2]]))).status, 200);
     assert.equal((await req('/api/atraso-historico', registro(hoje, 60, [['P2', 'BH', ontem, 4, 'F', 'P', 1], ['P3', 'BH', ontem, 1, 'E', 'A', 1]]))).status, 200);
