@@ -299,6 +299,16 @@ Ao lado dele fica o botão **Histórico de Atraso** (`atraso-historico-ui.js`, E
 - **Só passa a existir daqui para frente:** dias anteriores à primeira foto gravada depois desta versão não existem; o primeiro dia sai sem comparativo.
 - **Validação:** com a base real de 17/11 no navegador, o Resumo bate com a aba do dia (Atrasados 144 = 142 de estoque + 2 de faturamento), as transportadoras aparecem e dias gravados antes continuam no arquivo. Testes em `tests/relatorio-geral-xlsx.test.cjs`, `tests/atraso-historico-xlsx.test.cjs` e `tests/atraso-historico-server.test.cjs`.
 
+## Ocorrências da expedição
+
+Aba **Ocorrências da expedição** (menu Operação). A expedição registra o que impede um pedido de sair, com as colunas da planilha que já usava: **Nº da Nota Fiscal, Data da Ocorrência, Detalhes, Responsável, Solução e Data da Solução**. Pode digitar uma linha ou **colar várias do Excel** (notas que já existem com a mesma data e detalhe são puladas). Datas aceitam `24/11/2026`, `24/11` e `11/24/2026`.
+
+- **Acesso**: administrador e o perfil novo `ocorrencias` (liberar em Acessos, botão "Ocorr."). Não depende da base estar aberta no navegador.
+- **O SC9 completa sozinho**: procura a nota no último SC9 salvo e mostra pedido, cliente, armazém, transportadora, valor e se o pedido já saiu (Saída p/ Expedição) ou foi despachado (planilha de Entrega).
+- **Status automático**: Aberta, Aberta · atrasada (3 dias ou mais sem solução), Em andamento (tem retorno escrito, sem data da solução), Resolvida · falta despachar, Resolvida e despachada, Pedido despachado · fechar a ocorrência. A coluna **O que fazer** diz o próximo passo.
+- **Compartilhada** pela equipe e guardada no servidor (`ocorrencias-expedicao.json`). Na primeira abertura entram as 3 linhas que a expedição já tinha. Botão **Baixar para Excel** (CSV).
+- Código: `ocorrencias-store.js` (validação), `ocorrencias-lookup.js` (nota → pedido), `ocorrencias.js` (datas e status), `ocorrencias-ui.js` (tela), rota `/api/ocorrencias`.
+
 ## Pedidos fixados (painel inicial)
 
 No **Resumo da operação** (painel inicial) há o quadro **📌 Pedidos fixados**: digite o número do pedido (atrasado ou não) e, se quiser, uma observação, e clique em **Fixar pedido**. A lista é **compartilhada pela equipe** (administrador e perfil `geral`), fica guardada no servidor (`pedidos-fixados.json`) e cada pedido mostra cliente, armazém, transportadora, nota, etapa (separado → conferido → faturado → Saída p/ Expedição → despachado) e a situação em relação ao horário.

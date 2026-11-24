@@ -167,7 +167,7 @@ if (!process.env.SESSION_SECRET) {
 const TTL_ADMIN_S = 60 * 60 * 24 * 30;
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho", "transferencia", "gaveta"];
+const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho", "transferencia", "gaveta", "ocorrencias"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -405,6 +405,8 @@ SERVABLE.add("relatorio-geral-xlsx.js");
 SERVABLE.add("atraso-historico-xlsx.js");
 SERVABLE.add("atraso-historico-ui.js");
 SERVABLE.add("pedidos-fixados.js");
+SERVABLE.add("ocorrencias.js");
+SERVABLE.add("ocorrencias-ui.js");
 SERVABLE.add("historico-atraso.html");
 SERVABLE.add("historico-atraso.js");
 SERVABLE.add("vendor-exceljs.js");
@@ -1713,6 +1715,52 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       console.error("Erro nos pedidos fixados:", e);
       return sendJson(res, 500, erroPublico(e, "erro nos pedidos fixados"));
+    }
+  }
+
+  // Ocorrências da expedição (por nota fiscal): lista compartilhada (administrador e perfil "ocorrencias") + o que o SC9 sabe de cada nota
+  // (cliente, pedido, despacho, Saída p/ Expedição). Na primeira abertura entram as 3 linhas que a expedição já tinha na planilha.
+  if (pathname === "/api/ocorrencias" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return;
+    const Oc = require("./ocorrencias-store.js");
+    const Lookup = require("./ocorrencias-lookup.js");
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const responder = async (linhas, extra) => {
+        const notas = {}, saidas = {};
+        try {
+          const nfs = Array.from(new Set(linhas.map((l) => l.nf)));
+          let nomeTransp = null;
+          try { nomeTransp = require("./consolidado.js").nomeTransportadora; } catch (e) { nomeTransp = null; }
+          Object.assign(notas, Lookup.procurarNotas(await loadSnapshot().catch(() => null), nfs, nomeTransp));
+          const pedidos = Object.values(notas).map((n) => [n.pedido]);
+          if (pedidos.length) Object.assign(saidas, await saidasDosPedidos({ ocorrencias: { dias: { hoje: { itens: pedidos } } } }).catch(() => ({})));
+        } catch (e) { console.error("Erro ao cruzar as ocorrências com o SC9:", e); }
+        return sendJson(res, 200, Object.assign({ linhas, notas, saidas, agora: new Date().toISOString() }, extra || {}));
+      };
+      if (method === "GET") {
+        let dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+        if (!dado) {
+          await comFila("ocorrencias", async () => {
+            dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+            if (!dado) { dado = { linhas: Oc.linhasIniciais(Date.now()) }; await objSave("ocorrencias-expedicao.json", dado); }
+          });
+        }
+        return responder(Oc.normalizarLista(dado));
+      }
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      let resultado;
+      await comFila("ocorrencias", async () => {
+        const dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+        resultado = Oc.aplicar(Oc.normalizarLista(dado), corpo, sess.usuario, Date.now());
+        if (!resultado.erro) await objSave("ocorrencias-expedicao.json", { linhas: resultado.linhas });
+      });
+      if (resultado.erro) return sendJson(res, resultado.erro.startsWith("Linha não encontrada") ? 404 : 400, { error: resultado.erro });
+      return responder(resultado.linhas, { resultado: resultado.resultado || null });
+    } catch (e) {
+      console.error("Erro nas ocorrências:", e);
+      return sendJson(res, 500, erroPublico(e, "erro nas ocorrências"));
     }
   }
 
