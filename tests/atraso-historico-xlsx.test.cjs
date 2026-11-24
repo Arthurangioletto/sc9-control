@@ -119,3 +119,17 @@ test('Excel: só a foto mais recente tem "o que fazer"; dias antigos mostram tra
   assert.match(acao('24-11-2026', '7724'), /faturar/);
   assert.equal(acao('23-11-2026', '7723'), '-');
 });
+
+test('Excel abre sem pedir reparo: links internos entre abas e elementos na ordem do esquema', async () => {
+  const bytes = await H.gerar(meses(), '2026-11', {}, { ExcelJS, JSZip });
+  const zip = await JSZip.loadAsync(bytes);
+  const xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
+  const links = xml.match(/<hyperlink [^>]*\/>/g) || [];
+  assert.ok(links.length >= 2);
+  links.forEach(l => { assert.doesNotMatch(l, /r:id=/, 'link entre abas é interno'); assert.match(l, /location="&apos;\d\d-\d\d-\d{4}&apos;!A1"/); });
+  const rels = await zip.file('xl/worksheets/_rels/sheet1.xml.rels').async('string');
+  assert.doesNotMatch(rels, /hyperlink/, 'sem relação externa com "#"');
+  const ordem = ['<mergeCells', '<conditionalFormatting', '<hyperlinks', '<pageMargins', '<drawing'].map(t => xml.indexOf(t));
+  assert.ok(ordem.every(i => i > 0) && ordem.every((i, k) => !k || i > ordem[k - 1]), 'ordem: ' + ordem);
+  for (const n of Object.keys(zip.files).filter(f => /\.xml$/.test(f))) assert.doesNotMatch(await zip.file(n).async('string'), /[\x00-\x08\x0b\x0c\x0e-\x1f]/, 'sem caractere de controle em ' + n);
+});

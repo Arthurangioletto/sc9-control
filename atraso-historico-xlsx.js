@@ -310,6 +310,32 @@
 
   /* ------------------------------ geração ------------------------------ */
   // meses = { 'AAAA-MM': { dias: {...} } } (todos os meses gravados; o comparativo atravessa a virada do mês); mes = 'AAAA-MM' a exportar
+  // Deixa o XML como o Excel exige, para abrir sem pedir reparo: elementos na ordem do esquema (formatação condicional antes dos
+  // links) e links entre abas como links internos (location), sem relação externa com "#".
+  async function corrigirXml(JSZip, bytes) {
+    const zip = await JSZip.loadAsync(bytes);
+    const nomes = Object.keys(zip.files).filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n));
+    for (const n of nomes) {
+      let x = await zip.file(n).async('string'), mudou = false;
+      const relN = n.replace('worksheets/', 'worksheets/_rels/') + '.rels';
+      const blocoLinks = x.match(/<hyperlinks>[\s\S]*?<\/hyperlinks>/);
+      if (blocoLinks) {
+        let rels = zip.file(relN) ? await zip.file(relN).async('string') : '';
+        const novo = blocoLinks[0].replace(/<hyperlink ([^>]*?)\/>/g, (m, at) => {
+          const id = (at.match(/r:id="([^"]+)"/) || [])[1], loc = (at.match(/location="([^"]*)"/) || [])[1];
+          if (!id || !loc || loc.charAt(0) !== '#') return m;
+          rels = rels.replace(new RegExp('<Relationship Id="' + id + '"[^>]*/>'), '');
+          return '<hyperlink ' + at.replace(/\s*r:id="[^"]+"/, '').replace(/location="#/, 'location="') + '/>';
+        });
+        if (novo !== blocoLinks[0]) { x = x.replace(blocoLinks[0], novo); zip.file(relN, rels); mudou = true; }
+        const cf = x.match(/(<conditionalFormatting[\s\S]*?<\/conditionalFormatting>)+/);
+        if (cf && x.indexOf(cf[0]) > x.indexOf('<hyperlinks>')) { x = x.replace(cf[0], '').replace('<hyperlinks>', cf[0] + '<hyperlinks>'); mudou = true; }
+      }
+      if (mudou) zip.file(n, x);
+    }
+    return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
+  }
+
   async function gerar(meses, mes, ctx, libs) {
     const { ExcelJS, JSZip } = libs || {};
     if (!ExcelJS || !JSZip) throw new Error('As bibliotecas do Excel não carregaram.');
@@ -331,7 +357,7 @@
     const barras = {};
     wb.worksheets.forEach(ws => { barras[ws.name] = ws.__barras || []; });
     const bruto = await wb.xlsx.writeBuffer();
-    return base().injetar(JSZip, bruto, barras, { [resumo.nome]: resumo.graficos });
+    return corrigirXml(JSZip, await base().injetar(JSZip, bruto, barras, { [resumo.nome]: resumo.graficos }));
   }
 
   const nomeArquivo = mes => 'SC9_Historico_Atraso_' + mes + '.xlsx';
