@@ -56,7 +56,34 @@ function normalizarRegistro(corpo) {
     const lib = DIA.test(String(it[2] || '')) ? String(it[2]) : '';
     itens.push([pedido, arm, lib, numero(it[3]), tipo, it[5] === 'P' ? 'P' : 'A', inteiro(it[6]), texto(it[7], 40), extrasDoItem(it[8])]);
   }
-  return { dia, total, pecas: numero(corpo.pecas), atualizadoEm: new Date().toISOString(), itens };
+  const registro = { dia, total, pecas: numero(corpo.pecas), atualizadoEm: new Date().toISOString(), itens };
+  const tpa = totalPorArmazemLimpo(corpo.totalPorArmazem);
+  if (tpa) registro.totalPorArmazem = tpa; // campo opcional: só entra quando a exportação o envia
+  return registro;
+}
+
+// { armazém: pedidos da base } — nomes curtos, no máximo 30 armazéns; lixo é ignorado. Devolve null se não sobrar nada.
+function totalPorArmazemLimpo(corpo) {
+  if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) return null;
+  const saida = {};
+  for (const arm of Object.keys(corpo).slice(0, 30)) {
+    const nome = texto(arm, 20), n = inteiro(corpo[arm]);
+    if (nome && n > 0) saida[nome] = n;
+  }
+  return Object.keys(saida).length ? saida : null;
+}
+
+// { armazém: { pedidos, pecas } } do despacho/faturamento de um dia; null se não houver.
+function porArmazemLimpo(corpo) {
+  if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo)) return null;
+  const saida = {};
+  for (const arm of Object.keys(corpo).slice(0, 30)) {
+    const v = corpo[arm], nome = texto(arm, 20);
+    if (!nome || !v || typeof v !== 'object') continue;
+    const pedidos = inteiro(v.pedidos);
+    if (pedidos > 0) saida[nome] = { pedidos, pecas: numero(v.pecas) };
+  }
+  return Object.keys(saida).length ? saida : null;
 }
 
 // Troca (ou inclui) só o dia do registro; os demais dias do mês ficam como estão.
@@ -90,6 +117,8 @@ function normalizarDespachados(corpo) {
     const pedidos = inteiro(v.pedidos);
     if (!pedidos) continue;
     saida[dia] = { pedidos, pecas: numero(v.pecas) };
+    const por = porArmazemLimpo(v.por);
+    if (por) saida[dia].por = por;
   }
   return saida;
 }

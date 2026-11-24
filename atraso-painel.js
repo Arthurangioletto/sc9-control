@@ -85,6 +85,16 @@
     return n;
   }
 
+  // Despachados/faturados de UM armazém: só existe nos dias gravados com o detalhe por armazém (campo "por").
+  // Devolve { atual, ref, refDia } ou null se o dia não tem o detalhe (aí o painel mostra o total da empresa e avisa).
+  function porArmazem(mapa, dia, arm) {
+    const doDia = mapa[dia] && mapa[dia].por && mapa[dia].por[arm];
+    if (!doDia) return null;
+    let refDia = null;
+    for (const d of Object.keys(mapa).sort()) { if (d < dia && mapa[d].por && mapa[d].por[arm]) refDia = d; }
+    return { atual: doDia, ref: refDia ? mapa[refDia].por[arm] : null, refDia };
+  }
+
   // ---------- cartões do topo ----------
   // Cada cartão: valor, referência (dia anterior com foto), variação, % e tom. "filtro" abre os pedidos na lista; "alvo" rola até o bloco.
   function cartoes(p, dia, g, agora) {
@@ -95,17 +105,23 @@
     const ant = a ? fotoAnterior(p, dia) : null;
     const itensAnt = ant ? selecionar(ant.reg.itens, g) : [];
     const ra = ant ? resumoItens(itensAnt) : null;
-    const dp = H().despacho(p, dia);
+    let dp = H().despacho(p, dia);
+    let semArm = sem;
+    const dpArm = g && g.arm && !g.transp ? porArmazem(p.exp, dia, g.arm) : null;
+    if (dpArm) { dp = { atual: dpArm.atual, ref: dpArm.ref, refDia: dpArm.refDia }; semArm = false; }
     const dias = Object.keys(p.fat).sort();
     const refFat = dias.filter((d) => d < dia).pop() || null;
-    const ft = p.fat[dia] || null, ftRef = refFat ? p.fat[refFat] : null;
+    let ft = p.fat[dia] || null, ftRef = refFat ? p.fat[refFat] : null;
+    let refFatDia = refFat;
+    const ftArm = g && g.arm && !g.transp ? porArmazem(p.fat, dia, g.arm) : null;
+    if (ftArm) { ft = ftArm.atual; ftRef = ftArm.ref; refFatDia = ftArm.refDia; }
     const refTxt = ant ? ant.reg.dia : null;
     const cartao = (id, titulo, valor, refValor, refDia, sobeEhBom, extra) => {
       const v = variacao(valor, refValor);
       return Object.assign({ id, titulo, valor, ref: refValor, refDia, delta: v.delta, pct: v.pct, tom: tom(sobeEhBom, v.delta, refValor), sobeEhBom, formato: 'n', filtro: null, alvo: '', semFiltroArmazem: false, nota: '' }, extra || {});
     };
     const lista = [];
-    lista.push(cartao('atraso', 'Pedidos em atraso', r ? r.tot : null, ra ? ra.tot : null, refTxt, false, { filtro: {}, destaque: true, estoque: r ? r.e : null, faturamento: r ? r.f : null, base: !sem && a ? a.resumo.total : null }));
+    lista.push(cartao('atraso', 'Pedidos em atraso', r ? r.tot : null, ra ? ra.tot : null, refTxt, false, { filtro: {}, destaque: true, estoque: r ? r.e : null, faturamento: r ? r.f : null, base: a ? (g && g.arm && !g.transp ? ((a.reg.totalPorArmazem && a.reg.totalPorArmazem[g.arm]) || null) : (!sem ? a.resumo.total : null)) : null }));
     lista.push(cartao('cinco', 'Atrasados há 5 dias ou mais', r ? r.cinco : null, ra ? ra.cinco : null, refTxt, false, { filtro: { diasMin: CRITICO } }));
     lista.push(cartao('pecas', 'Peças em atraso', r ? r.pecas : null, ra ? ra.pecas : null, refTxt, false, { filtro: {} }));
     lista.push(cartao('estoque', 'Atraso de estoque', r ? r.e : null, ra ? ra.e : null, refTxt, false, { filtro: { tipo: 'E' } }));
@@ -113,9 +129,9 @@
     const ag = a ? contarAguardando(p, itens, dia, agora) : null;
     const agAnt = ant ? contarAguardando(p, itensAnt, ant.reg.dia, agora) : null;
     lista.push(cartao('aguardando', 'Aguardando despacho', ag ? ag.n : null, agAnt ? agAnt.n : null, refTxt, false, { filtro: { acao: 'levar,despachar' }, nota: 'já têm nota ou já estão na Saída p/ Expedição' }));
-    lista.push(cartao('despachados', 'Despachados no dia', dp.atual ? dp.atual.pedidos : null, dp.ref ? dp.ref.pedidos : null, dp.refDia, true, { alvo: 'produtividade', semFiltroArmazem: sem }));
-    lista.push(cartao('pecas-despachadas', 'Peças despachadas no dia', dp.atual ? dp.atual.pecas : null, dp.ref ? dp.ref.pecas : null, dp.refDia, true, { alvo: 'produtividade', semFiltroArmazem: sem }));
-    lista.push(cartao('faturados', 'Pedidos faturados no dia', ft ? ft.pedidos : null, ftRef ? ftRef.pedidos : null, refFat, true, { alvo: 'produtividade', semFiltroArmazem: sem }));
+    lista.push(cartao('despachados', 'Despachados no dia', dp.atual ? dp.atual.pedidos : null, dp.ref ? dp.ref.pedidos : null, dp.refDia, true, { alvo: 'produtividade', semFiltroArmazem: semArm }));
+    lista.push(cartao('pecas-despachadas', 'Peças despachadas no dia', dp.atual ? dp.atual.pecas : null, dp.ref ? dp.ref.pecas : null, dp.refDia, true, { alvo: 'produtividade', semFiltroArmazem: semArm }));
+    lista.push(cartao('faturados', 'Pedidos faturados no dia', ft ? ft.pedidos : null, ftRef ? ftRef.pedidos : null, refFatDia, true, { alvo: 'produtividade', semFiltroArmazem: ftArm ? false : sem }));
     lista.push(cartao('valor', 'Valor em atraso (já faturado)', r ? r.valor : null, ra ? ra.valor : null, refTxt, false, { formato: 'brl', filtro: {}, nota: 'só pedidos com nota fiscal' }));
     const ab = a ? contarAbertas(p, itens, dia, agora) : null;
     lista.push(cartao('ocorrencias', 'Ocorrências abertas', ab, null, null, false, { filtro: { ocorr: 'aberta' }, nota: 'estado de agora (o SC9 não guarda histórico de ocorrências)' }));
@@ -191,9 +207,10 @@
     const itens = selecionar(a.reg.itens, g);
     const mapa = new Map();
     for (const it of itens) { const k = it[1] || '—'; if (!mapa.has(k)) mapa.set(k, []); mapa.get(k).push(it); }
-    const lista = [...mapa.entries()].map(([nome, its]) => Object.assign({ nome, pct: itens.length ? its.length / itens.length * 100 : 0 }, resumoItens(its)));
+    const tpa = a.reg.totalPorArmazem || null;
+    const lista = [...mapa.entries()].map(([nome, its]) => { const base = tpa && tpa[nome] ? tpa[nome] : null; return Object.assign({ nome, pct: itens.length ? its.length / itens.length * 100 : 0, base, pctBase: base ? its.length / base * 100 : null }, resumoItens(its)); });
     lista.sort((x, y) => y.tot - x.tot || String(x.nome).localeCompare(String(y.nome), 'pt-BR'));
-    return { lista, total: itens.length };
+    return { lista, total: itens.length, temBase: Boolean(tpa) };
   }
 
   function faixas(itens) {
@@ -259,7 +276,7 @@
     return { armazens: ord(arm), transportadoras: ord(tr) };
   }
 
-  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
+  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, porArmazem, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
   root.SC9AtrasoPainel = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);

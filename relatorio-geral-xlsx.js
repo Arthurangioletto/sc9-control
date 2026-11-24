@@ -297,6 +297,34 @@
     return dias;
   }
 
+  // Detalhe por armazém (campo opcional "por" de cada dia): pedidos e peças de cada armazém na contagem do dia.
+  // Não muda despachadosPorDia/faturadosPorDia: só acrescenta o campo "por" ao resultado delas.
+  const nomeArmazem = a => (a === 'Tambore' ? 'Tamboré' : (a == null ? '' : String(a)).trim());
+  function anexarPorArmazem(dias, pedidos, diaDoPedido) {
+    const porDia = {}, vistos = new Set();
+    for (const o of pedidos || []) {
+      const dia = diaDoPedido(o), arm = nomeArmazem(o.armazem);
+      if (!dia || !arm || !dias[dia]) continue;
+      const k = arm + '|' + o.pedido;
+      if (vistos.has(k)) continue;
+      vistos.add(k);
+      const d = (porDia[dia] = porDia[dia] || {});
+      const b = (d[arm] = d[arm] || { pedidos: 0, pecas: 0 });
+      b.pedidos++; b.pecas += Number(o.qt) || 0;
+    }
+    for (const [dia, d] of Object.entries(porDia)) {
+      for (const b of Object.values(d)) b.pecas = Math.round(b.pecas * 100) / 100;
+      dias[dia].por = d;
+    }
+    return dias;
+  }
+  const diaDeEntrega = entrega => o => { const e = entrega && typeof entrega.get === 'function' ? entrega.get(o.pedido) : null; return e ? chaveDia(e.data) : ''; };
+  const diaDeFaturamento = faturamento => o => {
+    if (!faturamento || typeof faturamento.get !== 'function') return '';
+    const nf = String(o.nf == null ? '' : o.nf).trim().replace(/\.0$/, '');
+    return nf ? chaveDia(faturamento.get(nf) || faturamento.get(nf.replace(/^0+/, ''))) : '';
+  };
+
   // Data de despacho de cada pedido da planilha de Entrega (só os dos últimos 120 dias): { pedido: 'AAAA-MM-DD' }.
   // A página usa isso para marcar "estava em atraso, mas foi despachado em dd/mm".
   function entreguesPorPedido(pedidos, entrega, agora) {
@@ -342,8 +370,11 @@
     const itens = [];
     let pecas = 0;
     const texto = v => (v == null ? '' : String(v)).trim();
+    const totalPorArmazem = {}; // pedidos da base por armazém (campo opcional: permite a % de atraso de cada armazém)
     for (const o of pedidos || []) {
       pecas += Number(o.qt) || 0;
+      const armBase = nomeArmazem(o.armazem);
+      if (armBase) totalPorArmazem[armBase] = (totalPorArmazem[armBase] || 0) + 1;
       if (o.status !== 'Atrasado' && o.status !== 'Pendente') continue;
       const sep = texto(o.separador), conf = texto(o.conferente);
       const separado = !!((sep && sep !== '0') || o.pickEnd), conferido = !!((conf && conf !== '0') || o.confEnd);
@@ -352,7 +383,7 @@
       const dias = o.dt && agora ? Math.max(0, Math.round((agora - o.dt) / 864e5)) : 0;
       itens.push([texto(o.pedido), o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem), o.dayKey || chaveDia(o.dt), Math.round((Number(o.qt) || 0) * 100) / 100, tipo, o.status === 'Atrasado' ? 'A' : 'P', dias, transportadoraDe(o, sc5), extrasDoPedido(o, separado, conferido, extras)]);
     }
-    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens, despachados: despachadosPorDia(pedidos, entrega), entregues: entreguesPorPedido(pedidos, entrega, agora), faturados: faturadosPorDia(pedidos, extras && extras.faturamento) };
+    return { dia: dia || diaDeHoje(), total: (pedidos || []).length, pecas: Math.round(pecas), atualizadoEm: new Date().toISOString(), itens, despachados: anexarPorArmazem(despachadosPorDia(pedidos, entrega), pedidos, diaDeEntrega(entrega)), entregues: entreguesPorPedido(pedidos, entrega, agora), faturados: anexarPorArmazem(faturadosPorDia(pedidos, extras && extras.faturamento), pedidos, diaDeFaturamento(extras && extras.faturamento)), totalPorArmazem };
   }
 
   // junta o registro de hoje no histórico lido do servidor (vale o de hoje se o servidor não respondeu)
