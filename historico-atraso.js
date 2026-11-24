@@ -344,6 +344,7 @@
         h('button', { class: 'btn', onclick: () => i < meses.length - 1 && trocarMes(meses[i + 1]), disabled: i >= meses.length - 1, 'aria-label': 'Mês anterior', text: '◀' }),
         sel,
         h('button', { class: 'btn', onclick: () => i > 0 && trocarMes(meses[i - 1]), disabled: i <= 0, 'aria-label': 'Próximo mês', text: '▶' }),
+        h('a', { class: 'btn', href: '/#aba=ocorrencias', target: '_blank', rel: 'noopener', title: 'Abre o SC9 na aba Ocorrências da expedição (precisa entrar com a senha e ter o acesso "Ocorr.")', text: 'Registrar ocorrência' }),
         chaveLink ? null : h('a', { class: 'btn', href: '/', text: 'Voltar ao SC9' })));
   }
 
