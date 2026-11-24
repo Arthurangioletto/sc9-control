@@ -1668,7 +1668,7 @@ async function handleApi(req, res, pathname) {
     return Oc.normalizarLista(dado);
   }
   // Versão enxuta para a página do histórico de atraso (cruza pela nota fiscal do pedido).
-  const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas().catch(() => [])).map((l) => ({ nf: l.nf, dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao }));
+  const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas().catch(() => [])).map((l) => ({ nf: l.nf, pedido: l.pedido || "", dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao }));
   async function saidasDosPedidos(meses) {
     const procurados = new Set();
     for (const m of Object.values(meses)) for (const r of Object.values(m.dias || {})) for (const it of r.itens || []) { const n = normalizarPedido(it[0]); if (n) procurados.add(n); }
@@ -1753,16 +1753,19 @@ async function handleApi(req, res, pathname) {
     res.setHeader("Cache-Control", "no-store");
     try {
       const responder = async (linhas, extra) => {
-        const notas = {}, saidas = {};
+        const notas = {}, saidas = {}, porPedido = {};
         try {
-          const nfs = Array.from(new Set(linhas.map((l) => l.nf)));
+          const nfs = Array.from(new Set(linhas.map((l) => l.nf).filter(Boolean)));
+          const soPedido = Array.from(new Set(linhas.map((l) => l.pedido).filter(Boolean)));
           let nomeTransp = null;
           try { nomeTransp = require("./consolidado.js").nomeTransportadora; } catch (e) { nomeTransp = null; }
-          Object.assign(notas, Lookup.procurarNotas(await loadSnapshot().catch(() => null), nfs, nomeTransp));
-          const pedidos = Object.values(notas).map((n) => [n.pedido]);
+          const snap = await loadSnapshot().catch(() => null);
+          Object.assign(notas, Lookup.procurarNotas(snap, nfs, nomeTransp));
+          Object.assign(porPedido, Lookup.procurarPedidos(snap, soPedido, nomeTransp));
+          const pedidos = Object.values(notas).concat(Object.values(porPedido)).map((n) => [n.pedido]);
           if (pedidos.length) Object.assign(saidas, await saidasDosPedidos({ ocorrencias: { dias: { hoje: { itens: pedidos } } } }).catch(() => ({})));
         } catch (e) { console.error("Erro ao cruzar as ocorrências com o SC9:", e); }
-        return sendJson(res, 200, Object.assign({ linhas, notas, saidas, agora: new Date().toISOString() }, extra || {}));
+        return sendJson(res, 200, Object.assign({ linhas, notas, pedidos: porPedido, saidas, agora: new Date().toISOString() }, extra || {}));
       };
       if (method === "GET") {
         return responder(await ocorrenciasLinhas());

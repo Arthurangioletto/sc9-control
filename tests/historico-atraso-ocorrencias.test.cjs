@@ -76,3 +76,15 @@ test('csv leva o que fazer e a ocorrência', () => {
   assert.ok(linhas[0].endsWith('"O que fazer";"Ocorrência";"Detalhes da ocorrência";"Responsável";"Solução";"Data da solução"'));
   assert.match(linhas[1], /"Em andamento";"endereço insuficiente";"Juliana";"Retornou o e-mail";""$/);
 });
+
+test('ocorrência sem nota: chega ao pedido pelo número do pedido (e também a que tem as duas coisas)', () => {
+  const semNota = item('355386', '', 'F', 6);
+  const comNota = item('355999', '886039', 'F', 7);
+  const p = H.preparar(dados([oc('', { pedido: '0355386', detalhes: 'cliente ainda não confirmou o endereço' }), oc('886039', { pedido: '355999', detalhes: 'outra' }), oc('', { pedido: '355999', detalhes: 'e esta, sem nota' })], {}, [semNota, comNota]));
+  const a = H.ocorrenciaDoPedido(p, semNota, AGORA);
+  assert.equal(a.oc.detalhes, 'cliente ainda não confirmou o endereço');
+  assert.equal(a.av.status, 'Aberta · atrasada');
+  const b = H.ocorrenciaDoPedido(p, comNota, AGORA);
+  assert.equal(b.total, 2, 'a da nota e a do pedido aparecem juntas');
+  assert.equal(H.ocorrenciaDoPedido(p, item('777777', '', 'F', 4), AGORA), null);
+});

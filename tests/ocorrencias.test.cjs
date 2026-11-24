@@ -64,7 +64,7 @@ test('status: aberta, atrasada, em andamento, resolvida e o que falta no pedido'
   // nota fora da base
   a = av(oc({ solucao: 'Resolvido', dataSolucao: '2026-11-18' }), undefined);
   assert.deepEqual([a.status, a.pedido.codigo], ['Resolvida', 'nao-achado']);
-  assert.equal(av(oc(), undefined).pedido.texto, 'Nota não encontrada na base do SC9');
+  assert.equal(av(oc(), undefined).pedido.texto, 'Nota ou pedido não encontrado na base do SC9');
 });
 
 test('ordem e resumo', () => {
@@ -95,7 +95,7 @@ test('colar da planilha da expedição (Excel separa por TAB) com os 3 exemplos'
   ].join('\r\n');
   const r = O.lerColado(t, HOJE);
   assert.equal(r.linhas.length, 3);
-  assert.deepEqual(r.linhas[0], { nf: '885234', dataOcorrencia: '2026-11-16', detalhes: 'endereço insuficiente- vendedor está verificando e cadastro precisa atualizar', responsavel: 'Juliana Abranches', solucao: 'Resolvido', dataSolucao: '2026-11-18' });
+  assert.deepEqual(r.linhas[0], { nf: '885234', pedido: '', dataOcorrencia: '2026-11-16', detalhes: 'endereço insuficiente- vendedor está verificando e cadastro precisa atualizar', responsavel: 'Juliana Abranches', solucao: 'Resolvido', dataSolucao: '2026-11-18' });
   assert.equal(r.linhas[1].dataOcorrencia, '2026-11-21'); assert.equal(r.linhas[1].dataSolucao, '');
   assert.equal(r.linhas[2].solucao, 'Retornou o e-mail dia 24/11'); assert.equal(r.linhas[2].dataSolucao, '', 'linha com menos colunas');
   assert.deepEqual(r.invalidas.map((x) => x.linha), [6, 7, 8]);
@@ -194,4 +194,25 @@ test('servidor: ocorrências exigem o acesso, começam com as 3 linhas da expedi
     assert.equal((await call('/api/ocorrencias', { acao: 'remover', id: 'naoexiste' }, eva)).status, 404);
     assert.ok(fs.existsSync(path.join(data, 'ocorrencias-expedicao.json')));
   } finally { await new Promise((resolve) => server.close(resolve)); }
+});
+
+test('ocorrência por pedido: vale sem nota, exige nota ou pedido, acha o pedido na base e aceita a 7ª coluna na colagem', () => {
+  const L = require('../ocorrencias-lookup.js');
+  const agora = Date.UTC(2026, 10, 24, 15);
+  const base = { dataOcorrencia: '2026-11-24', detalhes: 'cliente sem cadastro', responsavel: 'Eva', solucao: '', dataSolucao: '' };
+  let r = S.aplicar([], { acao: 'salvar', linha: Object.assign({ nf: '', pedido: '0355386' }, base) }, 'eva', agora);
+  assert.equal(r.erro, undefined);
+  assert.deepEqual([r.linhas[0].nf, r.linhas[0].pedido], ['', '355386'], 'sem nota, com o pedido limpo');
+  assert.ok(S.aplicar([], { acao: 'salvar', linha: Object.assign({ nf: '', pedido: '' }, base) }, 'eva', agora).erro, 'sem nota e sem pedido não vale');
+  assert.ok(S.aplicar([], { acao: 'salvar', linha: Object.assign({ nf: '', pedido: '12' }, base) }, 'eva', agora).erro, 'pedido inválido');
+  r = S.aplicar(r.linhas, { acao: 'importar', linhas: [Object.assign({ nf: '', pedido: '355386' }, base), Object.assign({ nf: '', pedido: '355999' }, base)] }, 'eva', agora);
+  assert.deepEqual([r.resultado.novas, r.resultado.repetidas], [1, 1], 'a mesma ocorrência do mesmo pedido não repete');
+  const snap = { orders: [{ pedido: '0355386', armazem: 'Cambuci', nf: '', nome: 'CLIENTE ALFA', cliente: '1', dt: '2026-11-15T12:00:00.000Z', qt: 4 }] };
+  const ped = L.procurarPedidos(snap, ['355386', '999999']);
+  assert.equal(ped['355386'].nome, 'CLIENTE ALFA');
+  assert.equal(ped['999999'], undefined);
+  const col = O.lerColado('885234\t24/11/2026\tdetalhe\tJu\t\t\t\n\t24/11/2026\tsem nota\tJu\t\t\t355386\nabc\t24/11/2026\tx', agora ? new Date(agora) : undefined);
+  assert.equal(col.linhas.length, 2);
+  assert.deepEqual([col.linhas[1].nf, col.linhas[1].pedido], ['', '355386']);
+  assert.equal(col.invalidas.length, 1);
 });

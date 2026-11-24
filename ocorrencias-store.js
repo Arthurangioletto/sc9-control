@@ -1,5 +1,5 @@
-/* Ocorrências da expedição (por nota fiscal): lista compartilhada, guardada em ocorrencias-expedicao.json.
- * Cada linha: { id, nf, dataOcorrencia (AAAA-MM-DD), detalhes, responsavel, solucao, dataSolucao (AAAA-MM-DD ou ''), criadoPor, criadoEm,
+/* Ocorrências da expedição (por nota fiscal ou, quando ainda não tem nota, pelo número do pedido): lista compartilhada, guardada em ocorrencias-expedicao.json.
+ * Cada linha: { id, nf, pedido, dataOcorrencia (AAAA-MM-DD), detalhes, responsavel, solucao, dataSolucao (AAAA-MM-DD ou ''), criadoPor, criadoEm,
  * atualizadoPor, atualizadoEm }. Só validação e mesclagem, sem acesso a disco. */
 'use strict';
 
@@ -9,6 +9,12 @@ const MAX_LINHAS = 5000;
 function numeroDaNota(x) {
   const bruto = String(x == null ? '' : x).trim().replace(/\.0+$/, '');
   const d = bruto.replace(/\D/g, '').replace(/^0+/, '');
+  return d.length >= 3 && d.length <= 12 ? d : null;
+}
+
+// Número do pedido: só dígitos, sem zeros à esquerda, de 3 a 12 dígitos.
+function numeroDoPedido(x) {
+  const d = String(x == null ? '' : x).trim().replace(/\.0+$/, '').replace(/\D/g, '').replace(/^0+/, '');
   return d.length >= 3 && d.length <= 12 ? d : null;
 }
 
@@ -22,11 +28,14 @@ const diaIso = (v) => {
 };
 const dataHoraIso = (v) => { const s = texto(v, 30); return s && !Number.isNaN(Date.parse(s)) ? new Date(s).toISOString() : ''; };
 
-// Linha limpa, ou { erro } se faltar o essencial (nota fiscal e data da ocorrência).
+// Linha limpa, ou { erro } se faltar o essencial (nota fiscal ou, sem nota, o pedido; e a data da ocorrência).
 function normalizarLinha(x) {
   if (!x || typeof x !== 'object') return { erro: 'Linha inválida.' };
-  const nf = numeroDaNota(x.nf);
-  if (!nf) return { erro: 'Número da nota fiscal inválido (use de 3 a 12 dígitos).' };
+  const temNf = String(x.nf == null ? '' : x.nf).trim() !== '', temPedido = String(x.pedido == null ? '' : x.pedido).trim() !== '';
+  const nf = temNf ? numeroDaNota(x.nf) : '', pedido = temPedido ? numeroDoPedido(x.pedido) : '';
+  if (temNf && !nf) return { erro: 'Número da nota fiscal inválido (use de 3 a 12 dígitos).' };
+  if (temPedido && !pedido) return { erro: 'Número do pedido inválido (use de 3 a 12 dígitos).' };
+  if (!nf && !pedido) return { erro: 'Informe o número da nota fiscal ou, se ainda não tem nota, o número do pedido.' };
   const dataOcorrencia = diaIso(x.dataOcorrencia);
   if (!dataOcorrencia) return { erro: 'Data da ocorrência inválida.' };
   const dataSolucao = x.dataSolucao ? diaIso(x.dataSolucao) : '';
@@ -35,7 +44,7 @@ function normalizarLinha(x) {
   return {
     linha: {
       id: texto(x.id, 40) || '',
-      nf, dataOcorrencia,
+      nf: nf || '', pedido: pedido || '', dataOcorrencia,
       detalhes: texto(x.detalhes, 600), responsavel: texto(x.responsavel, 80), solucao: texto(x.solucao, 400), dataSolucao,
       criadoPor: texto(x.criadoPor, 60), criadoEm: dataHoraIso(x.criadoEm), atualizadoPor: texto(x.atualizadoPor, 60), atualizadoEm: dataHoraIso(x.atualizadoEm)
     }
@@ -58,7 +67,7 @@ function normalizarLista(dado) {
 let contador = 0;
 const novoId = (agora) => 'o' + Number(agora || Date.now()).toString(36) + (contador++ % 1296).toString(36).padStart(2, '0') + Math.random().toString(36).slice(2, 6);
 
-const mesmaOcorrencia = (a, b) => a.nf === b.nf && a.dataOcorrencia === b.dataOcorrencia && a.detalhes.toLowerCase() === b.detalhes.toLowerCase();
+const mesmaOcorrencia = (a, b) => a.nf === b.nf && a.pedido === b.pedido && a.dataOcorrencia === b.dataOcorrencia && a.detalhes.toLowerCase() === b.detalhes.toLowerCase();
 
 // Aplica uma ação e devolve { linhas, erro?, resultado? }.
 //  salvar   { linha } cria (sem id) ou troca a linha de mesmo id
@@ -117,4 +126,4 @@ function linhasIniciais(agora) {
   return base.map((l, i) => Object.assign({}, l, { id: 'inicial' + (i + 1), criadoPor: 'sistema', criadoEm: quando, atualizadoPor: 'sistema', atualizadoEm: quando }));
 }
 
-module.exports = { MAX_LINHAS, numeroDaNota, normalizarLinha, normalizarLista, aplicar, linhasIniciais };
+module.exports = { MAX_LINHAS, numeroDaNota, numeroDoPedido, normalizarLinha, normalizarLista, aplicar, linhasIniciais };

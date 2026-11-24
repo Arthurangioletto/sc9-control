@@ -50,7 +50,9 @@
     return d.length >= 3 && d.length <= 12 ? d : '';
   }
 
-  // Colagem direta da planilha da expedição (Excel copia com TAB). Colunas: Nota fiscal, Data da ocorrência, Detalhes, Responsável, Solução, Data da solução.
+  const numeroDoPedido = numeroDaNota;
+
+  // Colagem direta da planilha da expedição (Excel copia com TAB). Colunas: Nota fiscal, Data da ocorrência, Detalhes, Responsável, Solução, Data da solução (e, opcional, Pedido).
   // Pula a linha de títulos. Devolve { linhas: [{nf, dataOcorrencia, detalhes, responsavel, solucao, dataSolucao}], invalidas: [{linha, motivo}] }.
   function lerColado(texto, agora) {
     const linhas = [], invalidas = [];
@@ -61,12 +63,13 @@
       if (c.length < 2) { invalidas.push({ linha: i + 1, motivo: 'Não achei as colunas (cole direto do Excel, com as colunas separadas).' }); return; }
       if (!numeroDaNota(c[0]) && /nota|nf|n[ºo°]/i.test(semAcento(c[0])) ) return;   // linha de títulos
       const nf = numeroDaNota(c[0]);
+      const pedido = numeroDoPedido(c[6]);   // 7ª coluna (opcional): pedido, para ocorrência de pedido que ainda não tem nota
       const dataOcorrencia = lerData(c[1], agora);
-      if (!nf) { invalidas.push({ linha: i + 1, motivo: 'Nota fiscal inválida: "' + String(c[0]).trim() + '".' }); return; }
+      if (!nf && !pedido) { invalidas.push({ linha: i + 1, motivo: 'Nota fiscal inválida: "' + String(c[0]).trim() + '" (e sem pedido na 7ª coluna).' }); return; }
       if (!dataOcorrencia) { invalidas.push({ linha: i + 1, motivo: 'Data da ocorrência não entendida: "' + String(c[1] || '').trim() + '".' }); return; }
       const dataSolucao = c[5] && c[5].trim() ? lerData(c[5], agora) : '';
       if (c[5] && c[5].trim() && !dataSolucao) { invalidas.push({ linha: i + 1, motivo: 'Data da solução não entendida: "' + c[5].trim() + '".' }); return; }
-      linhas.push({ nf, dataOcorrencia, detalhes: (c[2] || '').trim(), responsavel: (c[3] || '').trim(), solucao: (c[4] || '').trim(), dataSolucao });
+      linhas.push({ nf, pedido, dataOcorrencia, detalhes: (c[2] || '').trim(), responsavel: (c[3] || '').trim(), solucao: (c[4] || '').trim(), dataSolucao });
     });
     return { linhas, invalidas };
   }
@@ -78,7 +81,7 @@
   // Situação do pedido, a partir do que o servidor achou pela nota (info = { pedido, nome, liberadoEm, despachadoEm, ... } ou undefined)
   // e do primeiro registro na Saída p/ Expedição (saidaIso, ou '').
   function situacaoDoPedido(info, saidaIso, hoje) {
-    if (!info) return { codigo: 'nao-achado', texto: 'Nota não encontrada na base do SC9' };
+    if (!info) return { codigo: 'nao-achado', texto: 'Nota ou pedido não encontrado na base do SC9' };
     if (info.despachadoEm) return { codigo: 'despachado', texto: 'Pedido despachado' + (info.despachadoEm ? ' em ' + curta(String(info.despachadoEm).slice(0, 10)) : '') };
     if (saidaIso) return { codigo: 'na-expedicao', texto: 'Já está na Saída p/ Expedição, falta despachar' };
     const lib = info.liberadoEm ? String(info.liberadoEm).slice(0, 10) : '';
@@ -142,7 +145,7 @@
     };
   }
 
-  const api = { hojeSP, lerData, mostrarData, curta, numeroDaNota, lerColado, situacaoDoPedido, avaliar, ordenar, resumo, LIMITE_DIAS };
+  const api = { hojeSP, lerData, mostrarData, curta, numeroDaNota, numeroDoPedido, lerColado, situacaoDoPedido, avaliar, ordenar, resumo, LIMITE_DIAS };
   root.SC9Ocorrencias = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
