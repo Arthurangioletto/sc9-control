@@ -16,7 +16,15 @@ test('contas: login e código validados, hash com sal (nunca o código), sessão
   assert.ok(!JSON.stringify(cred).includes('café'));
   assert.equal(await V.conferirCodigo(conta, 'café-forte-9'), true); assert.equal(await V.conferirCodigo(conta, 'café-forte-8'), false); assert.equal(await V.conferirCodigo(null, 'qualquer'), false);
   assert.notEqual((await V.criarHash('café-forte-9')).hash, cred.hash, 'o sal muda o hash');
-  assert.deepEqual(Object.keys(V.visaoPublica(Object.assign({}, conta, { x: 1 }))).sort(), ['id', 'login', 'nome']);
+  assert.deepEqual(Object.keys(V.visaoPublica(Object.assign({}, conta, { x: 1 }))).sort(), ['email', 'id', 'login', 'nome']);
+  // e-mail corporativo: "implacil" só vale no domínio
+  assert.equal(V.validarEmailCorporativo('ana@implacil.com.br'), '');
+  assert.equal(V.validarEmailCorporativo('  Ana.Silva@Filial.IMPLACIL.com  '), '');
+  assert.notEqual(V.validarEmailCorporativo('ana@gmail.com'), '');
+  assert.notEqual(V.validarEmailCorporativo('implacil@gmail.com'), '');
+  assert.notEqual(V.validarEmailCorporativo(''), '');
+  assert.equal(V.normalizarEmail('  Ana@Implacil.COM.br '), 'ana@implacil.com.br');
+
   assert.ok(!JSON.stringify(V.visaoAdmin(conta)).match(/salt|hash/));
   const t0 = Date.UTC(2026, 10, 24), seg = 'segredo-de-teste';
   const tok = V.emitirSessao(seg, conta, t0);
@@ -71,22 +79,28 @@ test('servidor: acesso opcional (criar/entrar/trocar), solicitações ligadas ao
     const pedido = { pedido: '355386', nivel: 'alta', motivo: 'cliente_aguardando', observacao: 'cliente retira hoje' };
 
     // sem o link com código, nem a conta abre
-    assert.equal((await call('/api/vendedoras/conta?k=errado', { acao: 'criar', nome: 'Ana', login: 'ana', codigo: 'café-forte-9' })).status, 401);
+    assert.equal((await call('/api/vendedoras/conta?k=errado', { acao: 'criar', nome: 'Ana', login: 'ana', email: 'ana@implacil.com.br', codigo: 'café-forte-9' })).status, 401);
     // validações
-    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'a', codigo: 'café-forte-9' })).status, 400);
-    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'ana', codigo: '123' })).status, 400);
-    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'ana', codigo: '123456' })).status, 400, 'código fácil');
-    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'A', login: 'ana', codigo: 'café-forte-9' })).status, 400, 'nome curto');
+    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'a', email: 'a@implacil.com.br', codigo: 'café-forte-9' })).status, 400);
+    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'ana', email: 'ana@implacil.com.br', codigo: '123' })).status, 400);
+    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'ana', email: 'ana@implacil.com.br', codigo: '123456' })).status, 400, 'código fácil');
+    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'A', login: 'ana', email: 'ana@implacil.com.br', codigo: 'café-forte-9' })).status, 400, 'nome curto');
+    // e-mail corporativo: obrigatório e com "implacil" no domínio
+    for (const [email, motivo] of [[undefined, 'sem e-mail'], ['', 'e-mail vazio'], ['ana', 'sem @'], ['ana@gmail.com', 'domínio de fora'], ['implacil@gmail.com', 'implacil só antes do @'], ['ana@@implacil.com.br', 'e-mail malformado']]) {
+      const r = await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'ana', email, codigo: 'café-forte-9' });
+      assert.equal(r.status, 400, motivo); assert.match(r.data.error, /implacil/i, motivo);
+    }
+
     // solicitação feita ANTES de ter acesso (só com o nome) e outra de outro nome
     const antes = (await call(U('prioridade'), Object.assign({}, pedido, { pedidoPor: 'Ana' }))).data.linha;
     const doutra = (await call(U('prioridade'), Object.assign({}, pedido, { pedido: '355400', pedidoPor: 'Beatriz' }))).data.linha;
     assert.ok(antes.id && doutra.id);
 
-    const criada = await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'Ana.Vendas', codigo: 'café-forte-9', ids: [antes.id, doutra.id] });
+    const criada = await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'Ana.Vendas', email: 'ana.vendas@implacil.com.br', codigo: 'café-forte-9', ids: [antes.id, doutra.id] });
     assert.equal(criada.status, 200); assert.equal(criada.data.conta.login, 'ana.vendas'); assert.ok(criada.data.token);
     assert.ok(!JSON.stringify(criada.data).match(/salt|hash/));
     const token = criada.data.token;
-    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Outra', login: 'ANA.vendas', codigo: 'outro-codigo-1' })).status, 409, 'login repetido');
+    assert.equal((await call(U('conta'), { acao: 'criar', nome: 'Outra', login: 'ANA.vendas', email: 'ana.vendas@implacil.com.br', codigo: 'outro-codigo-1' })).status, 409, 'login repetido');
     assert.equal((await call(U('conta'), null, { token })).data.conta.nome, 'Ana');
     assert.equal((await call(U('conta'))).data.conta, null, 'sem token não há conta');
 
@@ -167,7 +181,7 @@ test('servidor: cada vendedora vê só o que é dela (solicitações e consultas
     const admin = (await (await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sc9-App': '1' }, body: JSON.stringify({ password: process.env.APP_PASSWORD }) })).headers.get('set-cookie') || '').split(';')[0];
     const k = (await call('/api/vendedoras-link', { acao: 'gerar' }, { cookie: admin })).data.token;
     const U = (rota) => '/api/vendedoras/' + rota + (rota.includes('?') ? '&' : '?') + 'k=' + k;
-    const nova = async (nome, login) => (await call(U('conta'), { acao: 'criar', nome, login, codigo: 'codigo-' + login + '-9' })).data.token;
+    const nova = async (nome, login) => (await call(U('conta'), { acao: 'criar', nome, login, email: login + '@implacil.com.br', codigo: 'codigo-' + login + '-9' })).data.token;
     const ana = await nova('Ana', 'ana.v'), bia = await nova('Bia', 'bia.v');
     assert.ok(ana && bia);
 

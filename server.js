@@ -1271,7 +1271,7 @@ const CAMPOS_IDENTIDADE = ["criadoPorUsuario", "criadoPorNome", "criadoEm", "con
 // o servidor sem limite. Generoso o bastante pra uso normal (vários navegadores
 // no mesmo IP da empresa, polling do dashboard a cada poucos segundos).
 const RATE_LIMIT_JANELA_MS = 60 * 1000;
-const RATE_LIMIT_MAX = 240; // por IP, por minuto — ampla margem pra várias pessoas atrás do mesmo IP
+const RATE_LIMIT_MAX = 1200; // por IP, por minuto — a empresa inteira costuma sair por um IP só e as telas consultam o servidor a cada poucos segundos
 const rateLimitPorIp = new Map();
 // Limites mais duros para a área das vendedoras (link com código, sem login): por IP e no total. Devolve true se passou do limite.
 const limitesVendedoras = new Map();
@@ -1945,6 +1945,9 @@ async function handleApi(req, res, pathname) {
           const login = V.normalizarLogin(corpo.login), nome = nomeLimpo(corpo.nome);
           if (!login) return sendJson(res, 400, { error: "Login: de 3 a 24 caracteres, só letras, números, ponto, hífen ou sublinhado." });
           if (nome.length < 2) return sendJson(res, 400, { error: "Diga seu nome para a equipe saber quem pediu." });
+          const erroEmail = V.validarEmailCorporativo(corpo.email);
+          if (erroEmail) return sendJson(res, 400, { error: erroEmail });
+          const email = V.normalizarEmail(corpo.email);
           const erroCodigo = V.validarCodigo(corpo.codigo, login);
           if (erroCodigo) return sendJson(res, 400, { error: erroCodigo });
           if (limiteVendedoras("vcc|" + ip, 5, 60 * 60 * 1000) || limiteVendedoras("vcc-total", 60, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitos acessos criados em pouco tempo. Aguarde um pouco ou fale com a expedição." });
@@ -1953,9 +1956,10 @@ async function handleApi(req, res, pathname) {
           await comFila("vendedoras-contas", async () => {
             const contas = await contasLinhas();
             if (contas.some((c) => c.login === login)) { resultado = { erro: "Esse login já existe. Escolha outro, ou entre se ele é seu.", status: 409 }; return; }
+            if (contas.some((c) => c.email && c.email === email)) { resultado = { erro: "Já existe um acesso com esse e-mail. Entre com o seu login, ou fale com a expedição se esqueceu o código.", status: 409 }; return; }
             if (contas.length >= V.MAX_CONTAS) { resultado = { erro: "Limite de acessos atingido. Fale com a expedição.", status: 400 }; return; }
             const agora = new Date().toISOString();
-            const conta = { id: "c" + crypto.randomBytes(8).toString("hex"), login, nome, salt: cred.salt, hash: cred.hash, sv: 0, ativo: true, criadoEm: agora, ultimoAcesso: agora };
+            const conta = { id: "c" + crypto.randomBytes(8).toString("hex"), login, nome, salt: cred.salt, hash: cred.hash, sv: 0, ativo: true, email, criadoEm: agora, ultimoAcesso: agora };
             await objSave("vendedoras-contas.json", { contas: contas.concat([conta]) });
             resultado = { conta };
           });

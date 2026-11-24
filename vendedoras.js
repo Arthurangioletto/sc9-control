@@ -17,7 +17,7 @@
     a: { pedido: '', tipo: '', texto: '', nome: lerLS(LS.nome, ''), previa: null, buscando: false, enviando: false, erro: '', enviado: null },
     avisos: null, avisosErro: '', sub: 'prioridades', abertoAviso: null,
     conta: lerLS(LS.sessao, null), // { token, nome, login } quando ela entrou com o acesso opcional
-    cf: { modo: 'criar', nome: '', login: '', codigo: '', codigo2: '', erro: '', enviando: false, atual: '', novo: '', erroTroca: '', okTroca: '', trocando: false }
+    cf: { modo: 'criar', nome: '', email: '', login: '', codigo: '', codigo2: '', erro: '', enviando: false, atual: '', novo: '', erroTroca: '', okTroca: '', trocando: false }
   };
 
   const api = async (caminho, opcoes) => {
@@ -139,12 +139,14 @@
     const c = estado.cf; c.erro = '';
     if (modo === 'criar') {
       if (c.nome.trim().length < 2) c.erro = 'Diga seu nome (como a equipe deve te chamar).';
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email.trim())) c.erro = 'Informe seu e-mail corporativo da Implacil (ex.: nome@implacil.com.br).';
+      else if (!c.email.trim().toLowerCase().split('@')[1].includes('implacil')) c.erro = 'Só e-mail corporativo da Implacil libera o acesso (o endereço precisa ter "implacil", ex.: nome@implacil.com.br).';
       else if (c.codigo !== c.codigo2) c.erro = 'Os dois códigos não são iguais.';
     }
     if (c.erro) return desenhar();
     c.enviando = true; desenhar();
     try {
-      const corpo = modo === 'criar' ? { acao: 'criar', nome: c.nome, login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) } : { acao: 'entrar', login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) };
+      const corpo = modo === 'criar' ? { acao: 'criar', nome: c.nome, email: c.email, login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) } : { acao: 'entrar', login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) };
       const j = await api('/api/vendedoras/conta', { method: 'POST', body: JSON.stringify(corpo) });
       salvarSessao(j); c.codigo = ''; c.codigo2 = ''; C.toast(modo === 'criar' ? 'Acesso criado. Você já está dentro.' : 'Bem-vinda, ' + j.conta.nome + '.');
       estado.tela = 'minhas'; estado.visao = 'minhas'; carregarPrioridades(true); carregarAvisos(true);
@@ -175,6 +177,8 @@
       h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'Criar acesso ou entrar', style: 'margin-bottom:14px' }, h('button', { type: 'button', 'aria-pressed': String(criar), onclick: () => { c.modo = 'criar'; c.erro = ''; desenhar(); }, text: 'Criar meu acesso' }), h('button', { type: 'button', 'aria-pressed': String(!criar), onclick: () => { c.modo = 'entrar'; c.erro = ''; desenhar(); }, text: 'Já tenho acesso' })),
       h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); enviarConta(c.modo); } },
         criar ? campoTexto('c-nome', 'Seu nome', 'nome', c, { autocomplete: 'name', maxlength: '60', placeholder: 'Ex.: Ana (Vendas)' }) : null,
+        criar ? campoTexto('c-email', 'E-mail corporativo da Implacil', 'email', c, { type: 'email', autocomplete: 'email', maxlength: '120', autocapitalize: 'none', placeholder: 'Ex.: ana@implacil.com.br' }) : null,
+        criar ? h('div', { class: 'aviso', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Use o seu próprio e-mail corporativo da Implacil. ' }), 'O acesso é liberado na hora, mas tudo o que você pedir, avisar ou consultar fica registrado com o seu e-mail e o seu nome, e a equipe pode ver. Não use o e-mail de outra pessoa. Sem login você continua consultando e avisando pelo link.')) : null,
         campoTexto('c-login', 'Login', 'login', c, { autocomplete: 'username', maxlength: '24', autocapitalize: 'none', placeholder: 'Ex.: ana.vendas' }),
         criar ? h('p', { class: 'dica', style: 'margin-top:-6px', text: 'De 3 a 24 caracteres: letras, números, ponto, hífen ou sublinhado.' }) : null,
         campoTexto('c-codigo', criar ? 'Código (mínimo 6 caracteres)' : 'Código', 'codigo', c, { type: 'password', autocomplete: criar ? 'new-password' : 'current-password', maxlength: '40' }),
