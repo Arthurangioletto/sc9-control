@@ -92,6 +92,7 @@ textarea.entrada { min-height: 90px; resize: vertical; }
 .selo.azul, .selo.recebida, .selo.andamento, .selo.media { background: var(--azul-claro); color: var(--azul-escuro); }
 .selo.verde, .selo.concluida, .selo.concluido, .selo.aprovada { background: var(--verde-claro); color: #0b6b42; }
 .selo.laranja, .selo.alta, .selo.em_analise { background: var(--laranja-claro); color: #8a4207; }
+.selo.pronto { background: #dcf5ee; color: #0a6354; }
 .selo.vermelho, .selo.urgente, .selo.atraso, .selo.nao_aprovada { background: var(--vermelho-claro); color: #9e2217; }
 .selo.em_atendimento { background: #efe9fd; color: #4a2aa0; }
 .selo.normal { background: var(--suave); color: var(--tinta-2); }
@@ -101,7 +102,7 @@ textarea.entrada { min-height: 90px; resize: vertical; }
 .res-numero { font-size: 13px; color: var(--mudo); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
 .res-numero + h2 { font-size: 34px; font-weight: 800; letter-spacing: -.03em; line-height: 1.1; }
 .status-destaque { margin-top: 14px; display: flex; gap: 14px; align-items: center; padding: 14px 16px; border-radius: 14px; background: var(--azul-claro); color: var(--azul-escuro); }
-.status-destaque.atraso { background: var(--vermelho-claro); color: #8d1d13; } .status-destaque.concluido { background: var(--verde-claro); color: #0b6b42; }
+.status-destaque.atraso { background: var(--vermelho-claro); color: #8d1d13; } .status-destaque.concluido { background: var(--verde-claro); color: #0b6b42; } .status-destaque.pronto { background: #dcf5ee; color: #0a6354; }
 .status-destaque .bola { width: 44px; height: 44px; border-radius: 12px; background: #fff; display: grid; place-items: center; font-size: 22px; flex: 0 0 auto; }
 .status-destaque b { display: block; font-size: 18px; line-height: 1.25; } .status-destaque span { font-size: 13.5px; opacity: .85; }
 .fatos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 18px; margin-top: 18px; }
