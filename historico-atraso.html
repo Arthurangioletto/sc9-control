@@ -65,6 +65,10 @@
   .tag.exp { background:#e3edff; color:#173d86; } .tag.desp { background:#dff5e8; color:#14693a; } .tag.saiu { background:#eceff4; color:#46536b; }
   .resumo-status { margin:8px 0; padding:9px 12px; border-radius:9px; background:#effaf3; color:#14532d; font-size:13px; font-weight:600; }
   .tag.est { background:#e8efff; color:#173d86; } .tag.fat { background:#fff1d6; color:#8a5a00; } .tag.atr { background:#fde4e0; color:#a62a1c; } .tag.proc { background:#e7f5ec; color:#1b6b3d; }
+  .tag.oc-urgente { background:#fde4e0; color:#a62a1c; } .tag.oc-atencao { background:#fff1d6; color:#8a5a00; } .tag.oc-andamento { background:#e3edff; color:#173d86; } .tag.oc-ok { background:#eceff4; color:#46536b; } .tag.oc-concluido { background:#dff5e8; color:#14693a; }
+  .acoes-agora { margin:12px 0; padding:14px; border:1px solid var(--line); border-left:5px solid var(--accent); border-radius:12px; background:#fff; }
+  .grupos { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; align-items:center; } .grupo { font:inherit; font-size:13px; padding:7px 11px; border:1px solid var(--line); border-radius:10px; background:var(--soft); cursor:pointer; text-align:left; } .grupo:hover { background:#e8efff; } .grupo b { font-size:15px; } .grupo.ruim { background:#fdf1ef; border-color:#f3cfc9; }
+  td.acao { min-width:220px; font-size:13px; }
   tr.detalhe td { background:#f6f9ff; border-top:none; padding:14px; }
   .det-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px 18px; } .cd { display:flex; flex-direction:column; } .cd span { font-size:11px; color:var(--mute); text-transform:uppercase; font-weight:700; } .cd b { font-size:14px; }
   .linha-tempo { margin-top:12px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; } .chip { font:inherit; font-size:12px; font-weight:700; padding:3px 9px; border:1px solid var(--line); border-radius:99px; background:#fff; cursor:pointer; } .chip.ativo { background:var(--accent); color:#fff; border-color:var(--accent); }
@@ -99,6 +103,7 @@
 <body>
 <main id="app"><p class="carregando">Carregando o histórico…</p></main>
 <script src="/atraso-historico-xlsx.js"></script>
+<script src="/ocorrencias.js"></script>
 <script src="/historico-atraso.js"></script>
 </body>
 </html>
