@@ -1371,7 +1371,7 @@ async function handleApi(req, res, pathname) {
         if (baseId) {
           const base = await comFila(object, async () => {
             const current = await load();
-            const doc = current.documentos.find(row => row.id === baseId && owns(row));
+            const doc = current.documentos.find(row => row.id === baseId && canRead(row)); // o administrador também lê a base (só leitura), para recuperar documentos
             if (!doc) throw new ErroHttp(404, "Documento indisponível.");
             const data = doc.baseObject ? await objLoad(doc.baseObject) : null;
             if (doc.baseObject && !data) throw new ErroHttp(503, "A base salva da transferência está indisponível.");

@@ -53,14 +53,15 @@ test('documentos da Transferência pertencem à conta e somente o administrador 
     for (const user of [pedro,admin]) {
       assert.equal((await api(endpoint, user, update)).status, 404);
       assert.equal((await api(endpoint, user, { acao:'excluir', id:first.id, versao:first.versao })).status, 404);
-      assert.equal((await api(endpoint+'/'+first.id+'/base', user)).status, 404);
     }
+    assert.equal((await api(endpoint+'/'+first.id+'/base', pedro)).status, 404, 'outro usuário não lê a base');
     assert.equal((await api(endpoint, ana, {...update, registros:[{...record,arm:'ES'}]})).status, 400);
     assert.equal((await api(endpoint, ana, {...update, base:{...update.base, items:[record,{...record,arm:'ES'}]}})).status, 400);
     const paused = await api(endpoint, ana, update);
     assert.equal(paused.status, 200);
     assert.equal((await api(endpoint, ana, update)).status, 409);
     assert.equal((await api(endpoint+'/'+first.id+'/base', ana)).data.base.arquivo, 'SB8.xlsx');
+    assert.equal((await api(endpoint+'/'+first.id+'/base', admin)).data.base.arquivo, 'SB8.xlsx', 'o administrador lê a base (só leitura)');
     const finished = await api(endpoint, ana, {
       ...update, base:undefined, versao:paused.data.documento.versao, status:'finalizado', armazens:{destino:'01'}
     });
