@@ -102,7 +102,12 @@
     const TITULO = { liberado: 'Pedido liberado', sep: 'Separação', conf: 'Conferência', fat: 'Faturado (nota fiscal)', saida: 'Saída para expedição', desp: 'Despachado para a transportadora' };
     // Pronto para despacho: já desceu para a expedição (planilha de saída), a nota fiscal está emitida e ainda não foi despachado.
     // Só para Cambuci (o despacho dos outros armazéns não é registrado aqui). A coleta é depois das 18h.
-    const pronto = ev.saida.feita && ev.fat.feita && !despachadoEm && v.soCambuci;
+    const info = { pedido, liberadoEm: v.liberadoEm ? diaSP(v.liberadoEm) : '', despachadoEm: despachadoEm ? diaSP(despachadoEm) : '' };
+    const ocorrencia = ocorrenciaDoPedido(opc.ocorrencias, pedido, v.nfs, info, saidaIso, agora);
+    const nosDois = ev.saida.feita && ev.fat.feita && !despachadoEm && v.soCambuci;
+    const ocAberta = Boolean(ocorrencia && !ocorrencia.resolvida);
+    // Com ocorrência ABERTA na expedição não prometemos saída: avisa e manda confirmar.
+    const pronto = nosDois && !ocAberta;
     const hojeSP = diaSP(agora);
     const avisoColeta = !pronto ? '' : diaSP(saidaIso) === hojeSP
       ? (horaSP(agora) < HORA_COLETA ? 'Provável saída hoje, na coleta (após as ' + HORA_COLETA + 'h).' : 'A coleta de hoje é após as ' + HORA_COLETA + 'h: provável saída ainda hoje.')
@@ -122,6 +127,7 @@
         if (c === 'desp') item.titulo = v.soCambuci ? 'Aguardando despacho' : 'Aguardando despacho (' + v.armazens.join(', ') + ')';
       }
       if (c === 'desp' && estado === 'atual' && pronto) { item.titulo = 'Pronto para despacho'; item.nota = avisoColeta; }
+      if (c === 'desp' && estado === 'atual' && nosDois && ocAberta) item.nota = 'Há uma ocorrência aberta: a saída na coleta não é garantida.';
       if (c === 'fat' && estado === 'atual' && ev.saida.feita) item.nota = 'Já desceu para a expedição: falta a nota fiscal para poder despachar.';
       if (c === 'desp' && estado !== 'feita' && !v.soCambuci) item.nota = 'O despacho dos armazéns de fora de Cambuci não é registrado aqui: confirme com a expedição.';
       return item;
@@ -138,10 +144,10 @@
     let resumo;
     if (despachadoEm) resumo = { nivel: 'concluido', texto: 'Despachado em ' + diaSP(despachadoEm).split('-').reverse().slice(0, 2).join('/') + '.' };
     else if (pronto) resumo = { nivel: 'pronto', texto: 'Pronto para despacho. ' + avisoColeta };
+    else if (nosDois && ocAberta) resumo = { nivel: 'andamento', texto: 'Já está na expedição, mas há uma ocorrência aberta: a saída na coleta de hoje não é garantida. Confirme com a expedição.' };
     else if (atrasado) resumo = { nivel: 'atraso', texto: 'Atrasado' + (dias != null ? ' há ' + dias + (dias === 1 ? ' dia' : ' dias') : '') + (atual ? '. Agora: ' + atual.titulo.toLowerCase() + '.' : '.') };
     else resumo = { nivel: 'andamento', texto: atual ? 'Agora: ' + atual.titulo.toLowerCase() + '.' : 'Em andamento.' };
 
-    const info = { pedido, liberadoEm: v.liberadoEm ? diaSP(v.liberadoEm) : '', despachadoEm: despachadoEm ? diaSP(despachadoEm) : '' };
     return {
       achado: true, pedido, atualizadoEm,
       resumo: Object.assign(resumo, { atrasado, dias }),
@@ -150,7 +156,7 @@
         cliente: v.nome, armazem: v.armazens.join(', '), transportadora, pecas: v.pecas, linhas: v.linhasDoPedido, nf: v.nfs.join(', '),
         liberadoEm: v.liberadoEm, despachadoEm, saidaEm: saidaIso, diasDesdeLiberacao: dias
       },
-      ocorrencia: ocorrenciaDoPedido(opc.ocorrencias, pedido, v.nfs, info, saidaIso, agora)
+      ocorrencia
     };
   }
 

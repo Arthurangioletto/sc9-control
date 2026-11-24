@@ -78,6 +78,14 @@ test('rastreio: já desceu para a expedição + nota emitida e ainda não despac
   // não passou pela planilha de saída: não está pronto
   r = R.montarRastreio(s, '355386', { agora: new Date('2026-11-24T15:00:00.000Z') });
   assert.notEqual(r.resumo.nivel, 'pronto');
+  // ocorrência ABERTA na expedição: não promete saída; resolvida: segue pronto e mostra a solução
+  const oc = (extra) => Object.assign({ nf: '885234', pedido: '355386', dataOcorrencia: '2026-11-24', detalhes: 'volume avariado, refazendo embalagem', responsavel: 'Daniela', solucao: '' }, extra);
+  r = R.montarRastreio(s, '355386', { saidaIso: saida, agora: new Date('2026-11-24T15:00:00.000Z'), ocorrencias: [oc()] });
+  assert.notEqual(r.resumo.nivel, 'pronto'); assert.match(r.resumo.texto, /ocorrência aberta.*não é garantida.*confirme com a expedição/i);
+  assert.equal(r.ocorrencia.detalhes, 'volume avariado, refazendo embalagem'); assert.ok(!JSON.stringify(r).includes('Daniela'), 'sem o nome do responsável');
+  assert.equal(r.etapas[5].titulo, 'Aguardando despacho'); assert.match(r.etapas[5].nota, /ocorrência aberta/);
+  r = R.montarRastreio(s, '355386', { saidaIso: saida, agora: new Date('2026-11-24T15:00:00.000Z'), ocorrencias: [oc({ solucao: 'embalagem refeita', dataSolucao: '2026-11-24' })] });
+  assert.equal(r.resumo.nivel, 'pronto'); assert.equal(r.ocorrencia.solucao, 'embalagem refeita');
   // armazém de fora de Cambuci: o despacho não é registrado aqui, então não promete saída
   r = R.montarRastreio(snap([linha(Object.assign({ armazem: 'BH' }, base))], { faturamento: [['885234', '2026-11-24T14:30:00.000Z']] }), '355386', { saidaIso: saida, agora: new Date('2026-11-24T15:00:00.000Z') });
   assert.notEqual(r.resumo.nivel, 'pronto');
