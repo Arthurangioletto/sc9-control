@@ -41,11 +41,21 @@ async function conferirCodigo(conta, codigo) {
 }
 const codigoTemporario = () => Array.from(crypto.randomBytes(8), (b) => ALFABETO_TEMP[b % ALFABETO_TEMP.length]).join('');
 
+// E-mail corporativo: só vale quem tem "implacil" no domínio (depois do @), por exemplo nome@implacil.com.br.
+// O SC9 não confirma que a pessoa é dona do e-mail (não manda mensagem): é uma barreira de cadastro, não uma verificação.
+function normalizarEmail(v) { return String(v == null ? '' : v).trim().toLowerCase().slice(0, 120); }
+function validarEmailCorporativo(v) {
+  const e = normalizarEmail(v);
+  if (!e) return 'Informe seu e-mail corporativo da Implacil (ex.: nome@implacil.com.br).';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return 'Esse e-mail não parece válido. Use o e-mail corporativo da Implacil (ex.: nome@implacil.com.br).';
+  if (!e.slice(e.indexOf('@') + 1).includes('implacil')) return 'Só e-mail corporativo da Implacil libera o acesso (o endereço precisa ter "implacil", ex.: nome@implacil.com.br).';
+  return '';
+}
 function normalizarConta(x) {
   if (!x || typeof x !== 'object') return null;
   const login = normalizarLogin(x.login), id = texto(x.id, 40);
   if (!login || !id || !x.salt || !x.hash) return null;
-  return { id, login, nome: texto(x.nome, 60) || login, salt: texto(x.salt, 64), hash: texto(x.hash, 128), sv: Number.isFinite(Number(x.sv)) ? Number(x.sv) : 0, ativo: x.ativo !== false, criadoEm: dataHora(x.criadoEm), ultimoAcesso: dataHora(x.ultimoAcesso) };
+  return { id, login, nome: texto(x.nome, 60) || login, salt: texto(x.salt, 64), hash: texto(x.hash, 128), sv: Number.isFinite(Number(x.sv)) ? Number(x.sv) : 0, ativo: x.ativo !== false, email: normalizarEmail(x.email), criadoEm: dataHora(x.criadoEm), ultimoAcesso: dataHora(x.ultimoAcesso) };
 }
 function normalizarLista(dado) {
   const lista = [], logins = new Set();
@@ -59,8 +69,8 @@ function normalizarLista(dado) {
 }
 
 // O que sai da conta para a própria vendedora e para a logística: nunca sal nem hash.
-const visaoPublica = (c) => ({ id: c.id, login: c.login, nome: c.nome });
-const visaoAdmin = (c) => ({ id: c.id, login: c.login, nome: c.nome, ativo: c.ativo, criadoEm: c.criadoEm, ultimoAcesso: c.ultimoAcesso });
+const visaoPublica = (c) => ({ id: c.id, login: c.login, nome: c.nome, email: c.email || '' });
+const visaoAdmin = (c) => ({ id: c.id, login: c.login, nome: c.nome, email: c.email || '', ativo: c.ativo, criadoEm: c.criadoEm, ultimoAcesso: c.ultimoAcesso });
 
 // Sessão: v1.<id>.<sv>.<expira>.<assinatura>
 const assinar = (segredo, corpo) => crypto.createHmac('sha256', segredo + '|vendedoras').update(corpo).digest('base64url');
@@ -80,4 +90,4 @@ function lerSessao(segredo, token, agora) {
 }
 const contaDaSessao = (contas, sessao) => (sessao ? contas.find((c) => c.id === sessao.id && c.ativo && c.sv === sessao.sv) || null : null);
 
-module.exports = { MAX_CONTAS, TTL_SESSAO_S, normalizarLogin, validarCodigo, criarHash, conferirCodigo, codigoTemporario, normalizarConta, normalizarLista, visaoPublica, visaoAdmin, emitirSessao, lerSessao, contaDaSessao };
+module.exports = { normalizarEmail, validarEmailCorporativo, MAX_CONTAS, TTL_SESSAO_S, normalizarLogin, validarCodigo, criarHash, conferirCodigo, codigoTemporario, normalizarConta, normalizarLista, visaoPublica, visaoAdmin, emitirSessao, lerSessao, contaDaSessao };

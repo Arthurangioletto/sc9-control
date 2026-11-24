@@ -69,7 +69,7 @@ test('servidor: vendedora avisa a expedição (com ou sem login), só vê os pr�
     const fora = await call(U('aviso'), { pedido: '999000', tipo: 'outro', texto: 'pedido novo ainda sem carga', pedidoPor: 'Bia' });
     assert.equal(fora.status, 200); assert.equal(fora.data.naoAchado, true); assert.equal(fora.data.linha.foraDoSc9, true);
     // com login: nome e login vêm da conta
-    const ana = (await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'ana.v', codigo: 'codigo-ana-v-9' })).data.token;
+    const ana = (await call(U('conta'), { acao: 'criar', nome: 'Ana', login: 'ana.v', email: 'ana.v@implacil.com.br', codigo: 'codigo-ana-v-9' })).data.token;
     const daAna = await call(U('aviso'), Object.assign({}, aviso, { texto: 'Aviso da Ana: cliente VIP', pedidoPor: 'Qualquer' }), { token: ana });
     assert.equal(daAna.status, 200);
 
@@ -82,7 +82,7 @@ test('servidor: vendedora avisa a expedição (com ou sem login), só vê os pr�
     assert.equal((await call(U('avisos?ids=' + bia.data.linha.id), null, { token: ana })).data.meus.length, 2, 'com o id do aviso da Bia ela veria — o id só a Bia tem');
 
     // quem cria o acesso depois leva os avisos do aparelho (mesmo nome)
-    const bia2 = (await call(U('conta'), { acao: 'criar', nome: 'Bia', login: 'bia.v', codigo: 'codigo-bia-v-9', idsAvisos: [bia.data.linha.id, fora.data.linha.id] })).data.token;
+    const bia2 = (await call(U('conta'), { acao: 'criar', nome: 'Bia', login: 'bia.v', email: 'bia.v@implacil.com.br', codigo: 'codigo-bia-v-9', idsAvisos: [bia.data.linha.id, fora.data.linha.id] })).data.token;
     assert.equal((await call(U('avisos'), null, { token: bia2 })).data.meus.length, 2);
 
     // equipe: só logada com perfil; vê tudo (com quem avisou), assume, responde e resolve
