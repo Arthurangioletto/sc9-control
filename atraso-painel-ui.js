@@ -47,7 +47,7 @@
   const MOB = !TV && typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches; // gráficos em viewBox estreito no celular: rótulos legíveis
   const TV_SLIDES = 6; // telas do rodízio da TV
   const dataIsoValida = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) && !Number.isNaN(Date.parse(d + 'T00:00:00Z')) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
-  const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, prod: 'pedidos', calor: 'faixa', mais: false };
+  const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, taxa: 'semana', prod: 'pedidos', calor: 'faixa', mais: false };
   // período personalizado da URL com data inválida ou faltando: volta para 30 dias (antes derrubava a página)
   if (S.per === 'custom' && !(dataIsoValida(S.de) && dataIsoValida(S.ate))) { S.per = '30'; S.de = ''; S.ate = ''; }
   let sincArm = '', sincTr = ''; // último valor dos filtros que o painel e a lista já combinaram entre si
@@ -100,7 +100,7 @@
   .pn-mais .pn-cards { grid-template-columns:repeat(5,minmax(0,1fr)); }
   .pn-par { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:18px; }
   .pn-bloco { grid-column:span 12; background:#fff; border:1px solid var(--line); border-radius:18px; padding:20px 22px; min-width:0; box-shadow:0 1px 2px rgba(20,35,61,.04); }
-  .pn-bloco.m7 { grid-column:span 7; } .pn-bloco.m5 { grid-column:span 5; } .pn-bloco.m4 { grid-column:span 4; } .pn-bloco.m6 { grid-column:span 6; }
+  .pn-bloco.m12 { grid-column:span 12; } .pn-bloco.m7 { grid-column:span 7; } .pn-bloco.m5 { grid-column:span 5; } .pn-bloco.m4 { grid-column:span 4; } .pn-bloco.m6 { grid-column:span 6; }
   .pn-bloco h2 { font-size:18px; margin:0; letter-spacing:-.01em; } .pn-bloco .sub { font-size:13px; color:#5b6a84; margin:3px 0 10px; font-weight:500; }
   .pn-topo { display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:flex-start; }
   .pn-seg { display:inline-flex; background:#eef1f6; border-radius:10px; padding:3px; gap:2px; } .pn-seg button { font:inherit; font-size:12.5px; font-weight:700; padding:5px 12px; border:0; border-radius:8px; background:transparent; color:#43506a; cursor:pointer; }
@@ -487,6 +487,40 @@
       h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:#c63828' }), '▲ Entraram no atraso (acima)'), h('span', null, h('i', { style: 'background:#1f8a4c' }), '▼ Saíram do atraso (abaixo)'), h('span', null, h('i', { class: 'linha', style: 'background:#14233d' }), 'Variação líquida (acima de 0 = o atraso cresceu)')));
   }
 
+  // Taxa de atraso no geral: pedidos que entraram em atraso ÷ pedidos despachados, por dia, semana ou mês (soma, não média de porcentagens).
+  function taxaBloco(tx, g, ate) {
+    const modo = S.taxa;
+    const ctl = h('div', { class: 'pn-seg', role: 'group', 'aria-label': 'Agrupar por' }, [['dia', 'Dia'], ['semana', 'Semana'], ['mes', 'Mês']].map(([k, t]) => h('button', { type: 'button', 'aria-pressed': modo === k, onclick: () => mudar(() => { S.taxa = k; }), text: t })));
+    const pct = (v) => (v == null ? '—' : fmtN(v) + '%');
+    const lista0 = modo === 'dia' ? tx.dias.map((d) => ({ chave: d.dia, rotulo: ddmm(d.dia) + ' ' + d.semana, dias: d.valido ? 1 : 0, volume: d.valido ? d.volume : 0, pecas: d.pecas, entraram: d.valido ? d.entraram : 0, pct: d.pct, mediaEmAtraso: d.emAtraso, emAndamento: d.dia === ate })) : modo === 'mes' ? tx.meses : tx.semanas;
+    const lista = lista0.filter((x) => modo === 'dia' ? x.dias > 0 : x.dias > 0).slice(modo === 'dia' ? -30 : modo === 'semana' ? -12 : -24);
+    const andamento = (x) => (modo === 'semana' ? ate >= x.chave && ate <= P().somaDias(x.chave, 6) : modo === 'mes' ? ate.slice(0, 7) === x.chave : x.emAndamento);
+    const sub = 'Pedidos que entraram em atraso ÷ pedidos despachados no mesmo período. Dias sem despacho ou sem posição anterior ficam fora da conta.';
+    const vazio = g && g.transp ? 'Com filtro de transportadora não há volume despachado por transportadora; tire o filtro para ver a taxa.' : 'Ainda não há dias com despacho e posição de atraso gravados para calcular a taxa.';
+    const corpo = () => {
+      if (!lista.length) return h('p', { class: 'pn-vazio', text: vazio });
+      const max = Math.max(0.0001, ...lista.map((x) => x.pct || 0));
+      const ult = lista[lista.length - 1], ant = lista.length > 1 ? lista[lista.length - 2] : null;
+      const comp = ult && ant && ult.pct != null && ant.pct != null ? (Math.abs(ult.pct - ant.pct) < 0.05 ? 'igual ao período anterior' : (ult.pct < ant.pct ? 'abaixo' : 'acima') + ' do período anterior (' + pct(ant.pct) + ')') : '';
+      const geral = tx.geral;
+      const kpis = h('div', { class: 'pn-kpis' },
+        h('div', { class: 'pn-kpi principal' }, h('b', { text: pct(geral.pct) }), h('span', { text: 'dos pedidos despachados entraram em atraso (tudo o que está gravado)' })),
+        h('div', { class: 'pn-kpi' }, h('b', { text: fmtI(geral.entraram) + ' de ' + fmtI(geral.volume) }), h('span', { text: 'pedidos que entraram em atraso ÷ despachados em ' + fmtI(geral.dias) + ' dias' })),
+        geral.mediaVolume != null ? h('div', { class: 'pn-kpi' }, h('b', { text: fmtI(geral.mediaVolume) }), h('span', { text: 'pedidos despachados por dia, em média' })) : null,
+        ult && ult.pct != null ? h('div', { class: 'pn-kpi' }, h('b', { text: pct(ult.pct) }), h('span', { text: ult.rotulo + (andamento(ult) ? ' (em andamento)' : '') + (comp ? ' · ' + comp : '') })) : null);
+      return h('div', null, kpis, lista.map((x) => h('div', { class: 'pn-linha', style: 'cursor:default;grid-template-columns:130px 1fr 230px', title: x.rotulo + ': ' + fmtI(x.entraram) + ' entraram em atraso de ' + fmtI(x.volume) + ' despachados (' + pct(x.pct) + ')' },
+        h('span', { class: 'nome' }, x.rotulo + (andamento(x) ? ' *' : '')),
+        h('div', { class: 'pn-trilho' }, h('span', { style: 'width:' + Math.max(1, (x.pct || 0) / max * 100).toFixed(1) + '%;background:' + (x.pct >= 5 ? '#c63828' : COR.estoque) })),
+        h('span', { class: 'num' }, h('b', { text: pct(x.pct) }), h('small', { text: fmtI(x.entraram) + ' de ' + fmtI(x.volume) + ' pedidos' + (x.pecas ? ' · ' + fmtI(x.pecas) + ' peças' : '') })))),
+        h('p', { class: 'pn-nota', text: '* período em andamento. Esta tela guarda pedidos e peças; hora-homem e quantidade de separadores ainda não ficam no histórico.' }));
+    };
+    const tabela = () => tabelaDe(['Período', 'Despachados', 'Peças', 'Entraram em atraso', 'Taxa', 'Em atraso (média)'], lista.map((x) => [x.rotulo + (andamento(x) ? ' *' : ''), fmtI(x.volume), x.pecas ? fmtI(x.pecas) : null, fmtI(x.entraram), pct(x.pct), x.mediaEmAtraso != null ? fmtI(x.mediaEmAtraso) : null]));
+    return blocoGrafico('taxa', 'Atraso no geral: taxa sobre o volume', sub, ctl, corpo, tabela, null, 'm12');
+  }
+
+  // se o cálculo ou o desenho da taxa falhar, o resto do painel continua aparecendo
+  function taxaSegura(p, g, ate) { try { return taxaBloco(P().taxaAtraso(p, ate, g), g, ate); } catch (e) { if (root.console) console.error('Taxa de atraso:', e); return null; } }
+
   function produtividade(serieDias, dia) {
     const pr = P().produtividade(serieDias), medida = S.prod;
     const campo = medida === 'pecas' ? 'pecas' : 'pedidos';
@@ -829,7 +863,7 @@
     }
     return h('div', { class: 'pn', id: 'pn-raiz' },
       hero, barra(p, fr), aviso, cartoesEl, maisEl,
-      h('div', { class: 'pn-par' }, evolucao(dias, fx, dia, mmPre), produtividade(dias, dia), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g)), cascataBloco(P().cascata(p, dia, g), dia), calorBloco(P().mapaCalor(p, dia, g, S.calor), S.calor), paretoBloco(P().transportadoras(p, dia, g, 8))),
+      h('div', { class: 'pn-par' }, evolucao(dias, fx, dia, mmPre), produtividade(dias, dia), taxaSegura(p, g, ate || dia || hoje), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g)), cascataBloco(P().cascata(p, dia, g), dia), calorBloco(P().mapaCalor(p, dia, g, S.calor), S.calor), paretoBloco(P().transportadoras(p, dia, g, 8))),
       tabelaCriticos(p, a, g, agora),
       h('p', { class: 'pn-sep', text: 'Detalhe do dia e pedidos' }));
   }

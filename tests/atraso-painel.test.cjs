@@ -292,3 +292,28 @@ test('Pareto de transportadoras: acumulado chega a 100% e "Outras" junta o resto
   assert.ok(Math.abs(t.lista[3].acum - 100) < 1e-9);
   assert.ok(t.lista[0].tot >= t.lista[1].tot);
 });
+
+test('taxa de atraso: entraram ÷ despachados, por dia, semana e mês (somas, sem média de porcentagens)', () => {
+  const d = dados();
+  const p = H.preparar(d);
+  const t = P.taxaAtraso(p, '2026-11-19', P.filtroVazio());
+  const dia19 = t.dias.find((x) => x.dia === '2026-11-19');
+  const novos = p.analises.find((a) => a.reg.dia === '2026-11-19').cmp.novos.length;
+  assert.equal(dia19.volume, 20); assert.equal(dia19.entraram, novos); assert.equal(dia19.valido, true);
+  assert.ok(Math.abs(dia19.pct - novos / 20 * 100) < 1e-9);
+  const dia16 = t.dias.find((x) => x.dia === '2026-11-16');
+  assert.equal(dia16.valido, false, 'primeira foto não tem anterior: fica fora da taxa, não vira zero'); assert.equal(dia16.pct, null);
+  const dia17 = t.dias.find((x) => x.dia === '2026-11-17');
+  assert.equal(dia17.entraram, null); assert.equal(dia17.valido, false, 'dia com despacho e sem foto fica fora');
+  assert.equal(t.semanas.length, 1); assert.equal(t.semanas[0].chave, '2026-11-16', 'semana começa na segunda');
+  assert.equal(t.semanas[0].volume, 20); assert.equal(t.semanas[0].entraram, novos);
+  assert.equal(t.meses[0].chave, '2026-11'); assert.equal(t.geral.volume, 20);
+  assert.equal(P.semanaDe('2026-11-22'), '2026-11-16', 'domingo pertence à semana que começou na segunda anterior');
+  assert.equal(P.semanaDe('2026-11-23'), '2026-11-23');
+});
+
+test('taxa de atraso: filtro de transportadora não tem volume e não inventa taxa', () => {
+  const p = H.preparar(dados());
+  const t = P.taxaAtraso(p, '2026-11-19', Object.assign(P.filtroVazio(), { transp: 'TCS' }));
+  assert.equal(t.geral.pct, null); assert.ok(t.dias.every((x) => !x.valido));
+});
