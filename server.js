@@ -3,8 +3,6 @@
 const Inventory = require("./inventory-integrity.js");
 const Stock = require("./stock-position.js");
 // carregado só quando a rota da gaveta é usada (os outros testes copiam só alguns arquivos do servidor)
-const TdcEnderecos = new Proxy({}, { get: (_, nome) => require("./tdc-enderecos.js")[nome] });
-const tdcEnderecosCache = { zz2: null, zz2Chave: "", bases: new Map() };
 const Gaveta = new Proxy({}, { get: (_, nome) => require("./gaveta-core.js")[nome] });
 const http = require("http");
 const zlib = require("zlib");
@@ -473,7 +471,6 @@ SERVABLE.add("transferencia-document-storage.js");
 SERVABLE.add("operational-documents-ui.js");
 SERVABLE.add("export-workbook.js");
 SERVABLE.add("gaveta-core.js");
-SERVABLE.add("tdc-enderecos.js");
 SERVABLE.add("gaveta-ui.js");
 SERVABLE.add("consolidado.js");
 SERVABLE.add("consolidado-ui.js");
@@ -3623,35 +3620,6 @@ async function handleApi(req, res, pathname) {
 
   // ---- Entradas do TDC no armazém 59: SD1 (nota de entrada) + fichário de revisões ----
   // Admin ou perfil "alteracoes". O cruzamento SD1 x SD3 é feito no navegador; aqui só guarda.
-  // Endereço do armazém 01 (ZZ2) de cada produto/lote da nota, lendo as bases já salvas: ZZ2 da Análise de gaveta e base da Transferência (sem upload novo)
-  if (pathname === "/api/entradas-tdc/enderecos" && method === "POST") {
-    if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
-    res.setHeader("Cache-Control", "private, no-store");
-    try {
-      const corpo = await readJsonBody(req);
-      const itens = (Array.isArray(corpo && corpo.itens) ? corpo.itens : []).slice(0, 600).map((i) => ({ produto: String((i && i.produto) || "").slice(0, 40), lote: String((i && i.lote) || "").slice(0, 60) }));
-      const indices = [], fontes = {};
-      const zz2 = await gavetaObj("zz2");
-      if (zz2 && Array.isArray(zz2.rows)) {
-        if (!tdcEnderecosCache.zz2 || tdcEnderecosCache.zz2Chave !== zz2.updatedAt) { tdcEnderecosCache.zz2 = TdcEnderecos.indexarZz2(zz2.rows); tdcEnderecosCache.zz2Chave = zz2.updatedAt; }
-        indices.push(tdcEnderecosCache.zz2); fontes.zz2 = { nome: zz2.nome || "", atualizadoEm: zz2.updatedAt || "" };
-      }
-      const transf = await objLoad(TRANSFERENCIA_OBJ).catch(() => null);
-      const docs = ((transf && transf.documentos) || []).filter((d) => d && d.baseObject).slice(-3).reverse();
-      for (const d of docs) {
-        let ind = tdcEnderecosCache.bases.get(d.baseObject);
-        if (!ind) {
-          const dado = await objLoad(d.baseObject).catch(() => null);
-          if (!dado || !Array.isArray(dado.items)) continue;
-          ind = TdcEnderecos.indexarTransferencia(dado.items);
-          if (tdcEnderecosCache.bases.size >= 6) tdcEnderecosCache.bases.delete(tdcEnderecosCache.bases.keys().next().value);
-          tdcEnderecosCache.bases.set(d.baseObject, ind);
-        }
-        indices.push(ind); fontes.transferencia = { arquivo: d.arquivo || "" };
-      }
-      return sendJson(res, 200, { enderecos: TdcEnderecos.consultar(indices, itens), fontes, semBase: indices.length === 0 });
-    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao buscar os endereços do armazém 01")); }
-  }
   if (pathname === "/api/entradas-tdc/sd1" && method === "GET") {
     if (!(await exigir(req, res, ["admin", "operador"], "alteracoes"))) return;
     try {
