@@ -226,3 +226,32 @@ test('ocorrência por pedido: vale sem nota, exige nota ou pedido, acha o pedido
   assert.deepEqual([col.linhas[1].nf, col.linhas[1].pedido], ['', '355386']);
   assert.equal(col.invalidas.length, 1);
 });
+
+test('colar do Excel completa só o que falta nas ocorrências que já existem e inclui as que não estavam', () => {
+  const Oc = require('../ocorrencias-store.js');
+  const O = require('../ocorrencias.js');
+  const base = Oc.linhasIniciais(Date.parse('2026-11-25T12:00:00Z'));
+  base[1].solucao = ''; // ocorrência 886039 sem solução
+  const tabela = [
+    'Nº da Nota Fiscal\tData da Ocorrência\tDetalhes da Ocorrência\tResponsável comercial\tSolução da Ocorrência\tData da Solução',
+    '885234\t16/11/2026\tendereço insuficiente- vendedor está verificando e cadastro precisa atualizar\tJuliana Abranches\tResolvido\t18/11',
+    '886039\t21/11/2026\tcliente mudou de endereço- vendedora está retornando hoje o e-mail.\tDaniela Anselmo\tRetornou o e-mail hoje com endereço\t',
+    '886511\t23/11/2026\tcliente mudou de endereço- vendedora está retornando hoje o e-mail.\tNatalia (Qualidade)\tResolvido\t24/11',
+    '883912\t23/11/2026\tcliente mudou de endereço- tdc está retornando hoje o e-mail.\tTDC\tRetornou o e-mail dia 24/11\t',
+    '886512\t24/11/2026\tNumeração do endereço informado não foi localizada.\tVeruschka\t\t',
+    '886478\t24/11/2026\tEstabelecimento fechado\tCris Zugaib\t\t'
+  ].join('\n');
+  const lido = O.lerColado(tabela, new Date('2026-11-25T12:00:00Z'));
+  assert.equal(lido.invalidas.length, 0); assert.equal(lido.linhas.length, 6);
+  const r = Oc.aplicar(base, { acao: 'importar', linhas: lido.linhas }, 'admin', Date.parse('2026-11-25T13:00:00Z'));
+  assert.equal(r.resultado.novas, 3);
+  assert.equal(r.resultado.completadas, 2, 'a 886039 ganhou a solução e a 886511 a data da solução');
+  assert.equal(r.resultado.repetidas, 1);
+  const por = (nf) => r.linhas.find((l) => l.nf === nf);
+  assert.equal(por('886039').solucao, 'Retornou o e-mail hoje com endereço');
+  assert.equal(por('886511').solucao, 'Retornou o e-mail dia 24/11', 'o que já estava preenchido não é trocado');
+  assert.equal(por('886511').dataSolucao, '2026-11-24');
+  assert.equal(por('885234').dataSolucao, '2026-11-18');
+  assert.ok(por('886478') && por('886512') && por('883912'));
+  assert.equal(r.linhas.length, 6);
+});
