@@ -249,3 +249,41 @@ test('modo TV e impressão existem e o painel sai do modo TV com Esc', () => {
   assert.ok(ui.includes('@page { size:A4 landscape'));
   assert.ok(ui.includes('tabelaCriticos'));
 });
+
+test('cascata do dia fecha: anterior - saíram + entraram = hoje, e respeita o filtro de armazém', () => {
+  const p = H.preparar(dados());
+  const c = P.cascata(p, '2026-11-19', P.filtroVazio());
+  assert.equal(c.refDia, '2026-11-16');
+  assert.equal(c.bate, true);
+  assert.equal(c.inicio - c.saiu + c.entrou, c.fim);
+  assert.equal(c.continuam, c.inicio - c.saiu);
+  const bh = P.cascata(p, '2026-11-19', { arm: 'BH', transp: '' });
+  assert.equal(bh.bate, true);
+  assert.equal(P.cascata(p, '2026-11-16', P.filtroVazio()), null); // primeira foto: sem comparação
+});
+
+test('mapa de calor: cada pedido cai em exatamente uma célula; ordena pelo armazém com maior parte 5+', () => {
+  const p = H.preparar(dados());
+  const m = P.mapaCalor(p, '2026-11-19', P.filtroVazio(), 'faixa');
+  const soma = m.linhas.reduce((t, l) => t + l.tot, 0);
+  assert.equal(soma, m.total.tot);
+  for (const l of m.linhas) assert.equal(l.celulas.reduce((t, x) => t + x.qtd, 0), l.tot);
+  for (let i = 1; i < m.linhas.length; i++) assert.ok(m.linhas[i - 1].pctCinco >= m.linhas[i].pctCinco);
+  const e = P.mapaCalor(p, '2026-11-19', P.filtroVazio(), 'etapa');
+  assert.equal(e.colunas.length, 4);
+  assert.equal(e.total.tot + e.semClasse, m.total.tot + m.semClasse);
+});
+
+test('Pareto de transportadoras: acumulado chega a 100% e "Outras" junta o resto', () => {
+  const d = dados();
+  const itens = [];
+  for (let i = 0; i < 12; i++) itens.push(it('9' + i, 'BH', 1, 'E', i % 7, { e: 'S' }, 'T' + (i % 5)));
+  d.meses['2026-11'].dias['2026-11-19'].itens = itens;
+  const p = H.preparar(d);
+  const t = P.transportadoras(p, '2026-11-19', P.filtroVazio(), 3);
+  assert.equal(t.lista.length, 4);
+  assert.equal(t.lista[3].filtravel, false);
+  assert.equal(t.lista.reduce((s, x) => s + x.tot, 0), 12);
+  assert.ok(Math.abs(t.lista[3].acum - 100) < 1e-9);
+  assert.ok(t.lista[0].tot >= t.lista[1].tot);
+});
