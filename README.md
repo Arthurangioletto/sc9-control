@@ -539,6 +539,3 @@ Tela única, no mesmo visual do SC9, que casa o que **desceu do estoque**, o que
 
 ### Produção por dia de separação
 Na tela **Separadores** (Produtividade), o painel "Produção por dia de separação" mostra, para o dia escolhido, as peças, pedidos e linhas de cada separador, contando pelo dia em que o pick terminou (`pickEnd`, horário de Brasília) e não pelo dia de liberação do pedido. Respeita o filtro de armazém, tem botão Hoje/Último dia com pick e CSV. Só lê a base carregada (`separador-dia.js`).
-
-### Endereço 01 (ZZ2) nas Entradas TDC
-Cada item da nota na conferência do TDC mostra o endereço do armazém 01 pelo ZZ2, como Transferência e Retem. A rota `POST /api/entradas-tdc/enderecos` lê as bases já salvas (ZZ2 da Análise de gaveta e, se faltar, a base da Transferência), sem upload novo; prefere o endereço do lote e, sem ele, mostra os do produto marcados "(produto)". Sem nenhuma base salva, a tela avisa. Lógica em `tdc-enderecos.js`.
