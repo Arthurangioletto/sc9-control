@@ -46,7 +46,7 @@
     const lista = [...new Set(String(texto || '').split(/[\s,;]+/).map(soNumeros).filter((x) => x.length >= 4))].slice(0, 10);
     estado.digitado = String(texto || '').trim();
     if (!lista.length) { estado.erro = 'Digite o número do pedido (só números, no mínimo 4 dígitos).'; estado.consulta = null; estado.varios = null; return desenhar(); }
-    if (!silencioso) { estado.carregando = true; estado.erro = ''; desenhar(); }
+    if (!silencioso) { estado.carregando = true; estado.erro = ''; estado.animouRes = ''; desenhar(); }
     try {
       if (lista.length === 1) {
         estado.consulta = await api('/api/vendedoras/pedido?pedido=' + lista[0] + (silencioso ? '&auto=1' : '')); estado.varios = null; estado.atualizadoEm = estado.consulta.atualizadoEm;
@@ -59,7 +59,7 @@
         estado.varios = rs; estado.consulta = null;
       }
       estado.erro = '';
-    } catch (e) { estado.erro = e.message || 'Não consegui consultar agora.'; if (!silencioso) estado.consulta = null; }
+    } catch (e) { estado.erro = e.message || 'Não consegui consultar agora. Tente de novo em instantes.'; if (!silencioso) estado.consulta = null; }
     estado.carregando = false; desenhar();
   }
   /* ---------- acompanhar pedidos (neste aparelho): avisa o que mudou desde a última vez que ela olhou ---------- */
@@ -89,21 +89,29 @@
     estado.seguindoCarregando = false;
     if (!silencioso || ['rastrear', 'minhas'].includes(estado.tela)) desenhar();
   }
+  // mini barra de progresso (uma fatia por etapa) e cor da situação: usadas nos cartões compactos
+  const tomDe = (r) => 'nv-' + (r && r.achado ? r.resumo.nivel : 'andamento');
+  function miniProgresso(r) {
+    const et = (r && r.etapas) || [], f = et.filter((e) => e.estado === 'feita').length;
+    if (!et.length) return null;
+    return h('div', { class: 'mini-bloco' }, h('div', { class: 'mini', role: 'img', 'aria-label': f + ' de ' + et.length + ' etapas concluídas' }, et.map((e) => h('i', { class: e.estado }))), h('p', { class: 'mini-leg', text: f + ' de ' + et.length + ' etapas concluídas' }));
+  }
   function cartaoSeguindo() {
     if (!estado.seguindo.length) return null;
     const mudaram = estado.seguindo.filter((s) => mudou(s.pedido)).length;
     return h('section', { class: 'card', 'aria-label': 'Pedidos que você acompanha' },
       h('div', { class: 'card-titulo' }, h('h2', { text: 'Pedidos que você acompanha' }), h('span', { class: 'mudo peq', text: mudaram ? mudaram + (mudaram === 1 ? ' mudou' : ' mudaram') + ' desde a última vez' : 'nada mudou desde a última vez' })),
-      estado.seguindo.map((s) => { const r = estado.seguindoEstado[s.pedido], mdd = mudou(s.pedido);
-        return h('div', { class: 'cartao-lista', style: 'cursor:default' },
-          h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + s.pedido }), r ? (r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Fora do SC9', 'alta')) : C.selo('Carregando…', 'normal'), mdd ? C.selo('Mudou', 'laranja') : null),
-          h('div', { class: 'l2' }, h('span', { text: (s.cliente ? s.cliente + ' · ' : '') + (r ? (r.achado ? r.resumo.texto : 'Ainda não está no SC9.') : 'Buscando a situação…') })),
-          h('div', { class: 'acoes', style: 'margin-top:8px' },
-            h('button', { class: 'btn peq', type: 'button', onclick: () => { marcarVisto(s.pedido); estado.tela = 'rastrear'; estado.digitado = s.pedido; consultar(s.pedido); root.scrollTo(0, 0); } }, ic('busca'), 'Ver o andamento'),
+      h('div', { class: 'seg-lista' }, estado.seguindo.map((s) => { const r = estado.seguindoEstado[s.pedido], mdd = mudou(s.pedido);
+        return h('div', { class: 'seg-card tilt ' + tomDe(r) + (mdd ? ' mudou' : '') },
+          h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + s.pedido }), r ? (r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Fora do SC9', 'alta')) : C.selo('Carregando…', 'normal'), mdd ? C.selo('Mudou', 'laranja mudou') : null),
+          h('p', { class: 'quem', text: (s.cliente ? s.cliente + ' · ' : '') + (r ? (r.achado ? r.resumo.texto : 'Ainda não está no SC9.') : 'Buscando a situação…') }),
+          r && r.achado ? miniProgresso(r) : null,
+          h('div', { class: 'acoes' },
+            h('button', { class: 'btn peq' + (mdd ? '' : ' primario'), type: 'button', onclick: () => { marcarVisto(s.pedido); estado.tela = 'rastrear'; estado.digitado = s.pedido; consultar(s.pedido); root.scrollTo(0, 0); } }, ic('busca'), 'Ver o andamento'),
             mdd ? h('button', { class: 'btn peq', type: 'button', onclick: () => { marcarVisto(s.pedido); desenhar(); } }, ic('ok'), 'Já vi') : null,
             h('button', { class: 'btn peq', type: 'button', onclick: () => { pararDeSeguir(s.pedido); C.toast('Você parou de acompanhar o pedido ' + s.pedido + '.'); desenhar(); } }, ic('fechar'), 'Parar de acompanhar')));
-      }),
-      h('p', { class: 'dica', style: 'margin-top:10px', text: 'A lista fica neste aparelho. A situação atualiza a cada minuto com a tela aberta, e o que mudou desde a última vez que você olhou aparece com o selo "Mudou".' }));
+      })),
+      h('p', { class: 'dica', style: 'margin-top:12px', text: 'A lista fica neste aparelho. A situação atualiza a cada minuto com a tela aberta, e o que mudou desde a última vez que você olhou aparece com o selo "Mudou".' }));
   }
   function textoParaCopiar(r) {
     const d = r.detalhes || {};
@@ -120,12 +128,13 @@
 
   function formBusca(compacto) {
     const recentes = lerLS(LS.recentes, []);
-    return h('div', { class: compacto ? '' : 'hero' },
+    return h('div', { class: compacto ? 'busca-compacta' : 'hero' },
+      !compacto ? h('div', { class: 'hero-selo', 'aria-hidden': 'true' }, ic('pacote')) : null,
       !compacto ? h('h1', { text: 'Acompanhe seus pedidos' }) : null,
       !compacto ? h('p', { class: 'sub', text: 'Digite o número do pedido e veja cada etapa: o que já aconteceu, onde ele está agora e o que falta.' }) : null,
       h('form', { class: 'busca', style: compacto ? 'max-width:none;margin-top:0' : null, role: 'search', onsubmit: (ev) => { ev.preventDefault(); consultar(estado.digitado); } },
         h('label', { class: 'campo-ic', for: 'q-pedido' }, ic('busca'), h('span', { class: 'sr', text: 'Número do pedido' }), h('input', { id: 'q-pedido', type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Número do pedido', value: estado.digitado, oninput: (ev) => { estado.digitado = ev.target.value; } })),
-        h('button', { class: 'btn primario', type: 'submit', disabled: estado.carregando, text: estado.carregando ? 'Consultando…' : 'Consultar pedido' })),
+        h('button', { class: 'btn primario' + (estado.carregando ? ' girando' : ''), type: 'submit', disabled: estado.carregando, text: estado.carregando ? 'Consultando…' : 'Consultar pedido' })),
       !compacto ? h('p', { class: 'dica', text: 'Dica: pode digitar vários números, separados por vírgula.' }) : null,
       recentes.length ? h('div', { class: 'chips', 'aria-label': 'Consultados por último' }, h('span', { class: 'mudo peq', text: 'Recentes' }), recentes.map((p) => h('button', { class: 'chip', type: 'button', onclick: () => { estado.digitado = p; consultar(p); }, text: p }))) : null);
   }
@@ -135,30 +144,38 @@
   }
 
   function cartaoResultado(r) {
-    const d = r.detalhes || {};
-    const atual = (r.etapas || []).find((e) => e.estado === 'atual');
+    const d = r.detalhes || {}, et = r.etapas || [], nv = r.resumo.nivel;
+    const atual = et.find((e) => e.estado === 'atual');
     const quando = (e) => (e.estado === 'feita' ? (e.quando ? (e.soData ? C.dataBR(e.quando) : C.dataHora(e.quando)) : 'Horário não registrado') : e.estado === 'atual' ? (e.quando ? (e.nota || 'Desde') + ' ' + C.dataHora(e.quando) : e.nota || 'Etapa atual') : 'Ainda não aconteceu');
     const velha = idadeBaseH() > LIMITE_BASE_VELHA_H;
-    return h('div', { style: 'display:flex;flex-direction:column;gap:18px' },
-      h('section', { class: 'card', 'aria-label': 'Pedido ' + r.pedido },
-        h('div', { class: 'res-topo' }, h('div', null, h('p', { class: 'res-numero', text: 'Pedido' }), h('h2', { class: 'num', text: r.pedido })), C.selo(rotuloResumo(r), r.resumo.nivel)),
-        h('div', { class: 'status-destaque ' + r.resumo.nivel }, h('div', { class: 'bola' }, ic(iconeResumo(r))),
-          h('div', null, h('b', { text: r.resumo.texto }), atual && r.paradoDesde && r.resumo.nivel !== 'concluido' ? h('span', { text: 'Nesta etapa há cerca de ' + C.duracao(r.paradoDesde) + '.' }) : null,
-            r.espera && r.resumo.nivel !== 'concluido' && !r.espera.emCurso ? h('span', { text: r.espera.texto }) : null)),
-        h('div', { class: 'fatos' }, C.fato('predio', 'Filial', d.armazem), C.fato('pacote', 'Itens', (d.pecas ? d.pecas + (d.pecas === 1 ? ' peça' : ' peças') : '') + (d.linhas ? ' · ' + d.linhas + (d.linhas === 1 ? ' item' : ' itens') : '')), C.fato('calendario', 'Liberado em', d.liberadoEm ? C.dataHora(d.liberadoEm) : ''), C.fato('caminhao', 'Transportadora', d.transportadora),
-          C.fato('pessoa', 'Cliente', d.cliente), C.fato('nota', 'Nota fiscal', d.nf || 'ainda não emitida'), C.fato('relogio', 'Dias desde a liberação', d.diasDesdeLiberacao != null ? String(d.diasDesdeLiberacao) : ''), C.fato('okCirculo', 'Despachado em', d.despachadoEm ? C.dataBR(d.despachadoEm) : 'ainda não')),
-        r.ocorrencia ? h('div', { class: 'ocorrencia', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Ocorrência da expedição: ' + r.ocorrencia.status + (r.ocorrencia.tipoTexto ? ' · ' + r.ocorrencia.tipoTexto : '') }), r.ocorrencia.quem && !r.ocorrencia.resolvida ? h('span', { style: 'display:block', text: r.ocorrencia.quem }) : null, r.ocorrencia.detalhes ? h('span', { text: r.ocorrencia.detalhes }) : null, r.ocorrencia.solucao ? h('span', { style: 'display:block;margin-top:4px', text: 'Solução: ' + r.ocorrencia.solucao + (r.ocorrencia.dataSolucao ? ' (' + C.dataBR(r.ocorrencia.dataSolucao + 'T12:00:00Z') + ')' : '') }) : null)) : null,
-        h('div', { class: 'acoes' },
-          r.achado && r.resumo.nivel !== 'concluido' ? (seguindoPedido(r.pedido) ? h('button', { class: 'btn peq', type: 'button', onclick: () => { pararDeSeguir(r.pedido); C.toast('Você parou de acompanhar este pedido.'); desenhar(); } }, ic('ok'), 'Acompanhando (parar)') : h('button', { class: 'btn peq', type: 'button', onclick: () => { seguir(r); C.toast('Pronto. Você vê o que mudou em Acompanhar e em Minhas.'); desenhar(); } }, ic('relogio'), 'Acompanhar este pedido')) : null,
-          r.mensagemCliente ? h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(r.mensagemCliente, 'Mensagem para a cliente copiada. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar mensagem para a cliente') : null,
-          h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(textoParaCopiar(r), 'Status copiado. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar status'),
-          h('button', { class: 'btn peq', type: 'button', onclick: () => { const u = new URL(root.location.href); u.searchParams.set('pedido', r.pedido); C.copiar(u.toString(), 'Link copiado.'); } }, ic('link'), 'Copiar link do pedido'),
-          r.resumo.nivel !== 'concluido' ? h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaPrioridade(r.pedido, r) }, ic('raio'), 'Pedir prioridade') : null,
-          h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(r.pedido, r) }, ic('comentario'), 'Avisar a expedição'))),
-      h('section', { class: 'card', 'aria-label': 'Andamento do pedido ' + r.pedido },
-        h('div', { class: 'card-titulo' }, h('h3', { text: 'Andamento do pedido' }), h('span', { class: 'mudo peq', text: (r.etapas || []).filter((e) => e.estado === 'feita').length + ' de ' + (r.etapas || []).length + ' etapas concluídas' })),
-        h('ol', { class: 'tempo' }, (r.etapas || []).map((e) => h('li', { class: e.estado, 'aria-current': e.estado === 'atual' ? 'step' : null },
-          h('div', { class: 'marco' }, e.estado === 'feita' ? ic('ok') : ic(C.ICONE_ETAPA[e.cod] || 'pacote')),
+    const anima = estado.animouRes !== r.pedido; estado.animouRes = r.pedido; // a entrada animada só toca quando chega um pedido novo, não a cada atualização
+    const feitas = et.filter((e) => e.estado === 'feita').length, iAtual = et.findIndex((e) => e.estado === 'atual');
+    const fracao = et.length > 1 ? (iAtual >= 0 ? iAtual : et.length - 1) / (et.length - 1) : 0;
+    const orbe = (e) => (e.estado === 'feita' ? ic('ok') : ic(C.ICONE_ETAPA[e.cod] || 'pacote'));
+    return h('div', { class: anima ? 'anima-res' : '', style: 'display:flex;flex-direction:column;gap:18px' },
+      h('section', { class: 'card res-card nv-' + nv, 'aria-label': 'Pedido ' + r.pedido },
+        h('div', { class: 'res-faixa' }, h('div', null, h('p', { class: 'res-numero', text: 'Pedido' }), h('h2', { class: 'num', text: r.pedido })), C.selo(rotuloResumo(r), nv)),
+        h('div', { class: 'res-corpo' },
+          h('div', { class: 'status-destaque' }, h('div', { class: 'bola' }, ic(iconeResumo(r))),
+            h('div', null, h('b', { text: r.resumo.texto }), atual && r.paradoDesde && nv !== 'concluido' ? h('span', { text: 'Nesta etapa há cerca de ' + C.duracao(r.paradoDesde) + '.' }) : null)),
+          et.length ? h('div', { class: 'trilha-bloco' }, h('div', { class: 'trilha', style: '--p:' + fracao.toFixed(3), 'aria-hidden': 'true' }, h('div', { class: 'fio' }), et.map((e) => h('div', { class: 'orbe ' + e.estado }, orbe(e)))),
+            h('div', { class: 'trilha-leg' }, h('span', { text: 'Etapas do pedido' }), h('span', { text: feitas + ' de ' + et.length + ' concluídas' }))) : null,
+          h('div', { class: 'fatos' }, C.fato('predio', 'Filial', d.armazem), C.fato('pacote', 'Itens', (d.pecas ? d.pecas + (d.pecas === 1 ? ' peça' : ' peças') : '') + (d.linhas ? ' · ' + d.linhas + (d.linhas === 1 ? ' item' : ' itens') : '')), C.fato('calendario', 'Liberado em', d.liberadoEm ? C.dataHora(d.liberadoEm) : ''), C.fato('caminhao', 'Transportadora', d.transportadora),
+            C.fato('pessoa', 'Cliente', d.cliente), C.fato('nota', 'Nota fiscal', d.nf || 'ainda não emitida'), C.fato('relogio', 'Dias desde a liberação', d.diasDesdeLiberacao != null ? String(d.diasDesdeLiberacao) : ''), C.fato('okCirculo', 'Despachado em', d.despachadoEm ? C.dataBR(d.despachadoEm) : 'ainda não')),
+          r.ocorrencia ? h('div', { class: 'ocorrencia', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Ocorrência da expedição: ' + r.ocorrencia.status + (r.ocorrencia.tipoTexto ? ' · ' + r.ocorrencia.tipoTexto : '') }), r.ocorrencia.quem && !r.ocorrencia.resolvida ? h('span', { style: 'display:block', text: r.ocorrencia.quem }) : null, r.ocorrencia.detalhes ? h('span', { text: r.ocorrencia.detalhes }) : null, r.ocorrencia.solucao ? h('span', { style: 'display:block;margin-top:4px', text: 'Solução: ' + r.ocorrencia.solucao + (r.ocorrencia.dataSolucao ? ' (' + C.dataBR(r.ocorrencia.dataSolucao + 'T12:00:00Z') + ')' : '') }) : null)) : null,
+          h('div', { class: 'acoes' },
+            nv !== 'concluido' ? h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaPrioridade(r.pedido, r) }, ic('raio'), 'Pedir prioridade') : null,
+            h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(r.pedido, r) }, ic('comentario'), 'Avisar a expedição'),
+            r.achado && nv !== 'concluido' ? (seguindoPedido(r.pedido) ? h('button', { class: 'btn peq seguindo', type: 'button', onclick: () => { pararDeSeguir(r.pedido); C.toast('Você parou de acompanhar este pedido.'); desenhar(); } }, ic('ok'), 'Acompanhando (parar)') : h('button', { class: 'btn peq', type: 'button', onclick: () => { seguir(r); C.toast('Pronto. Você vê o que mudou em Acompanhar e em Minhas.'); desenhar(); } }, ic('sino'), 'Acompanhar este pedido')) : null,
+            h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(textoParaCopiar(r), 'Status copiado. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar status'),
+            h('button', { class: 'btn peq', type: 'button', onclick: () => { const u = new URL(root.location.href); u.searchParams.set('pedido', r.pedido); C.copiar(u.toString(), 'Link copiado.'); } }, ic('link'), 'Copiar link do pedido')))),
+      r.mensagemCliente ? h('section', { class: 'card msg-card', 'aria-label': 'Mensagem para a cliente' }, h('h3', null, ic('comentario'), 'Mensagem para a cliente'), h('p', { class: 'dica', text: 'Texto pronto para colar no WhatsApp. Você pode mudar antes de enviar.' }), h('p', { class: 'balao', text: r.mensagemCliente }),
+        h('button', { class: 'btn primario', type: 'button', onclick: () => C.copiar(r.mensagemCliente, 'Mensagem para a cliente copiada. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar mensagem para a cliente')) : null,
+      h('section', { class: 'card nv-' + nv, 'aria-label': 'Andamento do pedido ' + r.pedido },
+        h('div', { class: 'card-titulo' }, h('h3', { text: 'Andamento do pedido' }), h('span', { class: 'mudo peq', text: feitas + ' de ' + et.length + ' etapas concluídas' })),
+        r.espera && nv !== 'concluido' && !r.espera.emCurso ? h('div', { class: 'insight', role: 'note' }, h('div', { class: 'bola' }, ic('relogio')), h('div', null, h('b', { text: 'Onde mais demorou' }), h('span', { text: r.espera.texto }))) : null,
+        h('ol', { class: 'tempo' }, et.map((e, i) => h('li', { class: e.estado, style: '--i:' + i, 'aria-current': e.estado === 'atual' ? 'step' : null },
+          h('div', { class: 'marco orbe ' + e.estado }, orbe(e)),
           h('div', { class: 'corpo' }, h('span', { class: 'sr', text: e.estado === 'feita' ? 'Concluída: ' : e.estado === 'atual' ? 'Etapa atual: ' : 'Ainda não: ' }), h('div', { class: 't', text: e.titulo }), h('div', { class: 'q', text: quando(e) }),
             e.nota && e.estado === 'feita' && e.nota !== 'Horário não registrado' ? h('div', { class: 'q fino', text: e.nota }) : null)))),
         h('p', { class: 'rodape-nota' + (velha ? ' velha' : '') }, ic('atualizar'), 'Base do SC9 atualizada em ' + (r.atualizadoEm ? C.dataHora(r.atualizadoEm) : '—') + (velha ? '. Faz tempo sem atualizar: o andamento pode estar atrasado.' : '. A saída para expedição é em tempo real; o resto atualiza a cada carga do SC9.'))));
@@ -176,7 +193,7 @@
     if (modo === 'prioridade' || modo === 'minhas') itens.push(h('li', null, h('b', { text: 'A análise é feita pela equipe do SC9, não é na hora. ' }), 'Depois de enviar, aguarde a resposta aqui em "Minhas solicitações". Não precisa mandar de novo nem cobrar por mensagem.'));
     if (compacta) return h('div', { class: 'processo compacta', role: 'note' }, ic('info'), h('p', null, h('b', { text: modo === 'rastrear' ? 'Andamento do SC9. ' : 'Aguarde a análise do SC9. ' }), base));
     if (modo === 'rastrear') return h('section', { class: 'processo compacta', role: 'note', 'aria-label': 'Como funciona o acompanhamento', style: 'flex-wrap:wrap' }, ic('info'), h('p', { style: 'flex:1 1 220px' }, h('b', { text: 'Atualizado às ' + (estado.atualizadoEm ? C.horaBR(estado.atualizadoEm) : '—') + '. ' }), 'Pedido novo pode levar algumas horas para aparecer.'),
-      h('details', { style: 'flex:1 0 100%' }, h('summary', { style: 'cursor:pointer;font-weight:700;min-height:32px;display:flex;align-items:center', text: 'Como funciona' }), h('ul', { style: 'margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.45' }, itens)));
+      h('details', { style: 'flex:1 0 100%' }, h('summary', { class: 'resumo-como', text: 'Como funciona' }), h('ul', { style: 'margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.45' }, itens)));
     return h('section', { class: 'processo', role: 'note', 'aria-label': 'Como funciona o acompanhamento' }, h('div', { class: 'bola' }, ic('info')), h('div', null, h('h2', { text: modo === 'rastrear' ? 'Como funciona o acompanhamento' : 'Antes de pedir: como funciona a análise' }), h('ul', null, itens)));
   }
 
@@ -212,7 +229,7 @@
   function sairDaConta() { estado.conta = null; gravarLS(LS.sessao, null); estado.prio = null; C.toast('Você saiu deste aparelho.'); estado.tela = 'rastrear'; carregarPrioridades(true); desenhar(); root.scrollTo(0, 0); }
   const campoTexto = (id, rotulo, chave, objeto, opcoes) => h('div', null, h('label', { class: 'rotulo', for: id, text: rotulo }), h('input', Object.assign({ id, class: 'entrada', type: 'text', value: objeto[chave], oninput: (ev) => { objeto[chave] = ev.target.value; } }, opcoes || {})));
   function telaConta() {
-    const c = estado.cf, cab = h('div', { style: 'margin-bottom:2px' }, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: estado.conta ? 'Seu acesso' : 'Criar acesso ou entrar' }), h('p', { class: 'mudo', style: 'margin-top:6px', text: 'Opcional. Sem acesso tudo continua funcionando; com ele, suas solicitações ficam ligadas ao seu login e aparecem em qualquer aparelho.' }));
+    const c = estado.cf, cab = C.cabecalho(estado.conta ? 'usuarioCheck' : 'usuario', estado.conta ? 'Seu acesso' : 'Criar acesso ou entrar', 'Opcional. Sem acesso tudo continua funcionando; com ele, suas solicitações ficam ligadas ao seu login e aparecem em qualquer aparelho.');
     if (estado.conta) return [cab, h('section', { class: 'card' }, h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Nome', estado.conta.nome], ['Login', estado.conta.login]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
         h('p', { class: 'dica', style: 'margin-top:10px', text: 'As solicitações que você enviar daqui para frente ficam no seu nome, e a logística vê quem pediu.' }),
         h('div', { class: 'processo compacta', style: 'margin-top:12px', role: 'note' }, ic('info'), h('p', null, h('b', { text: 'Fica registrado: ' }), 'com o acesso, os pedidos que você consulta (número, data, hora e a situação na hora) ficam gravados no seu login. Só você e a administração do SC9 veem. Nenhuma outra vendedora vê o que é seu.')),
@@ -262,7 +279,7 @@
     if (!estado.prio && !estado.prioErro) carregarPrioridades(true);
     if (!estado.avisos && !estado.avisosErro) carregarAvisos(true);
     if (estado.conta && !estado.consultasServ && !estado.consultasErro) carregarConsultas();
-    return [h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Exportar' }), h('p', { class: 'mudo', style: 'margin-top:6px', text: 'Baixe só o que é seu em planilha (CSV). Abre direto no Excel.' })),
+    return [C.cabecalho('baixar', 'Exportar', 'Baixe só o que é seu em planilha (CSV). Abre direto no Excel.'),
       estado.prioErro || estado.consultasErro ? h('div', { class: 'erro' }, ic('alerta'), estado.prioErro || estado.consultasErro) : null,
       cartao('lista', 'Minhas solicitações', 'Protocolo, prioridade, motivo, status, resposta da logística e histórico de cada pedido de prioridade.', meus.length, 'minhas', Boolean(estado.prio)),
       cartao('comentario', 'Meus avisos à expedição', 'Cada aviso que você mandou para a expedição, com o que informou, a resposta da equipe e o histórico.', ((estado.avisos && estado.avisos.meus) || []).length, 'avisos', Boolean(estado.avisos)),
@@ -276,12 +293,12 @@
     const temResultado = estado.carregando || estado.consulta || estado.varios || estado.erro;
     blocos.push(faixaProcesso('rastrear', Boolean(temResultado && !estado.erro)));
     blocos.push(temResultado ? h('section', { class: 'card' }, formBusca(true)) : formBusca(false));
-    if (estado.carregando) blocos.push(C.esqueleto(3));
-    else if (estado.erro) blocos.push(h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro));
+    if (estado.carregando) blocos.push(h('p', { class: 'buscando' }, 'Buscando o andamento do pedido…'), C.esqueleto(3));
+    else if (estado.erro) blocos.push(h('div', { class: 'erro erro-bloco', role: 'alert' }, h('div', { class: 'linha-erro' }, ic('alerta'), estado.erro), soNumeros(estado.digitado).length >= 4 ? h('button', { class: 'btn peq', type: 'button', onclick: () => consultar(estado.digitado) }, ic('atualizar'), 'Tentar de novo') : null));
     else if (estado.varios) blocos.push(h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Seus pedidos' }), h('span', { class: 'mudo peq', text: estado.varios.length + ' consultados' })),
-      estado.varios.map((r) => h('button', { class: 'cartao-lista', type: 'button', disabled: !r.achado, onclick: () => { estado.digitado = r.pedido; consultar(r.pedido); } },
+      estado.varios.map((r) => h('button', { class: 'cartao-lista ' + (r.achado ? (r.resumo.nivel === 'atraso' ? 'nv-urgente' : r.resumo.nivel === 'andamento' ? 'nv-media' : 'st-resolvido') : 'nv-alta') + (r.achado ? ' ' + tomDe(r) : ''), type: 'button', disabled: !r.achado, onclick: () => { estado.digitado = r.pedido; consultar(r.pedido); } },
         h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + r.pedido }), r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Fora do SC9', 'alta')),
-        h('div', { class: 'l2' }, h('span', { text: r.achado ? r.resumo.texto : (r.erro || 'Ainda não está no SC9. Se o número está certo, peça prioridade: a equipe é avisada para recarregar.') }))))));
+        h('div', { class: 'l2' }, h('span', { text: r.achado ? r.resumo.texto : (r.erro || 'Ainda não está no SC9. Se o número está certo, peça prioridade: a equipe é avisada para recarregar.') })), r.achado ? h('div', { style: 'margin-top:10px' }, miniProgresso(r)) : null))));
     else if (estado.consulta && estado.consulta.achado) blocos.push(cartaoResultado(estado.consulta));
     else if (estado.consulta) blocos.push(h('section', { class: 'card' }, C.vazio('atualizar', 'O pedido ' + estado.consulta.pedido + ' ainda não está no SC9', 'Confira o número. Se o pedido é de hoje, ele pode ainda não ter chegado: a base só atualiza a cada carga do SC9. Se o número está certo, peça prioridade mesmo assim: a equipe é avisada para recarregar o SC9.' + (estado.consulta.atualizadoEm ? ' Última atualização: ' + C.dataHora(estado.consulta.atualizadoEm) + '.' : '')),
       h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn peq primario', type: 'button', onclick: () => { estado.consulta = null; estado.digitado = ''; desenhar(); const e = root.document.getElementById('q-pedido'); if (e) e.focus(); } }, ic('busca'), 'Digitar outro número'), h('button', { class: 'btn peq', type: 'button', onclick: () => consultar(estado.digitado) }, ic('atualizar'), 'Tentar de novo'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(estado.consulta.pedido) }, ic('comentario'), 'Avisar a expedição'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaPrioridade(estado.consulta.pedido) }, ic('raio'), 'Pedir prioridade mesmo assim'))));
@@ -305,7 +322,7 @@
   }
   function revisar() {
     const f = estado.f; f.erro = '';
-    if (!f.previa || soNumeros(f.previa.pedido) !== soNumeros(f.pedido)) f.erro = 'Localize o pedido primeiro.';
+    if (!f.previa || soNumeros(f.previa.pedido) !== soNumeros(f.pedido)) f.erro = 'Toque em "Localizar pedido" antes de continuar.';
     else if (!f.motivo) f.erro = 'Escolha o motivo do pedido de prioridade.';
     else if (f.motivo === 'outro' && f.observacao.trim().length < 5) f.erro = 'Explique o motivo na observação.';
     else if (f.nome.trim().length < 2) f.erro = 'Diga seu nome para a equipe saber quem pediu.';
@@ -347,7 +364,7 @@
         f.enviada.naoAchado ? h('div', { class: 'aviso', style: 'width:100%' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar o SC9. Assim que ele entrar, o andamento aparece em "Acompanhar pedidos". Se o número estava errado, fale com a expedição.')) : null,
         h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn primario', type: 'button', onclick: () => { estado.tela = 'minhas'; estado.visao = 'minhas'; desenhar(); root.scrollTo(0, 0); } }, ic('lista'), 'Ver minhas solicitações'), h('button', { class: 'btn', type: 'button', onclick: () => { f.etapa = 'form'; f.enviada = null; desenhar(); } }, 'Nova solicitação'))))];
     }
-    const cab = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,32px);font-weight:800;letter-spacing:-.02em', text: 'Precisa de prioridade no pedido?' }), h('p', { class: 'mudo', style: 'margin-top:6px;font-size:16px', text: 'Informe o pedido, explique a necessidade e acompanhe a análise da logística.' })), faixaProcesso('prioridade'));
+    const cab = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, C.cabecalho('raio', 'Precisa de prioridade no pedido?', 'Informe o pedido, explique a necessidade e acompanhe a análise da logística.'), faixaProcesso('prioridade'));
     if (f.etapa === 'revisar' && f.previa) {
       return [cab, h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Confirme a solicitação' })), previaPedido(f.previa),
         h('div', { class: 'resumo-lista', style: 'margin-top:12px' }, [['Prioridade', C.NIVEL[f.nivel]], ['Motivo', C.MOTIVO[f.motivo]], ['Solicitante', f.nome.trim()], ['Observação', f.observacao.trim() || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
@@ -407,7 +424,7 @@
         a.enviado.naoAchado ? h('div', { class: 'aviso', style: 'width:100%' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe também foi avisada para recarregar o SC9. Se o número estava errado, fale com a expedição.')) : null,
         h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn primario', type: 'button', onclick: () => { estado.tela = 'minhas'; estado.sub = 'avisos'; desenhar(); root.scrollTo(0, 0); } }, ic('lista'), 'Ver meus avisos'), h('button', { class: 'btn', type: 'button', onclick: () => { a.enviado = null; desenhar(); } }, 'Novo aviso'))))];
     }
-    const cab = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,32px);font-weight:800;letter-spacing:-.02em', text: 'Avisar a expedição' }), h('p', { class: 'mudo', style: 'margin-top:6px;font-size:16px', text: 'Tem uma informação ou ocorrência sobre um pedido (endereço, retirada, transportadora...)? Conte aqui para a equipe tratar.' })), faixaProcesso('avisar'));
+    const cab = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, C.cabecalho('comentario', 'Avisar a expedição', 'Tem uma informação ou ocorrência sobre um pedido (endereço, retirada, transportadora...)? Conte aqui para a equipe tratar.'), faixaProcesso('avisar'));
     return [cab, h('section', { class: 'card' }, h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); enviarA(); } },
       h('div', null, h('label', { class: 'rotulo', for: 'a-pedido', text: '1. Número do pedido' }),
         h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, h('input', { id: 'a-pedido', class: 'entrada', style: 'flex:1 1 200px', type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Ex.: 123456', value: a.pedido, oninput: (ev) => { a.pedido = ev.target.value; if (a.previa && soNumeros(a.previa.pedido) !== soNumeros(a.pedido)) a.previa = null; } }),
@@ -424,7 +441,7 @@
     try { estado.avisos = await api('/api/vendedoras/avisos?ids=' + encodeURIComponent(lerLS(LS.avisos, []).join(',')) + '&nome=' + encodeURIComponent((estado.conta && estado.conta.nome) || lerLS(LS.nome, ''))); estado.avisosErro = ''; } catch (e) { estado.avisosErro = e.message; }
     if (!silencioso || ['minhas', 'exportar'].includes(estado.tela)) desenhar();
   }
-  const cartaoAviso = (l) => h('button', { class: 'cartao-lista', type: 'button', onclick: () => { estado.abertoAviso = l.id; desenhar(); } },
+  const cartaoAviso = (l) => h('button', { class: 'cartao-lista st-' + l.status, type: 'button', onclick: () => { estado.abertoAviso = l.id; desenhar(); } },
     h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + l.pedido }), C.selo(C.TIPO_AVISO[l.tipo], 'normal', true), C.selo(C.STATUS_AVISO[l.status], l.status), h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
     h('div', { class: 'l2' }, h('span', { text: 'Enviado em ' + C.dataHora(l.criadoEm) }), h('span', { text: 'Atualizado há ' + C.duracao(l.atualizadoEm || l.criadoEm) }), l.resposta ? h('span', { style: 'color:var(--tinta-2)', text: 'Expedição: ' + l.resposta }) : null,
       l.foraDoSc9 ? h('span', { class: 'aguarde', text: 'Este pedido ainda não está no SC9: a equipe foi avisada para recarregar.' }) : null, l.status === 'recebido' ? h('span', { class: 'aguarde', text: 'Aguarde: a expedição ainda vai ver este aviso.' }) : null));
@@ -440,7 +457,7 @@
           l.resposta ? h('div', { class: 'ok', style: 'background:var(--azul-claro);border-color:var(--azul-borda);color:var(--azul-escuro)' }, ic('comentario'), h('div', null, h('b', { style: 'display:block', text: 'Resposta da expedição' }), l.resposta)) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico do aviso' }, (l.historico || []).slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? C.STATUS_AVISO[x.status] || x.status : '' }), x.texto ? (x.status ? ' · ' : '') + x.texto : ''))))))];
   }
-  const abasMinhas = () => h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'O que mostrar', style: 'align-self:flex-start' },
+  const abasMinhas = () => h('div', { class: 'abas-pequenas abas-3', role: 'group', 'aria-label': 'O que mostrar' },
     h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'prioridades'), onclick: () => { estado.sub = 'prioridades'; desenhar(); }, text: 'Prioridades' }), h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'avisos'), onclick: () => { estado.sub = 'avisos'; carregarAvisos(true); desenhar(); }, text: 'Avisos à expedição' }), h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'acompanho'), onclick: () => { estado.sub = 'acompanho'; carregarSeguindo(true); desenhar(); }, text: 'Acompanho' + (estado.seguindo.length ? ' (' + estado.seguindo.length + ')' : '') }));
   function corpoAvisos() {
     const meus = (estado.avisos && estado.avisos.meus) || [], blocos = [];
@@ -463,7 +480,7 @@
     } catch (e) { estado.prioErro = e.message; }
     if (!silencioso || ['minhas', 'exportar'].includes(estado.tela) || antes !== estado.atualizadoEm + '|' + (estado.conta && estado.conta.login)) desenhar();
   }
-  const cartaoSolicitacao = (l) => h('button', { class: 'cartao-lista', type: 'button', onclick: () => { estado.aberta = l.id; desenhar(); } },
+  const cartaoSolicitacao = (l) => h('button', { class: 'cartao-lista nv-' + l.nivel, type: 'button', onclick: () => { estado.aberta = l.id; desenhar(); } },
     h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + l.pedido }), C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status), l.reforco ? C.selo('Você reforçou', 'normal', true) : null, h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
     h('div', { class: 'l2' }, h('span', { text: 'Pedida em ' + C.dataHora(l.criadoEm) }), h('span', { text: 'Atualizada há ' + C.duracao(l.atualizadoEm || l.criadoEm) }), l.resposta ? h('span', { style: 'color:var(--tinta-2)', text: 'Equipe: ' + l.resposta }) : null, l.foraDoSc9 ? h('span', { class: 'aguarde', text: 'Este pedido ainda não está no SC9: a equipe foi avisada para recarregar.' }) : null, ['recebida', 'em_analise'].includes(l.status) ? h('span', { class: 'aguarde', text: 'Aguarde: a equipe do SC9 ainda vai analisar.' }) : null));
   function gavetaSolicitacao(l) {
@@ -480,7 +497,7 @@
   }
   function telaMinhas() {
     const meus = (estado.prio && estado.prio.meus) || [];
-    const blocos = [faixaProcesso('minhas', true), h('div', { class: 'card-titulo' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Minhas solicitações' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Só o que é seu: acompanhe a análise da logística sem precisar mandar mensagem.' })))];
+    const blocos = [faixaProcesso('minhas', true), C.cabecalho('lista', 'Minhas solicitações', 'Só o que é seu: acompanhe a análise da logística sem precisar mandar mensagem.')];
     blocos.push(abasMinhas());
     if (estado.sub === 'avisos') return blocos.concat(corpoAvisos());
     if (estado.sub === 'acompanho') return blocos.concat([cartaoSeguindo() || h('section', { class: 'card' }, C.vazio('relogio', 'Você ainda não acompanha nenhum pedido', 'Consulte um pedido e toque em "Acompanhar este pedido". Aqui aparece a situação de cada um e o que mudou desde a última vez.'))]);
@@ -499,7 +516,8 @@
     const y = root.scrollY;
     const topo = h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Acompanhamento de pedidos'),
       chaveLink ? h('nav', { class: 'nav', 'aria-label': 'Principal' }, NAV.map(([id, i, nome, curto]) => h('button', { type: 'button', 'aria-label': nome, 'aria-current': estado.tela === id ? 'page' : null, onclick: () => { estado.tela = id; estado.aberta = null; if ((id === 'minhas' || id === 'exportar') && !estado.prio) carregarPrioridades(); if (id === 'minhas' || id === 'exportar') carregarAvisos(true); desenhar(); root.scrollTo(0, 0); } }, ic(i), h('span', { class: 'longo', text: nome }), h('span', { class: 'curto', text: curto })))) : null,
-      chaveLink ? h('button', { class: 'btn peq conta-botao' + (estado.tela === 'conta' ? ' ativo' : ''), type: 'button', 'aria-label': estado.conta ? 'Seu acesso: ' + estado.conta.nome : 'Criar acesso ou entrar', onclick: () => { estado.tela = 'conta'; estado.aberta = null; desenhar(); root.scrollTo(0, 0); } }, ic(estado.conta ? 'usuarioCheck' : 'usuario'), h('span', { class: 'conta-nome', text: estado.conta ? estado.conta.nome.split(' ')[0] : 'Entrar' })) : null));
+      chaveLink ? h('div', { class: 'topo-lado' }, estado.atualizadoEm ? h('span', { class: 'atualizado' + (idadeBaseH() > LIMITE_BASE_VELHA_H ? ' velha' : ''), title: 'Base do SC9 atualizada em ' + C.dataHora(estado.atualizadoEm) }, h('i', { class: 'ponto' }), h('span', { class: 'rotulo-hora', text: 'Atualizado às ' }), C.horaBR(estado.atualizadoEm)) : null,
+        h('button', { class: 'btn peq conta-botao' + (estado.tela === 'conta' ? ' ativo' : ''), type: 'button', 'aria-label': estado.conta ? 'Seu acesso: ' + estado.conta.nome : 'Criar acesso ou entrar', onclick: () => { estado.tela = 'conta'; estado.aberta = null; desenhar(); root.scrollTo(0, 0); } }, ic(estado.conta ? 'usuarioCheck' : 'usuario'), h('span', { class: 'conta-nome', text: estado.conta ? estado.conta.nome.split(' ')[0] : 'Entrar' }))) : null));
     let corpo;
     if (!chaveLink) corpo = [h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'Este link está incompleto. Peça o link das vendedoras ao administrador do SC9.')];
     else corpo = estado.tela === 'avisar' ? telaAvisar() : estado.tela === 'prioridade' ? telaPrioridade() : estado.tela === 'minhas' ? telaMinhas() : estado.tela === 'exportar' ? telaExportar() : estado.tela === 'conta' ? telaConta() : telaRastrear();
@@ -518,6 +536,19 @@
     else if (estado.tela === 'minhas') { carregarPrioridades(true); carregarAvisos(true); }
     else if (estado.tela === 'rastrear' && !estado.consulta && !estado.carregando) { carregarPrioridades(true); carregarSeguindo(true); }
   }, 60000);
+
+  // Inclinação discreta dos cartões (só com mouse; fica desligada com "reduzir movimento").
+  if (root.matchMedia && root.matchMedia('(hover: hover) and (pointer: fine)').matches && !root.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let alvo = null;
+    root.document.addEventListener('pointermove', (ev) => {
+      const el = ev.target.closest ? ev.target.closest('.tilt') : null;
+      if (alvo && alvo !== el) alvo.classList.remove('inclina');
+      alvo = el; if (!el) return;
+      const b = el.getBoundingClientRect();
+      el.style.setProperty('--ry', (((ev.clientX - b.left) / b.width - .5) * 5).toFixed(2) + 'deg'); el.style.setProperty('--rx', ((.5 - (ev.clientY - b.top) / b.height) * 5).toFixed(2) + 'deg'); el.classList.add('inclina');
+    }, { passive: true });
+    root.document.addEventListener('mouseleave', () => { if (alvo) { alvo.classList.remove('inclina'); alvo = null; } });
+  }
 
   const pedidoDaUrl = new URLSearchParams(root.location.search).get('pedido');
   desenhar();

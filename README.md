@@ -490,3 +490,12 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 - `GET /api/vendedoras/pedidos?pedidos=1,2,3` (até 30, com o código do link): devolve o andamento de vários pedidos numa chamada só. A lista "Pedidos que você acompanha" usa essa rota (antes seria 1 chamada por pedido, por minuto, por aparelho).
 - Cache de 20 segundos, na memória do servidor, só para o rastreio das vendedoras: lista de ocorrências e saída de cada pedido (antes cada consulta baixava `ocorrencias-expedicao.json` e `atraso-saidas.json` do Supabase e varria os dias da saída). Gravar uma ocorrência limpa o cache na hora.
 - Arquivos do app (HTML, JS, CSS até 700 KB, exceto `vendor-*`) também saem em brotli quando o navegador aceita; gzip e arquivo puro continuam para os demais.
+
+## Visual da tela das vendedoras
+
+- Novo visual em `central.css` (também usado por `prioridades.html` e `fechamento-dia.html`): faixa azul da marca no topo com a hora da última atualização, cartões com cantos maiores e sombras em camadas, botões e selos em relevo. Os tamanhos de canto, espaços, textos e sombras ficam em variáveis no topo do arquivo (`--raio-*`, `--e1..e6`, `--t-*`, `--sombra*`).
+- Consulta: herói azul com campo grande, botão que mostra "Consultando…" com indicador girando e recentes em atalhos. O resultado virou um "bilhete" do pedido: faixa colorida pela situação (No prazo/andamento, Atrasado, Pronto para despacho, Despachado), trilha de etapas com orbes em relevo e progresso animado, linha do tempo vertical, cartão "Onde mais demorou" e cartão "Mensagem para a cliente" com o texto à vista e o botão de copiar.
+- "Pedidos que você acompanha": cartões com mini barra de progresso, selo "Mudou" que pulsa e leve inclinação 3D só com mouse.
+- Celular: navegação por abas fixa na parte de baixo, painéis laterais viram folha que sobe, alvos de toque de 44 px. Telas vazias com ilustração em SVG, avisos (toasts) novos e transições suaves.
+- Sem fonte, imagem ou biblioteca de fora (só SVG inline e `data:`); animações só com `transform`/`opacity`; com "reduzir movimento" ligado, tudo fica parado e sem inclinação.
+- Nenhuma funcionalidade, texto de ajuda, rota ou formato de API mudou. O `server.js` não foi alterado.

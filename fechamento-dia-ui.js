@@ -80,7 +80,7 @@
     else {
       const t = d && d.totais;
       corpo = h('main', { class: 'pagina' },
-        h('div', { class: 'card-titulo', style: 'margin:0' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Fechamento da expedição' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Do Recebimento na Expedição: o que chegou, quantos volumes, o que a planilha de Entrega já confirmou e o que ficou sem confirmação, por transportadora.' })),
+        h('div', { class: 'card-titulo', style: 'margin:0' }, C.cabecalho('caminhao', 'Fechamento da expedição', 'Do Recebimento na Expedição: o que chegou, quantos volumes, o que a planilha de Entrega já confirmou e o que ficou sem confirmação, por transportadora.'),
           h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:end' },
             h('div', null, h('label', { class: 'rotulo', for: 'dia', text: 'Dia' }), h('input', { id: 'dia', class: 'entrada', type: 'date', value: estado.dia, max: d ? d.hoje : null, onchange: (ev) => { estado.dia = ev.target.value; estado.carregando = true; carregar(); } })),
             h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.carregando = true; carregar(); } }, ic('atualizar'), 'Atualizar'),
