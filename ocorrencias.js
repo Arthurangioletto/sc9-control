@@ -145,7 +145,19 @@
     };
   }
 
-  const api = { hojeSP, lerData, mostrarData, curta, numeroDaNota, numeroDoPedido, lerColado, situacaoDoPedido, avaliar, ordenar, resumo, LIMITE_DIAS };
+  // Tipos fixos de ocorrência (lista fechada): sem eles não dá para contar erro por tipo nem dizer a quem cabe resolver.
+  const TIPOS = [
+    { id: 'endereco', nome: 'Endereço errado ou incompleto', quem: 'A vendedora confirma o endereço com a cliente.' },
+    { id: 'cadastro', nome: 'Cadastro do cliente', quem: 'A vendedora e o cadastro atualizam os dados.' },
+    { id: 'pedido_trocado', nome: 'Pedido ou nota trocados', quem: 'A expedição corrige antes de sair.' },
+    { id: 'volume', nome: 'Volume faltando', quem: 'A expedição localiza o volume.' },
+    { id: 'avaria', nome: 'Avaria', quem: 'A expedição e a qualidade avaliam.' },
+    { id: 'coleta', nome: 'Coleta não passou', quem: 'A expedição aciona a transportadora.' },
+    { id: 'ausente', nome: 'Cliente ausente', quem: 'A vendedora combina a nova entrega com a cliente.' },
+    { id: 'outro', nome: 'Outro', quem: '' }
+  ];
+  const tipoDe = (id) => TIPOS.find((t) => t.id === id) || null;
+  const api = { hojeSP, TIPOS, tipoDe, lerData, mostrarData, curta, numeroDaNota, numeroDoPedido, lerColado, situacaoDoPedido, avaliar, ordenar, resumo, LIMITE_DIAS };
   root.SC9Ocorrencias = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

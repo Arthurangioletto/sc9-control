@@ -33,7 +33,7 @@
   }
 
   const PREFIXO_CARGA = 'Não consegui atualizar a lista: ';
-  const VAZIO = { id: '', base: '', nf: '', pedido: '', dataOcorrencia: '', detalhes: '', responsavel: '', solucao: '', dataSolucao: '' };
+  const VAZIO = { id: '', base: '', nf: '', pedido: '', dataOcorrencia: '', tipo: '', detalhes: '', responsavel: '', solucao: '', dataSolucao: '' };
 
   function csv(itens) {
     const aspas = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
@@ -159,7 +159,7 @@
       }
       setSalvando(true);
       try {
-        const j = await chamar({ method: 'POST', body: JSON.stringify({ acao: 'salvar', linha: { id: rascunho.id || undefined, nf, pedido, dataOcorrencia, detalhes: rascunho.detalhes, responsavel: rascunho.responsavel, solucao: rascunho.solucao, dataSolucao }, baseAtualizadoEm: rascunho.id ? (rascunho.base || undefined) : undefined }) });
+        const j = await chamar({ method: 'POST', body: JSON.stringify({ acao: 'salvar', linha: { id: rascunho.id || undefined, nf, pedido, dataOcorrencia, tipo: rascunho.tipo || '', detalhes: rascunho.detalhes, responsavel: rascunho.responsavel, solucao: rascunho.solucao, dataSolucao }, baseAtualizadoEm: rascunho.id ? (rascunho.base || undefined) : undefined }) });
         setDados(j); setRascunho(Object.assign({}, VAZIO)); avisarPagina();
         setAviso(rascunho.id ? 'Alteração salva.' : 'Ocorrência registrada.');
         if (nfRef.current) nfRef.current.focus();
@@ -167,7 +167,7 @@
       setSalvando(false);
     }
     function editar(oc) {
-      setRascunho({ id: oc.id, base: oc.atualizadoEm || '', nf: oc.nf, pedido: oc.pedido || '', dataOcorrencia: O.mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: O.mostrarData(oc.dataSolucao) });
+      setRascunho({ id: oc.id, base: oc.atualizadoEm || '', nf: oc.nf, pedido: oc.pedido || '', dataOcorrencia: O.mostrarData(oc.dataOcorrencia), tipo: oc.tipo || '', detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: O.mostrarData(oc.dataSolucao) });
       setAviso(''); setErro('');
       if (root.scrollTo) root.scrollTo({ top: 0, behavior: 'smooth' });
       if (nfRef.current) nfRef.current.focus();
@@ -249,6 +249,8 @@
             h('div', null, rotulo('Nº da Nota Fiscal', 'ou o pedido'), entrada('nf', 'ex.: 885234', { ref: nfRef, inputMode: 'numeric' })),
             h('div', null, rotulo('Nº do Pedido', 'se ainda não tem nota'), entrada('pedido', 'ex.: 355386', { inputMode: 'numeric' })),
             h('div', null, rotulo('Data da Ocorrência', '* dd/mm/aaaa'), entrada('dataOcorrencia', 'ex.: 24/11/2026')),
+            h('div', null, rotulo('Tipo', 'escolha o mais parecido'), h('select', { value: rascunho.tipo || '', onChange: campo('tipo'), 'aria-label': 'Tipo da ocorrência', style: { width: '100%', boxSizing: 'border-box', border: '1px solid ' + cor.border, borderRadius: 8, padding: '8px 10px', fontSize: 13, color: cor.ink, background: '#fff' } },
+              h('option', { value: '' }, 'Sem tipo'), (O.TIPOS || []).map((t) => h('option', { key: t.id, value: t.id }, t.nome)))),
             h('div', { style: { gridColumn: 'span 2' } }, rotulo('Detalhes da Ocorrência', 'o que aconteceu'), entrada('detalhes', 'ex.: endereço insuficiente, vendedor verificando', { id: 'oc-detalhes' })),
             h('div', null, rotulo('Responsável', 'quem resolve'), entrada('responsavel', 'ex.: Juliana')),
             h('div', { style: { gridColumn: 'span 2' } }, rotulo('Solução da Ocorrência', 'deixe vazio se ainda não resolveu'), entrada('solucao', 'ex.: cadastro atualizado, pedido liberado')),
@@ -280,7 +282,7 @@
                   h('div', { style: { color: cor.mute, fontSize: 11.5 } }, 'Pedido ' + info.pedido + (info.armazem ? ' · ' + info.armazem : '') + (info.transportadora ? ' · ' + info.transportadora : '') + (info.valor ? ' · ' + moeda(info.valor) : '')),
                   h('div', { style: { color: cor.mute, fontSize: 11.5 } }, av.pedido.texto)) : h('span', { style: { color: cor.amber, fontSize: 12 } }, (oc.nf ? 'Nota não encontrada' : 'Pedido não encontrado') + ' na base do SC9. Confira o número ou aguarde a próxima atualização da base.')),
                 td(O.mostrarData(oc.dataOcorrencia) + ' ', { whiteSpace: 'nowrap' }),
-                td(oc.detalhes),
+                td(h('div', null, oc.tipo && O.tipoDe(oc.tipo) ? h('div', { style: { fontSize: 11, fontWeight: 800, color: cor.accent, marginBottom: 2 } }, O.tipoDe(oc.tipo).nome) : null, oc.detalhes)),
                 td(oc.responsavel),
                 td(oc.solucao || h('span', { style: { color: cor.mute } }, 'sem solução ainda')),
                 td(oc.dataSolucao ? O.mostrarData(oc.dataSolucao) : h('span', { style: { color: cor.mute } }, '—'), { whiteSpace: 'nowrap' }),

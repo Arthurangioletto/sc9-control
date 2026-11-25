@@ -1,9 +1,10 @@
 /* Ocorrências da expedição (por nota fiscal ou, quando ainda não tem nota, pelo número do pedido): lista compartilhada, guardada em ocorrencias-expedicao.json.
- * Cada linha: { id, nf, pedido, dataOcorrencia (AAAA-MM-DD), detalhes, responsavel, solucao, dataSolucao (AAAA-MM-DD ou ''), criadoPor, criadoEm,
+ * Cada linha: { id, nf, pedido, dataOcorrencia (AAAA-MM-DD), tipo (lista fechada, opcional), detalhes, responsavel, solucao, dataSolucao (AAAA-MM-DD ou ''), criadoPor, criadoEm,
  * atualizadoPor, atualizadoEm }. Só validação e mesclagem, sem acesso a disco. */
 'use strict';
 
 const MAX_LINHAS = 5000;
+const TIPOS = ['endereco', 'cadastro', 'pedido_trocado', 'volume', 'avaria', 'coleta', 'ausente', 'outro']; // lista fechada (nomes em ocorrencias.js)
 
 // Número da nota fiscal: só dígitos, sem zeros à esquerda (aceita "885234.0"), de 3 a 12 dígitos.
 function numeroDaNota(x) {
@@ -45,7 +46,7 @@ function normalizarLinha(x) {
     linha: {
       id: texto(x.id, 40) || '',
       nf: nf || '', pedido: pedido || '', dataOcorrencia,
-      detalhes: texto(x.detalhes, 600), responsavel: texto(x.responsavel, 80), solucao: texto(x.solucao, 400), dataSolucao,
+      tipo: TIPOS.includes(x.tipo) ? x.tipo : '', detalhes: texto(x.detalhes, 600), responsavel: texto(x.responsavel, 80), solucao: texto(x.solucao, 400), dataSolucao,
       criadoPor: texto(x.criadoPor, 60), criadoEm: dataHoraIso(x.criadoEm), atualizadoPor: texto(x.atualizadoPor, 60), atualizadoEm: dataHoraIso(x.atualizadoEm)
     }
   };
@@ -131,4 +132,4 @@ function linhasIniciais(agora) {
   return base.map((l, i) => Object.assign({}, l, { id: 'inicial' + (i + 1), criadoPor: 'sistema', criadoEm: quando, atualizadoPor: 'sistema', atualizadoEm: quando }));
 }
 
-module.exports = { MAX_LINHAS, numeroDaNota, numeroDoPedido, normalizarLinha, normalizarLista, aplicar, linhasIniciais };
+module.exports = { TIPOS, MAX_LINHAS, numeroDaNota, numeroDoPedido, normalizarLinha, normalizarLista, aplicar, linhasIniciais };

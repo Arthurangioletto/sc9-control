@@ -699,7 +699,7 @@ async function dashboardRegistrarSincronizacao() {
   dias[hoje] = { ...atual, atualizacoes: (atual.atualizacoes || 0) + 1 };
   await objSave(DASHBOARD_HIST_OBJ, { dias });
 }
-const TRANSP_NOMES = { "2": "Brasil", "4": "Retira 01", "5": "Retira 02", "6": "Retira 03", "7": "Retira 04", "10057": "Emergência", "10023": "São Paulo" };
+const TRANSP_NOMES = { "2": "Brasil", "4": "Retira 01", "5": "Retira 02", "6": "Retira 03", "7": "Retira 04", "10057": "Emergência", "10023": "São Paulo", "10085": "TCS" };
 const DESFAZER_MS = Number(process.env.SAIDA_DESFAZER_MS) || 5 * 60 * 1000;
 const SAIDA_RETENCAO_DIAS = Number(process.env.SAIDA_RETENCAO_DIAS) || 30; // passou disso: o administrador exporta e apaga
 const SAIDA_AVISO_DIAS = 5; // o administrador é avisado quando faltam até 5 dias pra completar 30
@@ -1818,7 +1818,7 @@ async function handleApi(req, res, pathname) {
     return Oc.normalizarLista(dado);
   }
   // Versão enxuta para a página do histórico de atraso (cruza pela nota fiscal do pedido).
-  const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas()).map((l) => ({ nf: l.nf, pedido: l.pedido || "", dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id, atualizadoEm: l.atualizadoEm }));
+  const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas()).map((l) => ({ nf: l.nf, pedido: l.pedido || "", dataOcorrencia: l.dataOcorrencia, tipo: l.tipo || "", detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id, atualizadoEm: l.atualizadoEm }));
   async function saidasDosPedidos(meses) {
     const procurados = new Set();
     for (const m of Object.values(meses)) for (const r of Object.values(m.dias || {})) for (const it of r.itens || []) { const n = normalizarPedido(it[0]); if (n) procurados.add(n); }

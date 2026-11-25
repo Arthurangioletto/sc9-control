@@ -98,15 +98,17 @@
       h('section', { class: 'card', 'aria-label': 'Pedido ' + r.pedido },
         h('div', { class: 'res-topo' }, h('div', null, h('p', { class: 'res-numero', text: 'Pedido' }), h('h2', { class: 'num', text: r.pedido })), C.selo(rotuloResumo(r), r.resumo.nivel)),
         h('div', { class: 'status-destaque ' + r.resumo.nivel }, h('div', { class: 'bola' }, ic(iconeResumo(r))),
-          h('div', null, h('b', { text: r.resumo.texto }), atual && r.paradoDesde && r.resumo.nivel !== 'concluido' ? h('span', { text: 'Nesta etapa há cerca de ' + C.duracao(r.paradoDesde) + '.' }) : null)),
+          h('div', null, h('b', { text: r.resumo.texto }), atual && r.paradoDesde && r.resumo.nivel !== 'concluido' ? h('span', { text: 'Nesta etapa há cerca de ' + C.duracao(r.paradoDesde) + '.' }) : null,
+            r.espera && r.resumo.nivel !== 'concluido' && !r.espera.emCurso ? h('span', { text: r.espera.texto }) : null)),
         h('div', { class: 'fatos' }, C.fato('predio', 'Filial', d.armazem), C.fato('pacote', 'Itens', (d.pecas ? d.pecas + (d.pecas === 1 ? ' peça' : ' peças') : '') + (d.linhas ? ' · ' + d.linhas + (d.linhas === 1 ? ' item' : ' itens') : '')), C.fato('calendario', 'Liberado em', d.liberadoEm ? C.dataHora(d.liberadoEm) : ''), C.fato('caminhao', 'Transportadora', d.transportadora),
           C.fato('pessoa', 'Cliente', d.cliente), C.fato('nota', 'Nota fiscal', d.nf || 'ainda não emitida'), C.fato('relogio', 'Dias desde a liberação', d.diasDesdeLiberacao != null ? String(d.diasDesdeLiberacao) : ''), C.fato('okCirculo', 'Despachado em', d.despachadoEm ? C.dataBR(d.despachadoEm) : 'ainda não')),
-        r.ocorrencia ? h('div', { class: 'ocorrencia', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Ocorrência da expedição: ' + r.ocorrencia.status }), r.ocorrencia.detalhes ? h('span', { text: r.ocorrencia.detalhes }) : null, r.ocorrencia.solucao ? h('span', { style: 'display:block;margin-top:4px', text: 'Solução: ' + r.ocorrencia.solucao + (r.ocorrencia.dataSolucao ? ' (' + C.dataBR(r.ocorrencia.dataSolucao + 'T12:00:00Z') + ')' : '') }) : null)) : null,
+        r.ocorrencia ? h('div', { class: 'ocorrencia', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Ocorrência da expedição: ' + r.ocorrencia.status + (r.ocorrencia.tipoTexto ? ' · ' + r.ocorrencia.tipoTexto : '') }), r.ocorrencia.quem && !r.ocorrencia.resolvida ? h('span', { style: 'display:block', text: r.ocorrencia.quem }) : null, r.ocorrencia.detalhes ? h('span', { text: r.ocorrencia.detalhes }) : null, r.ocorrencia.solucao ? h('span', { style: 'display:block;margin-top:4px', text: 'Solução: ' + r.ocorrencia.solucao + (r.ocorrencia.dataSolucao ? ' (' + C.dataBR(r.ocorrencia.dataSolucao + 'T12:00:00Z') + ')' : '') }) : null)) : null,
         h('div', { class: 'acoes' },
+          r.mensagemCliente ? h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(r.mensagemCliente, 'Mensagem para a cliente copiada. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar mensagem para a cliente') : null,
           h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(textoParaCopiar(r), 'Status copiado. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar status'),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { const u = new URL(root.location.href); u.searchParams.set('pedido', r.pedido); C.copiar(u.toString(), 'Link copiado.'); } }, ic('link'), 'Copiar link do pedido'),
-          r.resumo.nivel !== 'concluido' ? h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaPrioridade(r.pedido) }, ic('raio'), 'Pedir prioridade') : null,
-          h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(r.pedido) }, ic('comentario'), 'Avisar a expedição'))),
+          r.resumo.nivel !== 'concluido' ? h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaPrioridade(r.pedido, r) }, ic('raio'), 'Pedir prioridade') : null,
+          h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(r.pedido, r) }, ic('comentario'), 'Avisar a expedição'))),
       h('section', { class: 'card', 'aria-label': 'Andamento do pedido ' + r.pedido },
         h('div', { class: 'card-titulo' }, h('h3', { text: 'Andamento do pedido' }), h('span', { class: 'mudo peq', text: (r.etapas || []).filter((e) => e.estado === 'feita').length + ' de ' + (r.etapas || []).length + ' etapas concluídas' })),
         h('ol', { class: 'tempo' }, (r.etapas || []).map((e) => h('li', { class: e.estado, 'aria-current': e.estado === 'atual' ? 'step' : null },
@@ -240,7 +242,8 @@
   }
 
   /* ---------- solicitar prioridade ---------- */
-  function irParaPrioridade(pedido) { const f = estado.f; if (pedido && soNumeros(pedido) !== soNumeros(f.pedido)) { f.pedido = pedido; f.previa = null; f.etapa = 'form'; } f.erro = ''; if (f.etapa === 'enviada') f.etapa = 'form'; estado.tela = 'prioridade'; desenhar(); root.scrollTo(0, 0); }
+  // com o pedido que ela acabou de consultar, o formulário já abre com ele localizado (sem digitar e buscar de novo)
+  function irParaPrioridade(pedido, previa) { const f = estado.f; if (pedido && soNumeros(pedido) !== soNumeros(f.pedido)) { f.pedido = pedido; f.previa = previa && previa.achado && previa.resumo.nivel !== 'concluido' ? previa : null; f.etapa = 'form'; } else if (previa && !f.previa && previa.achado && previa.resumo.nivel !== 'concluido') f.previa = previa; f.erro = ''; if (f.etapa === 'enviada') f.etapa = 'form'; estado.tela = 'prioridade'; desenhar(); root.scrollTo(0, 0); }
   async function localizar() {
     const f = estado.f; f.erro = '';
     const p = soNumeros(f.pedido);
@@ -318,7 +321,7 @@
   }
 
   /* ---------- avisar a expedição (ocorrência / informação sobre um pedido) ---------- */
-  function irParaAviso(pedido) { const a = estado.a; if (pedido && soNumeros(pedido) !== soNumeros(a.pedido)) { a.pedido = pedido; a.previa = null; } a.erro = ''; a.enviado = null; estado.tela = 'avisar'; desenhar(); root.scrollTo(0, 0); }
+  function irParaAviso(pedido, previa) { const a = estado.a; if (pedido && soNumeros(pedido) !== soNumeros(a.pedido)) { a.pedido = pedido; a.previa = previa && previa.achado ? previa : null; } else if (previa && !a.previa && previa.achado) a.previa = previa; a.erro = ''; a.enviado = null; estado.tela = 'avisar'; desenhar(); root.scrollTo(0, 0); }
   async function localizarA() {
     const a = estado.a; a.erro = '';
     const p = soNumeros(a.pedido);

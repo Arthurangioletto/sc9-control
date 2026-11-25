@@ -461,3 +461,12 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 - A foto de um dia que já passou não é trocada por uma com menos da metade dos pedidos (resposta 409), a não ser com `forcar: true`.
 - `/api/meta-faturamento` recusa corpo vazio e valor infinito; `/api/save` devolve `avisos` quando algo não foi gravado; consultas das vendedoras voltam para a fila se a gravação falhar; e-mail corporativo exige "implacil" no domínio da empresa.
 - Continua por configuração: `TRUST_PROXY_HOPS=1` no Render e, se nenhum cliente antigo usa, `LEGACY_AUTH=0`.
+
+## Melhorias para as vendedoras e a expedição (rastreio)
+
+- **Copiar mensagem para a cliente**: texto pronto por situação (separando, aguardando nota, pronto para coleta, atrasado, ocorrência aberta, despachado), sem nome de funcionário, valor nem termo interno. A cliente não consulta o sistema; a vendedora cola a mensagem no WhatsApp.
+- **Pedir prioridade / Avisar a expedição** abrem já com o pedido localizado quando vêm da tela do pedido.
+- **Onde mais demorou**: o rastreio mostra a etapa que mais demorou (ou há quanto tempo está na etapa de agora); abaixo de 4 horas não destaca.
+- **Tipo da ocorrência** (lista fechada: endereço, cadastro, pedido ou nota trocados, volume faltando, avaria, coleta não passou, cliente ausente, outro). Opcional; ocorrências antigas continuam valendo. A vendedora vê o tipo e quem resolve.
+- Nome da transportadora 10085 passa a aparecer como "TCS" na Saída e no Recebimento.
+- O limite de 16h/17h (sair do estoque para a expedição) e as 18h (coleta da transportadora) são coisas diferentes e continuam como estão.
