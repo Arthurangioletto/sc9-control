@@ -451,3 +451,13 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 - **corrigir a validade** do lote (a correção fica gravada na análise, o SB8 não é alterado);
 - marcar um lote de outro armazém como **transferir para o armazém da gaveta**, com quantidade e observação;
 - deixar observação e tocar em **Conferido**. A gaveta só fecha com todos os produtos conferidos; o rascunho fica salvo no aparelho e reenvio não duplica.
+
+## Verificação do back-end (leitura segura, limites e vazamentos)
+
+- Só o status 404 (ou `statusCode` 404 no corpo) conta como "arquivo ainda não existe". Qualquer outro erro do Supabase sobe, para a gravação seguinte não sobrescrever o dado com o valor inicial.
+- O histórico de 14 dias do dashboard e as leituras do histórico de atraso, ocorrências, avisos, prioridades e contas deixam de virar "vazio" quando a leitura falha: a rota responde erro.
+- Quem só reforça a prioridade de outra pessoa recebe um id diferente (não dá para chegar ao id do dono), então a observação do dono não sai nem sabendo o nome dela.
+- A cota geral de avisos e de prioridades (60 por hora) só conta pedido válido; os limites por IP ficaram mais folgados (escritório atrás de um IP só).
+- A foto de um dia que já passou não é trocada por uma com menos da metade dos pedidos (resposta 409), a não ser com `forcar: true`.
+- `/api/meta-faturamento` recusa corpo vazio e valor infinito; `/api/save` devolve `avisos` quando algo não foi gravado; consultas das vendedoras voltam para a fila se a gravação falhar; e-mail corporativo exige "implacil" no domínio da empresa.
+- Continua por configuração: `TRUST_PROXY_HOPS=1` no Render e, se nenhum cliente antigo usa, `LEGACY_AUTH=0`.

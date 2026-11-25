@@ -132,7 +132,7 @@ test('registroDoDia leva o total de pedidos da base por armazém e o faturamento
 
 test('o servidor guarda os despachados que chegam com a foto e só deixa o dia crescer', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-histpag-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'historico-atraso.html', 'historico-atraso.js', 'atraso-historico-xlsx.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'historico-atraso.html', 'historico-atraso.js', 'atraso-historico-xlsx.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   fs.mkdirSync(path.join(dir, 'data'));
   delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
   process.env.PORT = '0'; process.env.APP_PASSWORD = crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomUUID(); process.env.NODE_ENV = 'test';
@@ -203,7 +203,7 @@ test('pedido achado na Saída p/ Expedição passa a contar como atraso de fatur
 
 test('o servidor acha na Saída p/ Expedição os pedidos das fotos (ignora zeros à esquerda) e guarda o resultado', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-histsaida-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   const data = path.join(dir, 'data');
   fs.mkdirSync(data);
   const hoje = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -225,7 +225,8 @@ test('o servidor acha na Saída p/ Expedição os pedidos das fotos (ignora zero
     assert.deepEqual(j.saidas, { 5001: hoje + 'T12:00:00.000Z' }, 'acha 5001 (com zeros na foto), usa o 1º registro e ignora pedido que não está nas fotos');
     // atualização em tempo real: só o cruzamento com a saída, sem as fotos
     const so = await (await fetch(base + '/api/atraso-historico?so=saidas', { headers: { Cookie: cookie } })).json();
-    assert.deepEqual(so, { saidas: { 5001: hoje + 'T12:00:00.000Z' }, ocorrencias: [] });
+    assert.deepEqual(so.saidas, { 5001: hoje + 'T12:00:00.000Z' });
+    assert.ok(Array.isArray(so.ocorrencias), 'e as ocorrências vêm junto (as 3 linhas iniciais da expedição)');
     // o dia da saída é apagado depois da exportação: o resultado guardado continua
     fs.rmSync(path.join(data, 'saida-pv-' + hoje + '.json'));
     const guardado = JSON.parse(fs.readFileSync(path.join(data, 'atraso-saidas.json'), 'utf8'));
@@ -237,7 +238,7 @@ test('o servidor acha na Saída p/ Expedição os pedidos das fotos (ignora zero
 
 test('link sem senha: só leitura, o administrador gera, troca e desativa', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-histlink-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   fs.mkdirSync(path.join(dir, 'data'));
   delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
   process.env.PORT = '0'; process.env.APP_PASSWORD = crypto.randomUUID(); process.env.SESSION_SECRET = crypto.randomUUID(); process.env.NODE_ENV = 'test';
@@ -265,7 +266,7 @@ test('link sem senha: só leitura, o administrador gera, troca e desativa', asyn
     assert.equal(lido.status, 200, 'com o código, qualquer pessoa lê');
     assert.equal(Object.values((await lido.json()).meses)[0].dias[hoje].itens.length, 1);
     assert.equal((await anonimo('/api/atraso-historico?so=saidas&k=' + t1)).status, 200, 'e a atualização em tempo real também');
-    assert.equal((await anonimo('/api/atraso-historico?k=' + t1.slice(0, -1) + 'x')).status, 401, 'código errado');
+    assert.equal((await anonimo('/api/atraso-historico?k=' + t1.slice(0, -1) + (t1.endsWith('A') ? 'B' : 'A'))).status, 401, 'código errado');
     assert.equal((await anonimo('/api/atraso-historico?k=' + t1, { dia: hoje, total: 9, pecas: 1, itens: [['X', 'BH', hoje, 1, 'E', 'A', 1, '']] })).status, 401, 'o código não grava nada');
     assert.equal((await anonimo('/api/atraso-historico-link?k=' + t1)).status, 401, 'o código não administra o link');
     assert.equal((await anonimo('/api/login', { password: t1 })).status, 401, 'o código não vira senha');
