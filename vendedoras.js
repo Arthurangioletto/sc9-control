@@ -5,7 +5,7 @@
   const C = root.Central, h = C.h, ic = C.icone;
   const chaveLink = new URLSearchParams(root.location.search).get('k') || '';
   const $raiz = root.document.getElementById('raiz');
-  const LS = { recentes: 'sc9v_recentes', meus: 'sc9v_meus', nome: 'sc9v_nome', sessao: 'sc9v_sessao', consultas: 'sc9v_consultas', avisos: 'sc9v_avisos' };
+  const LS = { recentes: 'sc9v_recentes', meus: 'sc9v_meus', nome: 'sc9v_nome', sessao: 'sc9v_sessao', consultas: 'sc9v_consultas', avisos: 'sc9v_avisos', seguindo: 'sc9v_seguindo' };
   const lerLS = (k, padrao) => { try { const v = root.localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } };
   const gravarLS = (k, v) => { try { root.localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sem armazenamento: segue sem lembrar */ } };
   const LIMITE_BASE_VELHA_H = 10; // carga do SC9 mais velha que isso fica em destaque
@@ -16,6 +16,7 @@
     prio: null, prioErro: '', visao: 'minhas', aberta: null,
     a: { pedido: '', tipo: '', texto: '', nome: lerLS(LS.nome, ''), previa: null, buscando: false, enviando: false, erro: '', enviado: null },
     avisos: null, avisosErro: '', sub: 'prioridades', abertoAviso: null,
+    seguindo: lerLS(LS.seguindo, []), seguindoEstado: {}, seguindoCarregando: false, // pedidos que ela acompanha NESTE aparelho: [{ pedido, cliente, visto }]
     conta: lerLS(LS.sessao, null), // { token, nome, login } quando ela entrou com o acesso opcional
     cf: { modo: 'criar', nome: '', email: '', login: '', codigo: '', codigo2: '', erro: '', enviando: false, atual: '', novo: '', erroTroca: '', okTroca: '', trocando: false }
   };
@@ -49,6 +50,7 @@
     try {
       if (lista.length === 1) {
         estado.consulta = await api('/api/vendedoras/pedido?pedido=' + lista[0] + (silencioso ? '&auto=1' : '')); estado.varios = null; estado.atualizadoEm = estado.consulta.atualizadoEm;
+        if (seguindoPedido(lista[0])) { estado.seguindoEstado[lista[0]] = estado.consulta; if (!silencioso) marcarVisto(lista[0]); }
         if (estado.consulta.achado) { gravarLS(LS.recentes, [lista[0]].concat(lerLS(LS.recentes, []).filter((x) => x !== lista[0])).slice(0, 8)); if (!silencioso) registrarConsulta(estado.consulta); }
         try { const u = new URL(root.location.href); u.searchParams.set('pedido', lista[0]); root.history.replaceState(null, '', u.toString()); } catch (e) { /* sem histórico */ }
       } else {
@@ -59,6 +61,49 @@
       estado.erro = '';
     } catch (e) { estado.erro = e.message || 'Não consegui consultar agora.'; if (!silencioso) estado.consulta = null; }
     estado.carregando = false; desenhar();
+  }
+  /* ---------- acompanhar pedidos (neste aparelho): avisa o que mudou desde a última vez que ela olhou ---------- */
+  // "chave" = o que, para ela, é uma mudança: etapa atual, situação geral e ocorrência (abriu, mudou de tipo, resolveu)
+  const chaveDe = (r) => {
+    if (!r || !r.achado) return 'fora';
+    const atual = (r.etapas || []).find((e) => e.estado === 'atual');
+    return [atual ? atual.cod : 'fim', r.resumo.nivel, r.ocorrencia ? (r.ocorrencia.resolvida ? 'oc-res' : 'oc-' + (r.ocorrencia.tipo || 'x')) : ''].join('|');
+  };
+  const seguindoPedido = (p) => estado.seguindo.find((x) => x.pedido === p);
+  function salvarSeguindo() { gravarLS(LS.seguindo, estado.seguindo); }
+  function seguir(r) {
+    if (!r || !r.achado || seguindoPedido(r.pedido)) return;
+    estado.seguindo = [{ pedido: r.pedido, cliente: (r.detalhes && r.detalhes.cliente) || '', visto: chaveDe(r) }].concat(estado.seguindo).slice(0, 30);
+    estado.seguindoEstado[r.pedido] = r; salvarSeguindo();
+  }
+  function pararDeSeguir(p) { estado.seguindo = estado.seguindo.filter((x) => x.pedido !== p); delete estado.seguindoEstado[p]; salvarSeguindo(); }
+  function marcarVisto(p) { const s = seguindoPedido(p), r = estado.seguindoEstado[p]; if (s && r) { s.visto = chaveDe(r); salvarSeguindo(); } }
+  const mudou = (p) => { const s = seguindoPedido(p), r = estado.seguindoEstado[p]; return Boolean(s && r && s.visto !== chaveDe(r)); };
+  async function carregarSeguindo(silencioso) {
+    if (!estado.seguindo.length || estado.seguindoCarregando) return;
+    estado.seguindoCarregando = true;
+    for (const s of estado.seguindo.slice(0, 30)) {
+      try { estado.seguindoEstado[s.pedido] = await api('/api/vendedoras/pedido?pedido=' + s.pedido + '&auto=1'); } catch (e) { /* mantém o último que tinha */ }
+      if (estado.seguindoEstado[s.pedido] && estado.seguindoEstado[s.pedido].atualizadoEm) estado.atualizadoEm = estado.seguindoEstado[s.pedido].atualizadoEm;
+    }
+    estado.seguindoCarregando = false;
+    if (!silencioso || ['rastrear', 'minhas'].includes(estado.tela)) desenhar();
+  }
+  function cartaoSeguindo() {
+    if (!estado.seguindo.length) return null;
+    const mudaram = estado.seguindo.filter((s) => mudou(s.pedido)).length;
+    return h('section', { class: 'card', 'aria-label': 'Pedidos que você acompanha' },
+      h('div', { class: 'card-titulo' }, h('h2', { text: 'Pedidos que você acompanha' }), h('span', { class: 'mudo peq', text: mudaram ? mudaram + (mudaram === 1 ? ' mudou' : ' mudaram') + ' desde a última vez' : 'nada mudou desde a última vez' })),
+      estado.seguindo.map((s) => { const r = estado.seguindoEstado[s.pedido], mdd = mudou(s.pedido);
+        return h('div', { class: 'cartao-lista', style: 'cursor:default' },
+          h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + s.pedido }), r ? (r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Fora do SC9', 'alta')) : C.selo('Carregando…', 'normal'), mdd ? C.selo('Mudou', 'laranja') : null),
+          h('div', { class: 'l2' }, h('span', { text: (s.cliente ? s.cliente + ' · ' : '') + (r ? (r.achado ? r.resumo.texto : 'Ainda não está no SC9.') : 'Buscando a situação…') })),
+          h('div', { class: 'acoes', style: 'margin-top:8px' },
+            h('button', { class: 'btn peq', type: 'button', onclick: () => { marcarVisto(s.pedido); estado.tela = 'rastrear'; estado.digitado = s.pedido; consultar(s.pedido); root.scrollTo(0, 0); } }, ic('busca'), 'Ver o andamento'),
+            mdd ? h('button', { class: 'btn peq', type: 'button', onclick: () => { marcarVisto(s.pedido); desenhar(); } }, ic('ok'), 'Já vi') : null,
+            h('button', { class: 'btn peq', type: 'button', onclick: () => { pararDeSeguir(s.pedido); C.toast('Você parou de acompanhar o pedido ' + s.pedido + '.'); desenhar(); } }, ic('fechar'), 'Parar de acompanhar')));
+      }),
+      h('p', { class: 'dica', style: 'margin-top:10px', text: 'A lista fica neste aparelho. A situação atualiza a cada minuto com a tela aberta, e o que mudou desde a última vez que você olhou aparece com o selo "Mudou".' }));
   }
   function textoParaCopiar(r) {
     const d = r.detalhes || {};
@@ -104,6 +149,7 @@
           C.fato('pessoa', 'Cliente', d.cliente), C.fato('nota', 'Nota fiscal', d.nf || 'ainda não emitida'), C.fato('relogio', 'Dias desde a liberação', d.diasDesdeLiberacao != null ? String(d.diasDesdeLiberacao) : ''), C.fato('okCirculo', 'Despachado em', d.despachadoEm ? C.dataBR(d.despachadoEm) : 'ainda não')),
         r.ocorrencia ? h('div', { class: 'ocorrencia', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Ocorrência da expedição: ' + r.ocorrencia.status + (r.ocorrencia.tipoTexto ? ' · ' + r.ocorrencia.tipoTexto : '') }), r.ocorrencia.quem && !r.ocorrencia.resolvida ? h('span', { style: 'display:block', text: r.ocorrencia.quem }) : null, r.ocorrencia.detalhes ? h('span', { text: r.ocorrencia.detalhes }) : null, r.ocorrencia.solucao ? h('span', { style: 'display:block;margin-top:4px', text: 'Solução: ' + r.ocorrencia.solucao + (r.ocorrencia.dataSolucao ? ' (' + C.dataBR(r.ocorrencia.dataSolucao + 'T12:00:00Z') + ')' : '') }) : null)) : null,
         h('div', { class: 'acoes' },
+          r.achado && r.resumo.nivel !== 'concluido' ? (seguindoPedido(r.pedido) ? h('button', { class: 'btn peq', type: 'button', onclick: () => { pararDeSeguir(r.pedido); C.toast('Você parou de acompanhar este pedido.'); desenhar(); } }, ic('ok'), 'Acompanhando (parar)') : h('button', { class: 'btn peq', type: 'button', onclick: () => { seguir(r); C.toast('Pronto. Você vê o que mudou em Acompanhar e em Minhas.'); desenhar(); } }, ic('relogio'), 'Acompanhar este pedido')) : null,
           r.mensagemCliente ? h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(r.mensagemCliente, 'Mensagem para a cliente copiada. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar mensagem para a cliente') : null,
           h('button', { class: 'btn peq', type: 'button', onclick: () => C.copiar(textoParaCopiar(r), 'Status copiado. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar status'),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { const u = new URL(root.location.href); u.searchParams.set('pedido', r.pedido); C.copiar(u.toString(), 'Link copiado.'); } }, ic('link'), 'Copiar link do pedido'),
@@ -128,7 +174,9 @@
     ];
     if (modo === 'avisar') itens.push(h('li', null, h('b', { text: 'O aviso vai para a equipe da expedição, que trata e responde: não é na hora. ' }), 'Acompanhe em "Minhas solicitações" → "Avisos à expedição". Não precisa mandar de novo nem cobrar por mensagem.'));
     if (modo === 'prioridade' || modo === 'minhas') itens.push(h('li', null, h('b', { text: 'A análise é feita pela equipe do SC9, não é na hora. ' }), 'Depois de enviar, aguarde a resposta aqui em "Minhas solicitações". Não precisa mandar de novo nem cobrar por mensagem.'));
-    if (compacta) return h('div', { class: 'processo compacta', role: 'note' }, ic('info'), h('p', null, h('b', { text: 'Aguarde a análise do SC9. ' }), base));
+    if (compacta) return h('div', { class: 'processo compacta', role: 'note' }, ic('info'), h('p', null, h('b', { text: modo === 'rastrear' ? 'Andamento do SC9. ' : 'Aguarde a análise do SC9. ' }), base));
+    if (modo === 'rastrear') return h('section', { class: 'processo compacta', role: 'note', 'aria-label': 'Como funciona o acompanhamento', style: 'flex-wrap:wrap' }, ic('info'), h('p', { style: 'flex:1 1 220px' }, h('b', { text: 'Atualizado às ' + (estado.atualizadoEm ? C.horaBR(estado.atualizadoEm) : '—') + '. ' }), 'Pedido novo pode levar algumas horas para aparecer.'),
+      h('details', { style: 'flex:1 0 100%' }, h('summary', { style: 'cursor:pointer;font-weight:700;min-height:32px;display:flex;align-items:center', text: 'Como funciona' }), h('ul', { style: 'margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.45' }, itens)));
     return h('section', { class: 'processo', role: 'note', 'aria-label': 'Como funciona o acompanhamento' }, h('div', { class: 'bola' }, ic('info')), h('div', null, h('h2', { text: modo === 'rastrear' ? 'Como funciona o acompanhamento' : 'Antes de pedir: como funciona a análise' }), h('ul', null, itens)));
   }
 
@@ -236,8 +284,8 @@
         h('div', { class: 'l2' }, h('span', { text: r.achado ? r.resumo.texto : (r.erro || 'Ainda não está no SC9. Se o número está certo, peça prioridade: a equipe é avisada para recarregar.') }))))));
     else if (estado.consulta && estado.consulta.achado) blocos.push(cartaoResultado(estado.consulta));
     else if (estado.consulta) blocos.push(h('section', { class: 'card' }, C.vazio('atualizar', 'O pedido ' + estado.consulta.pedido + ' ainda não está no SC9', 'Confira o número. Se o pedido é de hoje, ele pode ainda não ter chegado: a base só atualiza a cada carga do SC9. Se o número está certo, peça prioridade mesmo assim: a equipe é avisada para recarregar o SC9.' + (estado.consulta.atualizadoEm ? ' Última atualização: ' + C.dataHora(estado.consulta.atualizadoEm) + '.' : '')),
-      h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn peq', type: 'button', onclick: () => consultar(estado.digitado) }, ic('atualizar'), 'Tentar de novo'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaPrioridade(estado.consulta.pedido) }, ic('raio'), 'Pedir prioridade mesmo assim'))));
-    else blocos.push(dicas());
+      h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn peq primario', type: 'button', onclick: () => { estado.consulta = null; estado.digitado = ''; desenhar(); const e = root.document.getElementById('q-pedido'); if (e) e.focus(); } }, ic('busca'), 'Digitar outro número'), h('button', { class: 'btn peq', type: 'button', onclick: () => consultar(estado.digitado) }, ic('atualizar'), 'Tentar de novo'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(estado.consulta.pedido) }, ic('comentario'), 'Avisar a expedição'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaPrioridade(estado.consulta.pedido) }, ic('raio'), 'Pedir prioridade mesmo assim'))));
+    else { if (estado.seguindo.length) blocos.push(cartaoSeguindo()); blocos.push(dicas()); }
     return blocos;
   }
 
@@ -269,6 +317,7 @@
     try {
       const j = await api('/api/vendedoras/prioridade', { method: 'POST', body: JSON.stringify({ pedido: soNumeros(f.pedido), nivel: f.nivel, motivo: f.motivo, observacao: f.observacao, pedidoPor: f.nome }) });
       gravarLS(LS.nome, f.nome.trim());
+      if (f.previa && f.previa.achado) seguir(f.previa); // quem pediu prioridade passa a acompanhar o pedido
       gravarLS(LS.meus, [j.linha.id].concat(lerLS(LS.meus, []).filter((x) => x !== j.linha.id)).slice(0, 60));
       f.enviada = { linha: j.linha, duplicado: j.duplicado, naoAchado: j.naoAchado }; f.etapa = 'enviada';
       f.pedido = ''; f.observacao = ''; f.motivo = ''; f.nivel = 'normal'; f.previa = null;
@@ -392,7 +441,7 @@
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico do aviso' }, (l.historico || []).slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? C.STATUS_AVISO[x.status] || x.status : '' }), x.texto ? (x.status ? ' · ' : '') + x.texto : ''))))))];
   }
   const abasMinhas = () => h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'O que mostrar', style: 'align-self:flex-start' },
-    h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'prioridades'), onclick: () => { estado.sub = 'prioridades'; desenhar(); }, text: 'Prioridades' }), h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'avisos'), onclick: () => { estado.sub = 'avisos'; carregarAvisos(true); desenhar(); }, text: 'Avisos à expedição' }));
+    h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'prioridades'), onclick: () => { estado.sub = 'prioridades'; desenhar(); }, text: 'Prioridades' }), h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'avisos'), onclick: () => { estado.sub = 'avisos'; carregarAvisos(true); desenhar(); }, text: 'Avisos à expedição' }), h('button', { type: 'button', 'aria-pressed': String(estado.sub === 'acompanho'), onclick: () => { estado.sub = 'acompanho'; carregarSeguindo(true); desenhar(); }, text: 'Acompanho' + (estado.seguindo.length ? ' (' + estado.seguindo.length + ')' : '') }));
   function corpoAvisos() {
     const meus = (estado.avisos && estado.avisos.meus) || [], blocos = [];
     if (estado.avisosErro) blocos.push(h('div', { class: 'erro' }, ic('alerta'), estado.avisosErro));
@@ -434,6 +483,7 @@
     const blocos = [faixaProcesso('minhas', true), h('div', { class: 'card-titulo' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Minhas solicitações' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Só o que é seu: acompanhe a análise da logística sem precisar mandar mensagem.' })))];
     blocos.push(abasMinhas());
     if (estado.sub === 'avisos') return blocos.concat(corpoAvisos());
+    if (estado.sub === 'acompanho') return blocos.concat([cartaoSeguindo() || h('section', { class: 'card' }, C.vazio('relogio', 'Você ainda não acompanha nenhum pedido', 'Consulte um pedido e toque em "Acompanhar este pedido". Aqui aparece a situação de cada um e o que mudou desde a última vez.'))]);
     if (estado.prioErro) blocos.push(h('div', { class: 'erro' }, ic('alerta'), estado.prioErro));
     if (!estado.prio && !estado.prioErro) blocos.push(C.esqueleto(2));
     else if (estado.prio) blocos.push(h('section', { class: 'card', 'aria-label': 'Minhas solicitações' }, meus.length ? [meus.map(cartaoSolicitacao), h('p', { class: 'dica', style: 'margin-top:12px', text: estado.conta ? 'Lista do seu login, em qualquer aparelho. Atualiza sozinha a cada minuto.' : 'Esta lista é deste aparelho. Crie seu acesso para vê-la em qualquer aparelho. Atualiza sozinha a cada minuto.' })] : C.vazio('caixaEntrada', 'Nenhuma solicitação ainda', 'Quando você pedir prioridade em um pedido, ele aparece aqui com o protocolo e o andamento.')));
@@ -466,12 +516,13 @@
     if (root.document.hidden || !chaveLink || estado.f.enviando) return;
     if (estado.tela === 'rastrear' && estado.consulta && estado.consulta.achado && !estado.carregando) consultar(estado.consulta.pedido, true);
     else if (estado.tela === 'minhas') { carregarPrioridades(true); carregarAvisos(true); }
-    else if (estado.tela === 'rastrear' && !estado.consulta && !estado.carregando) carregarPrioridades(true);
+    else if (estado.tela === 'rastrear' && !estado.consulta && !estado.carregando) { carregarPrioridades(true); carregarSeguindo(true); }
   }, 60000);
 
   const pedidoDaUrl = new URLSearchParams(root.location.search).get('pedido');
   desenhar();
   if (chaveLink && pedidoDaUrl) { estado.digitado = pedidoDaUrl; consultar(pedidoDaUrl); }
   if (chaveLink && (lerLS(LS.avisos, []).length || estado.conta)) carregarAvisos(true);
+  if (chaveLink && estado.seguindo.length) carregarSeguindo(true);
   if (chaveLink) carregarPrioridades(true); // traz também a hora da última carga do SC9 e confere a sessão do acesso
 })(window);
