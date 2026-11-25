@@ -137,6 +137,40 @@ function mesclarDespachados(guardado, novos) {
   return ordenado;
 }
 
+// Pedidos e peças FATURADOS por dia, calculados no servidor a partir da base que o SC9 já enviou (pedidos com nota fiscal + datas de emissão da aba SF2),
+// para o histórico não depender de alguém exportar o Histórico de Atraso. Mesma regra do relatório: cada pedido conta uma vez, no dia da emissão da nota;
+// transferência interna (IMPLACIL) fica de fora. orders: linhas da base; emissoes: [[nota, data ISO]]; diaDe(iso) → 'AAAA-MM-DD' (dia de São Paulo).
+// → { 'AAAA-MM-DD': { pedidos, pecas, por: { armazém: { pedidos, pecas } } } } (já no formato de normalizarDespachados).
+function faturadosDaBase(orders, emissoes, diaDe, armazensValidos) {
+  const mapa = new Map();
+  for (const par of Array.isArray(emissoes) ? emissoes : []) if (Array.isArray(par) && par[0] != null) mapa.set(String(par[0]).trim().replace(/\.0$/, ''), par[1]);
+  const dias = {}, vistos = new Set();
+  for (const o of Array.isArray(orders) ? orders : []) {
+    if (!o || /IMPLACIL/i.test(String(o.nome || ''))) continue;
+    if (armazensValidos && !armazensValidos.has(o.armazem)) continue;
+    const nf = String(o.nf == null ? '' : o.nf).trim().replace(/\.0$/, '');
+    if (!nf) continue;
+    const dia = diaDe(mapa.get(nf) || mapa.get(nf.replace(/^0+/, '')));
+    if (!dia || !validarDia(dia)) continue;
+    const arm = o.armazem === 'Tambore' ? 'Tamboré' : texto(o.armazem, 20);
+    const k = arm + '|' + o.pedido;
+    if (vistos.has(k)) continue;
+    vistos.add(k);
+    const qt = Number(o.qt) || 0;
+    const d = (dias[dia] = dias[dia] || { pedidos: 0, pecas: 0, _p: new Set(), _por: {} });
+    d._p.add(String(o.pedido)); d.pecas += qt;
+    if (arm) { const b = (d._por[arm] = d._por[arm] || { pedidos: 0, pecas: 0 }); b.pedidos++; b.pecas += qt; }
+  }
+  const saida = {};
+  for (const [dia, d] of Object.entries(dias)) {
+    const por = {};
+    for (const [arm, b] of Object.entries(d._por)) por[arm] = { pedidos: b.pedidos, pecas: Math.round(b.pecas * 100) / 100 };
+    saida[dia] = { pedidos: d._p.size, pecas: Math.round(d.pecas * 100) / 100 };
+    if (Object.keys(por).length) saida[dia].por = por;
+  }
+  return normalizarDespachados(saida);
+}
+
 // { pedido: 'AAAA-MM-DD' } com a data em que o pedido foi despachado (planilha de Entrega); lixo é ignorado.
 function normalizarEntregues(corpo) {
   const saida = {};
@@ -161,4 +195,4 @@ function mesclarEntregues(guardado, novos, hoje) {
   return saida;
 }
 
-module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses, normalizarDespachados, mesclarDespachados, normalizarFaturados: normalizarDespachados, normalizarEntregues, mesclarEntregues };
+module.exports = { MAX_ITENS, nomeDoMes, mesDoDia, validarDia, normalizarRegistro, mesclarDia, ultimosMeses, normalizarDespachados, mesclarDespachados, normalizarFaturados: normalizarDespachados, faturadosDaBase, normalizarEntregues, mesclarEntregues };
