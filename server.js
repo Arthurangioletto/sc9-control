@@ -1936,7 +1936,9 @@ async function handleApi(req, res, pathname) {
     let nomeTransp = null;
     try { nomeTransp = require("./consolidado.js").nomeTransportadora; } catch (e) { nomeTransp = null; }
     const saidas = pedido ? await saidasEmCache([pedido]) : {};
-    return Rastreio.montarRastreio(snap, pedido, { saidaIso: saidas[pedido] || "", ocorrencias: linhasOcorrencias || [], agora: new Date(), nomeTransportadora: nomeTransp });
+    const r = Rastreio.montarRastreio(snap, pedido, { saidaIso: saidas[pedido] || "", ocorrencias: linhasOcorrencias || [], agora: new Date(), nomeTransportadora: nomeTransp });
+    r.espera = null; // "onde mais demorou" não vai para a vendedora: a etapa mais lenta nem sempre é onde está o problema
+    return r;
   };
 
   // Acesso opcional das vendedoras (login + código, vendedoras-contas.js): a sessão vem no cabeçalho X-Vend-Token.

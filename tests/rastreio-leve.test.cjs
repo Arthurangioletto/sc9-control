@@ -32,6 +32,9 @@ test('vendedoras: vários pedidos numa chamada só (limite de 30, sem repetir, s
     const j = await r.json();
     assert.deepEqual(j.pedidos.map((x) => x.pedido), ['355386', '355387', '999999']);
     assert.equal(j.pedidos[0].achado, true); assert.equal(j.pedidos[2].achado, false);
+    assert.ok(j.pedidos.every((x) => x.espera == null), '"onde mais demorou" não sai para a vendedora');
+    const um = await (await fetch(base + '/api/vendedoras/pedido?k=' + k + '&pedido=355386', { headers: { 'X-Sc9-App': '1' } })).json();
+    assert.equal(um.espera, null);
     assert.equal((await lote('')).status, 400);
     assert.equal((await lote('abc,,')).status, 400);
     const muitos = Array.from({ length: 45 }, (_, i) => String(100000 + i)).join(',');

@@ -499,3 +499,7 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 - Celular: navegação por abas fixa na parte de baixo, painéis laterais viram folha que sobe, alvos de toque de 44 px. Telas vazias com ilustração em SVG, avisos (toasts) novos e transições suaves.
 - Sem fonte, imagem ou biblioteca de fora (só SVG inline e `data:`); animações só com `transform`/`opacity`; com "reduzir movimento" ligado, tudo fica parado e sem inclinação.
 - Nenhuma funcionalidade, texto de ajuda, rota ou formato de API mudou. O `server.js` não foi alterado.
+
+## "Onde mais demorou" não aparece mais para as vendedoras
+
+A etapa mais lenta nem sempre é onde está o problema (e podia passar a ideia errada sobre a logística). O cartão saiu da tela e o servidor deixou de enviar o campo `espera` nas consultas das vendedoras. O cálculo continua no módulo `rastreio.js` para uso interno.

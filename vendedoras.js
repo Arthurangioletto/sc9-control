@@ -173,7 +173,6 @@
         h('button', { class: 'btn primario', type: 'button', onclick: () => C.copiar(r.mensagemCliente, 'Mensagem para a cliente copiada. É só colar no WhatsApp.') }, ic('copiar'), 'Copiar mensagem para a cliente')) : null,
       h('section', { class: 'card nv-' + nv, 'aria-label': 'Andamento do pedido ' + r.pedido },
         h('div', { class: 'card-titulo' }, h('h3', { text: 'Andamento do pedido' }), h('span', { class: 'mudo peq', text: feitas + ' de ' + et.length + ' etapas concluídas' })),
-        r.espera && nv !== 'concluido' && !r.espera.emCurso ? h('div', { class: 'insight', role: 'note' }, h('div', { class: 'bola' }, ic('relogio')), h('div', null, h('b', { text: 'Onde mais demorou' }), h('span', { text: r.espera.texto }))) : null,
         h('ol', { class: 'tempo' }, et.map((e, i) => h('li', { class: e.estado, style: '--i:' + i, 'aria-current': e.estado === 'atual' ? 'step' : null },
           h('div', { class: 'marco orbe ' + e.estado }, orbe(e)),
           h('div', { class: 'corpo' }, h('span', { class: 'sr', text: e.estado === 'feita' ? 'Concluída: ' : e.estado === 'atual' ? 'Etapa atual: ' : 'Ainda não: ' }), h('div', { class: 't', text: e.titulo }), h('div', { class: 'q', text: quando(e) }),
