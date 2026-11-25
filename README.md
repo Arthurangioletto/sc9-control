@@ -503,3 +503,8 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 ## "Onde mais demorou" não aparece mais para as vendedoras
 
 A etapa mais lenta nem sempre é onde está o problema (e podia passar a ideia errada sobre a logística). O cartão saiu da tela e o servidor deixou de enviar o campo `espera` nas consultas das vendedoras. O cálculo continua no módulo `rastreio.js` para uso interno.
+
+## Faturados por dia automáticos e rótulos no gráfico de produtividade
+
+- Ao salvar a base do SC9 (`/api/save`), o servidor calcula os pedidos e peças **faturados por dia** (pedido com nota fiscal, no dia de São Paulo da emissão da nota, uma vez por pedido, por armazém, sem IMPLACIL) e grava em `atraso-expedicao-AAAA-MM.json`, junto dos despachados. O histórico não depende mais de exportar o Histórico de Atraso para as colunas "Pedidos/Peças faturados" ficarem preenchidas. O dia só cresce (vale o maior número), então uma base menor nunca apaga o que já estava gravado. A exportação continua valendo e completa dias antigos.
+- Gráfico "Produtividade da expedição": quadro no topo com o número principal em destaque (despachados do dia), faturados do dia e a média, e valores escritos nas barras sem precisar passar o mouse (em período longo, só o maior, o menor e o último). A dica ao passar o mouse continua.

@@ -1695,6 +1695,11 @@ async function handleApi(req, res, pathname) {
         indiceCache = { at: Date.now(), data: idx };
         saida = await saidaReconciliar(idx); // e revê os bipes já guardados com o SC9 novo
       } catch (e) { console.error("Erro ao montar índice / reconciliar a saída:", e); avisosSave.push("índice de pedidos não foi atualizado"); }
+      try { // faturados por dia (pedidos com nota fiscal, no dia da emissão) saem da própria base: o histórico não depende mais de exportar
+        const AH = require("./atraso-historico.js");
+        const fat = AH.faturadosDaBase(payload.orders, payload.faturamento, (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? diaSP(d) : ""; }, ARMAZENS_GERAL);
+        if (Object.keys(fat).length) await guardarDespacho(AH, {}, fat);
+      } catch (e) { console.error("Erro ao gravar os faturados por dia:", e); avisosSave.push("faturados por dia não foram atualizados"); }
       try {
         // Só os pedidos do Cambuci, com o que o dashboard precisa (liberação,
         // pickEnd, confEnd, nf, status, transportadora, peças). Guardado à

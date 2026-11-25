@@ -106,6 +106,7 @@
   .pn-seg { display:inline-flex; background:#eef1f6; border-radius:10px; padding:3px; gap:2px; } .pn-seg button { font:inherit; font-size:12.5px; font-weight:700; padding:5px 12px; border:0; border-radius:8px; background:transparent; color:#43506a; cursor:pointer; }
   .pn-seg button[aria-pressed=true] { background:#fff; color:var(--accent); box-shadow:0 1px 3px rgba(20,35,61,.15); }
   .pn-link { font:inherit; font-size:12.5px; font-weight:700; color:var(--accent); background:none; border:0; padding:6px 4px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+  .pn-kpis { display:flex; flex-wrap:wrap; gap:10px; margin:2px 0 10px; } .pn-kpi { background:#eef3fb; border-radius:12px; padding:8px 14px; flex:1 1 130px; } .pn-kpi b { display:block; font-size:24px; line-height:1.1; color:#14233d; font-variant-numeric:tabular-nums; } .pn-kpi span { display:block; font-size:12px; color:#5b6a84; margin-top:2px; } .pn-kpi.principal { background:#14233d; } .pn-kpi.principal b, .pn-kpi.principal span { color:#fff; }
   .pn-leg { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12px; color:#5b6a84; margin-top:8px; } .pn-leg i { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:5px; vertical-align:-1px; } .pn-leg i.linha { height:3px; border-radius:2px; vertical-align:3px; }
   .pn-svg { width:100%; height:auto; display:block; } .pn-svg text { font:11px system-ui,sans-serif; fill:#6b7890; } .pn-svg .ponto { cursor:pointer; outline:none; } .pn-svg .ponto:focus-visible rect.foco { stroke:#123b7a; stroke-width:2; }
   .pn-svg .ponto:hover rect.fundo { fill:#123b7a; fill-opacity:.08; }
@@ -496,13 +497,26 @@
     const ctl = h('div', { class: 'pn-seg', role: 'group', 'aria-label': 'Medida' }, [['pedidos', 'Pedidos'], ['pecas', 'Peças']].map(([k, t]) => h('button', { type: 'button', 'aria-pressed': S.prod === k, onclick: () => mudar(() => { S.prod = k; }), text: t })));
     const mel = pr.despachados.pedidos.melhor, pio = pr.despachados.pedidos.pior;
     const sub = pr.despachados.dias ? 'Média de ' + fmtI(mediaP) + ' ' + unidade + ' por dia' + (mel && medida === 'pedidos' ? ' · melhor dia ' + ddmm(mel.dia) + ' (' + fmtI(mel.v) + ') · pior ' + ddmm(pio.dia) + ' (' + fmtI(pio.v) + ')' : '') : 'Sem despachos registrados neste período.';
+    // rótulos sempre visíveis (sem passar o mouse): em todos os dias quando cabem; em período longo, só o maior, o menor e o último
+    const comValor = vals.map((v, i) => (v != null ? i : -1)).filter((i) => i >= 0);
+    const cabe = ((MOB ? 380 : 560) - 56) / Math.max(1, serieDias.length) >= 7 * String(fmtI(max)).length + 3; // cada rótulo cabe na sua coluna?
+    const destacados = new Set(comValor.length ? [comValor.reduce((m, i) => (vals[i] > vals[m] ? i : m), comValor[0]), comValor.reduce((m, i) => (vals[i] < vals[m] ? i : m), comValor[0]), comValor[comValor.length - 1]] : []);
+    const rotular = (i) => cabe || destacados.has(i);
+    const refDia = (serieDias.find((d) => d.dia === dia && d.exp) || serieDias.filter((d) => d.exp).pop() || null);
+    const rotulosBarras = [];
+    const kpis = refDia ? h('div', { class: 'pn-kpis' },
+      h('div', { class: 'pn-kpi principal' }, h('b', { text: fmtI(refDia.exp[campo]) }), h('span', { text: unidade + ' despachados em ' + ddmm(refDia.dia) })),
+      refDia.fat ? h('div', { class: 'pn-kpi' }, h('b', { text: fmtI(refDia.fat[campo]) }), h('span', { text: unidade + ' faturados em ' + ddmm(refDia.dia) })) : null,
+      mediaP != null ? h('div', { class: 'pn-kpi' }, h('b', { text: fmtI(mediaP) }), h('span', { text: 'média de ' + unidade + ' despachados por dia' })) : null) : null;
     const corpo = () => {
+      rotulosBarras.length = 0;
       if (!pr.despachados.dias && !pr.faturados.dias) return h('p', { class: 'pn-vazio', text: 'Sem despachos ou faturamento registrados neste período.' });
       const g = graficoBase(serieDias, max, (d, i, c) => {
         const grupo = s('g', null), v = d.exp ? d.exp[campo] : null;
         if (v != null) {
           const bw = Math.max(2, c.slot * 0.62), x = c.x0 + (c.slot - bw) / 2;
           grupo.appendChild(s('rect', { x, y: c.y(v), width: bw, height: Math.max(0, c.base - c.y(v)), fill: COR.estoque, stroke: d.dia === dia ? '#14233d' : 'none', 'stroke-width': 2 }));
+          if (rotular(i)) rotulosBarras.push(s('text', { x: x + bw / 2, y: c.y(v) - 5, 'text-anchor': 'middle', class: 'halo', style: 'font-weight:800;fill:#14233d;font-size:11px', text: fmtI(v) })); // desenhado por último, por cima da linha
           grupo.appendChild(campoFoco(d, i, c, ddmmaaaa(d.dia) + ': ' + fmtI(v) + ' ' + unidade + ' despachados' + (d.fat ? ', ' + fmtI(d.fat[campo]) + ' faturados' : '') + '.', () => { if (T().temDia(d.dia)) T().escolherDia(d.dia, false); }, d.dia === dia, () => {
             const dif = mediaP ? (v - mediaP) / mediaP * 100 : null;
             return { titulo: semanaLonga(d.dia) + ', ' + ddmmaaaa(d.dia), linhas: [{ rot: 'Pedidos despachados', val: fmtI(d.exp.pedidos), cor: COR.estoque, forte: medida === 'pedidos' }, { rot: 'Peças despachadas', val: fmtI(d.exp.pecas), forte: medida === 'pecas' }, d.fat ? { rot: 'Pedidos faturados', val: fmtI(d.fat.pedidos), cor: '#5f6c84' } : null, d.fat ? { rot: 'Peças faturadas', val: fmtI(d.fat.pecas) } : null, '-', dif != null ? { rot: 'Vs média do período (' + fmtI(mediaP) + ')', val: (dif > 0 ? '▲ +' : dif < 0 ? '▼ −' : '') + fmtN(Math.abs(dif)) + '%' } : null].filter(Boolean), rodape: 'Clique para abrir o dia' };
@@ -511,9 +525,12 @@
         return grupo;
       }, 'Pedidos despachados por dia e faturados. ' + sub, { W: 560, Ht: TV ? 380 : 250, fmtY: (v) => (v >= 1000 ? fmtN(v / 1000) + ' mil' : fmtI(v)) });
       const pts = []; serieDias.forEach((d, i) => { if (d.fat) pts.push([(g.M.l + i * g.slot + g.slot / 2).toFixed(1), g.y(d.fat[campo]).toFixed(1)]); });
-      if (pts.length) { if (pts.length > 1) g.svg.appendChild(s('polyline', { points: pts.map((x) => x.join(',')).join(' '), fill: 'none', stroke: '#5f6c84', 'stroke-width': 2 })); pts.forEach(([x, yy]) => g.svg.appendChild(s('circle', { cx: x, cy: yy, r: 3.5, fill: '#fff', stroke: '#5f6c84', 'stroke-width': 2 }))); }
+      if (pts.length) { if (pts.length > 1) g.svg.appendChild(s('polyline', { points: pts.map((x) => x.join(',')).join(' '), fill: 'none', stroke: '#5f6c84', 'stroke-width': 2 })); pts.forEach(([x, yy]) => g.svg.appendChild(s('circle', { cx: x, cy: yy, r: 3.5, fill: '#fff', stroke: '#5f6c84', 'stroke-width': 2 })));
+        // valor do faturado ao lado do ponto (acima; abaixo se esbarrar no rótulo da barra)
+        serieDias.forEach((d, i) => { if (!d.fat || !cabe) return; const yf = g.y(d.fat[campo]), yb = vals[i] != null ? g.y(vals[i]) - 5 : null, perto = yb != null && Math.abs(yf - 9 - yb) < 13; g.svg.appendChild(s('text', { x: g.M.l + i * g.slot + g.slot / 2, y: perto ? yf + 16 : yf - 9, 'text-anchor': 'middle', class: 'halo', style: 'font-weight:700;fill:#5f6c84', text: fmtI(d.fat[campo]) })); }); }
       if (mediaP != null) { const ym = g.y(mediaP); g.svg.appendChild(s('line', { x1: g.M.l, x2: g.W - g.M.r, y1: ym, y2: ym, stroke: COR.ref, 'stroke-dasharray': '4 4' })); }
-      return h('div', null, g.svg, h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' despachados'), h('span', null, h('i', { class: 'linha', style: 'background:#5f6c84' }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' faturados'), h('span', null, h('i', { class: 'linha', style: 'background:' + COR.ref }), 'Média de despachados'), h('span', { text: 'Dia sem barra = sem registro.' })));
+      rotulosBarras.forEach((t) => g.svg.appendChild(t));
+      return h('div', null, kpis, g.svg, h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:' + COR.estoque }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' despachados'), h('span', null, h('i', { class: 'linha', style: 'background:#5f6c84' }), (medida === 'pecas' ? 'Peças' : 'Pedidos') + ' faturados'), h('span', null, h('i', { class: 'linha', style: 'background:' + COR.ref }), 'Média de despachados'), h('span', { text: 'Dia sem barra = sem registro.' })));
     };
     const tabela = () => tabelaDe(['Dia', 'Pedidos despachados', 'Peças despachadas', 'Pedidos faturados', 'Peças faturadas'], serieDias.filter((d) => d.exp || d.fat).map((d) => [ddmmaaaa(d.dia) + ' ' + d.semana, d.exp ? fmtI(d.exp.pedidos) : null, d.exp ? fmtI(d.exp.pecas) : null, d.fat ? fmtI(d.fat.pedidos) : null, d.fat ? fmtI(d.fat.pecas) : null]));
     const semana = pr.semana.filter((x) => x.n);
