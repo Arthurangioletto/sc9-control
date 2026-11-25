@@ -479,6 +479,8 @@ SERVABLE.add("vendedoras.html");
 SERVABLE.add("vendedoras.js");
 SERVABLE.add("prioridades.html");
 SERVABLE.add("prioridades.js");
+SERVABLE.add("fechamento-dia.html");
+SERVABLE.add("fechamento-dia-ui.js");
 SERVABLE.add("historico-atraso.html");
 SERVABLE.add("historico-atraso.js");
 SERVABLE.add("atraso-painel.js");
@@ -499,7 +501,7 @@ function serveStatic(req, res, urlPath) {
   carregarEstatico(name, (err, e) => {
     if (err) { res.writeHead(404); return res.end("não encontrado"); }
     const cabecalhos = { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache", "ETag": e.etag, "Vary": "Accept-Encoding" };
-    if (name === "vendedoras.html" || name === "prioridades.html") {
+    if (name === "vendedoras.html" || name === "prioridades.html" || name === "fechamento-dia.html") {
       // páginas sem React e sem scripts de terceiros: só o próprio servidor
       cabecalhos["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
       cabecalhos["Referrer-Policy"] = "no-referrer"; cabecalhos["X-Content-Type-Options"] = "nosniff"; cabecalhos["X-Robots-Tag"] = "noindex, nofollow";
@@ -3613,6 +3615,22 @@ async function handleApi(req, res, pathname) {
 
   // Pesquisa em todos os dias guardados: "quando esse pedido foi bipado, por quem, de qual cliente/transportadora, já saiu?"
   // Aceita pedido (parte do número), NF, cliente, transportadora ou quem bipou — várias palavras juntas (todas precisam bater).
+  // Fechamento do dia da expedição, por transportadora (quem lê o Recebimento: perfil "recebimento", "despacho" ou administrador)
+  if (pathname === "/api/recebimento/fechamento" && method === "GET") {
+    const sess = await exigirRecebimento(req, res, { leitura: true }); if (!sess) return;
+    const hoje = diaSP();
+    const dia = new URL(req.url, "http://localhost").searchParams.get("dia") || hoje;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return sendJson(res, 400, { error: "dia inválido" });
+    if (sess.role !== "admin" && dia !== hoje && dia !== diaAnterior(hoje, 1)) return sendJson(res, 403, { error: "seu acesso só mostra hoje e ontem" });
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      const d = await recebCarregar(dia);
+      const log = await recebEntregasCarregar();
+      const ultima = log.uploads.length ? log.uploads[log.uploads.length - 1] : null;
+      return sendJson(res, 200, { ...require("./fechamento-dia.js").montarFechamento(d.entries, { dia }), hoje, entregaEnviadaEm: ultima ? ultima.em : null });
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao montar o fechamento do dia")); }
+  }
+
   if (pathname === "/api/recebimento/pesquisar" && method === "GET") {
     const sess = await exigirRecebimento(req, res, { leitura: true }); if (!sess) return;
     const q = new URL(req.url, "http://localhost").searchParams;

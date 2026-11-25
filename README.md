@@ -470,3 +470,11 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 - **Tipo da ocorrência** (lista fechada: endereço, cadastro, pedido ou nota trocados, volume faltando, avaria, coleta não passou, cliente ausente, outro). Opcional; ocorrências antigas continuam valendo. A vendedora vê o tipo e quem resolve.
 - Nome da transportadora 10085 passa a aparecer como "TCS" na Saída e no Recebimento.
 - O limite de 16h/17h (sair do estoque para a expedição) e as 18h (coleta da transportadora) são coisas diferentes e continuam como estão.
+
+## Fechamento do dia da expedição (`/fechamento-dia.html`)
+
+- Tela nova para a expedição e a diretoria, também ligada pelo botão "Fechamento do dia" do Painel da logística. Entra quem é administrador ou tem o acesso "Recebimento" ou "Despacho" (mesma regra do Recebimento: quem não é administrador vê hoje e ontem).
+- Por transportadora, a partir do Recebimento na Expedição do dia: recebidos, volumes, confirmados pela planilha de Entrega, "não sai hoje" (com o motivo) e o que ficou sem confirmação. "Copiar resumo" gera o texto para colar no WhatsApp.
+- Aponta pedidos em que a transportadora da planilha de Entrega difere da cadastrada no SC5 (comparação sem acento, caixa nem pontuação, e "TCS" casa com "TCS TRANSPORTES").
+- Rota: `GET /api/recebimento/fechamento?dia=AAAA-MM-DD`. O cálculo é `fechamento-dia.js` (função pura, não servida ao navegador). Nada é gravado: só lê o que o Recebimento já guarda.
+- Os volumes só aparecem quando a expedição informa no Recebimento; enquanto não informam, a tela mostra "não informados" em vez de 0.
