@@ -62,7 +62,8 @@
     const abertas = todas.filter((x) => !x.av.resolvida).sort((a, b) => b.av.dias - a.av.dias);
     const resolvidas = todas.filter((x) => x.av.resolvida).sort((a, b) => String(b.oc.dataOcorrencia).localeCompare(String(a.oc.dataOcorrencia)));
     const x = abertas[0] || resolvidas[0];
-    return { status: x.av.status, resolvida: x.av.resolvida, dias: x.av.dias, desde: x.oc.dataOcorrencia, detalhes: texto(x.oc.detalhes, 300), solucao: texto(x.oc.solucao, 300), dataSolucao: x.oc.dataSolucao || '', total: lista.length };
+    const tp = O.tipoDe ? O.tipoDe(x.oc.tipo) : null;
+    return { status: x.av.status, resolvida: x.av.resolvida, dias: x.av.dias, desde: x.oc.dataOcorrencia, tipo: x.oc.tipo || '', tipoTexto: tp ? tp.nome : '', quem: tp ? tp.quem : '', detalhes: texto(x.oc.detalhes, 300), solucao: texto(x.oc.solucao, 300), dataSolucao: x.oc.dataSolucao || '', total: lista.length };
   }
 
   /* Monta o rastreio. snapshot = base salva do SC9; opcoes = { saidaIso, ocorrencias, agora, nomeTransportadora }.
@@ -148,19 +149,68 @@
     else if (atrasado) resumo = { nivel: 'atraso', texto: 'Atrasado' + (dias != null ? ' há ' + dias + (dias === 1 ? ' dia' : ' dias') : '') + (atual ? '. Agora: ' + atual.titulo.toLowerCase() + '.' : '.') };
     else resumo = { nivel: 'andamento', texto: atual ? 'Agora: ' + atual.titulo.toLowerCase() + '.' : 'Em andamento.' };
 
-    return {
+    const espera = maiorEspera(etapas, paradoDesde, atual, agora, Boolean(despachadoEm));
+    const resultado = {
       achado: true, pedido, atualizadoEm,
       resumo: Object.assign(resumo, { atrasado, dias }),
-      etapas, paradoDesde,
+      etapas, paradoDesde, espera,
       detalhes: {
         cliente: v.nome, armazem: v.armazens.join(', '), transportadora, pecas: v.pecas, linhas: v.linhasDoPedido, nf: v.nfs.join(', '),
         liberadoEm: v.liberadoEm, despachadoEm, saidaEm: saidaIso, diasDesdeLiberacao: dias
       },
       ocorrencia
     };
+    resultado.mensagemCliente = mensagemParaCliente(resultado);
+    return resultado;
   }
 
-  const api = { normalizarPedido, montarRastreio, LIMITE_ATRASO_DIAS, HORA_COLETA };
+  // Onde o pedido mais demorou: o maior intervalo entre duas etapas com horário, ou a espera da etapa de agora (se for maior).
+  function textoDuracao(horas) {
+    if (horas < 1) return 'menos de 1 hora';
+    if (horas < 48) return Math.round(horas) + (Math.round(horas) === 1 ? ' hora' : ' horas');
+    const d = Math.round(horas / 24); return d + ' dias';
+  }
+  function maiorEspera(etapas, paradoDesde, atual, agora, despachado) {
+    const feitas = etapas.filter((s) => s.estado === 'feita' && s.quando && !s.soData);
+    let melhor = null;
+    for (let i = 1; i < feitas.length; i++) {
+      const horas = Math.max(0, (new Date(feitas[i].quando) - new Date(feitas[i - 1].quando)) / 36e5);
+      if (!melhor || horas > melhor.horas) melhor = { titulo: feitas[i].titulo, horas, emCurso: false };
+    }
+    if (!despachado && atual && paradoDesde) {
+      const horas = Math.max(0, (agora - new Date(paradoDesde)) / 36e5);
+      if (!melhor || horas > melhor.horas) melhor = { titulo: atual.titulo, horas, emCurso: true };
+    }
+    if (!melhor || melhor.horas < 4) return null; // abaixo de 4 horas não vale destacar
+    return { titulo: melhor.titulo, horas: Math.round(melhor.horas), emCurso: melhor.emCurso, texto: (melhor.emCurso ? 'Está nesta etapa há ' : 'A etapa que mais demorou foi "' + melhor.titulo + '": ') + textoDuracao(melhor.horas) + '.' };
+  }
+
+  // Texto pronto para a vendedora mandar à cliente: sem termos internos, sem nome de quem separou/conferiu, sem valor.
+  function mensagemParaCliente(r) {
+    if (!r || !r.achado) return '';
+    const p = r.pedido, d = r.detalhes || {}, atual = (r.etapas || []).find((e) => e.estado === 'atual');
+    const emCurso = atual && /^Em /.test(atual.titulo);
+    const ONDE = {
+      liberado: 'foi liberado e vai entrar na separação no estoque',
+      sep: emCurso ? 'está sendo separado no estoque agora' : 'está na fila de separação no estoque',
+      conf: emCurso ? 'está sendo conferido antes de sair' : 'já foi separado e aguarda a conferência final',
+      fat: 'já foi separado e conferido e aguarda a emissão da nota fiscal',
+      saida: 'está pronto no estoque e segue para a expedição',
+      desp: 'está na expedição, aguardando a coleta da transportadora'
+    };
+    const onde = (atual && ONDE[atual.cod]) || 'está em andamento';
+    const oc = r.ocorrencia && !r.ocorrencia.resolvida ? r.ocorrencia : null;
+    if (r.resumo.nivel === 'concluido') {
+      const dia = d.despachadoEm ? diaMes(d.despachadoEm) : '';
+      return 'Olá! O seu pedido ' + p + ' foi despachado' + (dia ? ' em ' + dia : '') + (d.transportadora ? ' pela transportadora ' + d.transportadora : '') + '. Qualquer novidade sobre a entrega eu aviso você.';
+    }
+    if (oc) return 'Olá! Sobre o pedido ' + p + ': ele ' + onde + ', mas identificamos ' + (oc.tipoTexto ? 'um ponto de atenção (' + oc.tipoTexto.toLowerCase() + ')' : 'um ponto que precisa ser resolvido') + ' antes da saída. Já estamos tratando e aviso você assim que for resolvido.';
+    if (r.resumo.nivel === 'pronto') return 'Olá! O pedido ' + p + ' já está separado, conferido e com a nota emitida, aguardando a coleta da transportadora. Assim que ele sair, aviso você.';
+    if (r.resumo.nivel === 'atraso') return 'Olá! Sobre o pedido ' + p + ': ele ' + onde + '. Sei que passou do prazo e estamos acompanhando de perto para sair o quanto antes. Assim que houver novidade, aviso você.';
+    return 'Olá! O pedido ' + p + ' ' + onde + '. Assim que ele sair do estoque, aviso você.';
+  }
+
+  const api = { normalizarPedido, montarRastreio, mensagemParaCliente, LIMITE_ATRASO_DIAS, HORA_COLETA };
   root.SC9Rastreio = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
