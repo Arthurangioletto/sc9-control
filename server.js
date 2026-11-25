@@ -116,6 +116,9 @@ async function objLoad(name, { fresh = false } = {}) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+// Leitura de quem vai GRAVAR em seguida: se a leitura falhar (queda do Supabase, JSON quebrado) o erro sobe e nada é gravado.
+// Com ".catch(() => null)" a falha virava "arquivo vazio" e a gravação seguinte apagava tudo o que já estava lá.
+const objLoadParaGravar = (name) => objLoad(name, { fresh: true });
 async function objSave(name, obj) {
   if (SB_URL && SB_KEY) {
     const body = await empacotarObj(obj);
@@ -1295,7 +1298,7 @@ async function gravarConsultasVendedoras() {
   if (!consultasPendentes.length) return;
   const lote = consultasPendentes.splice(0);
   await comFila("vendedoras-consultas", async () => {
-    const dado = await objLoad("vendedoras-consultas.json", { fresh: true }).catch(() => null);
+    const dado = await objLoadParaGravar("vendedoras-consultas.json");
     const corte = Date.now() - 90 * 864e5;
     const antigas = (dado && Array.isArray(dado.linhas) ? dado.linhas : []).filter((l) => l && Date.parse(l.em) >= corte);
     await objSave("vendedoras-consultas.json", { linhas: antigas.concat(lote).slice(-5000) });
@@ -1794,23 +1797,23 @@ async function handleApi(req, res, pathname) {
   // Ocorrências da expedição (lista compartilhada). Na primeira leitura entram as 3 linhas que a expedição já tinha.
   async function ocorrenciasLinhas() {
     const Oc = require("./ocorrencias-store.js");
-    let dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+    let dado = await objLoadParaGravar("ocorrencias-expedicao.json");
     if (!dado) {
       await comFila("ocorrencias", async () => {
-        dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+        dado = await objLoadParaGravar("ocorrencias-expedicao.json");
         if (!dado) { dado = { linhas: Oc.linhasIniciais(Date.now()) }; await objSave("ocorrencias-expedicao.json", dado); }
       });
     }
     return Oc.normalizarLista(dado);
   }
   // Versão enxuta para a página do histórico de atraso (cruza pela nota fiscal do pedido).
-  const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas().catch(() => [])).map((l) => ({ nf: l.nf, pedido: l.pedido || "", dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao }));
+  const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas().catch(() => [])).map((l) => ({ nf: l.nf, pedido: l.pedido || "", dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id, atualizadoEm: l.atualizadoEm }));
   async function saidasDosPedidos(meses) {
     const procurados = new Set();
     for (const m of Object.values(meses)) for (const r of Object.values(m.dias || {})) for (const it of r.itens || []) { const n = normalizarPedido(it[0]); if (n) procurados.add(n); }
     if (!procurados.size) return {};
     return comFila("atraso-saidas", async () => {
-      const dado = await objLoad("atraso-saidas.json", { fresh: true }).catch(() => null);
+      const dado = await objLoadParaGravar("atraso-saidas.json");
       const guardado = Object.assign({}, (dado && dado.pedidos) || {});
       let mudou = false;
       for (const dia of await saidaDiasCarregar()) {
@@ -1822,7 +1825,8 @@ async function handleApi(req, res, pathname) {
         }
       }
       const limite = new Date(Date.now() - 120 * 24 * 3600 * 1000).toISOString();
-      for (const k of Object.keys(guardado)) if (guardado[k] < limite) { delete guardado[k]; mudou = true; }
+      // só poda o que ninguém está procurando: senão o pedido antigo era reincluído e podado de novo a cada consulta (e a saída sumia da resposta)
+      for (const k of Object.keys(guardado)) if (guardado[k] < limite && !procurados.has(k)) { delete guardado[k]; mudou = true; }
       if (mudou) await objSave("atraso-saidas.json", { pedidos: guardado });
       const saida = {};
       for (const n of procurados) if (guardado[n]) saida[n] = guardado[n];
@@ -1836,7 +1840,7 @@ async function handleApi(req, res, pathname) {
     for (const mes of new Set([...Object.keys(porMes), ...Object.keys(fatPorMes)])) {
       const nome = "atraso-expedicao-" + mes + ".json";
       await comFila(nome, async () => {
-        const atual = await objLoad(nome, { fresh: true }).catch(() => null);
+        const atual = await objLoadParaGravar(nome);
         const novo = { mes, dias: AtrasoHistorico.mesclarDespachados(atual && atual.dias, porMes[mes]) };
         const fat = AtrasoHistorico.mesclarDespachados(atual && atual.faturados, fatPorMes[mes]);
         if (Object.keys(fat).length) novo.faturados = fat;
@@ -1869,7 +1873,7 @@ async function handleApi(req, res, pathname) {
       const despachados = new Set(ativos.filter((l) => { const r = Rastreio.montarRastreio(snap, l.pedido, { saidaIso: saidas[l.pedido] || "", ocorrencias: [], agora: new Date() }); return r.achado && r.resumo.nivel === "concluido"; }).map((l) => l.pedido));
       if (!despachados.size) return;
       await comFila("prioridades-vendedoras", async () => {
-        const atual = await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null);
+        const atual = await objLoadParaGravar("prioridades-vendedoras.json");
         const feito = P.fecharDespachados(P.normalizarLista(atual), despachados, Date.now());
         if (feito.mudou) await objSave("prioridades-vendedoras.json", { linhas: feito.linhas });
       });
@@ -1887,6 +1891,7 @@ async function handleApi(req, res, pathname) {
 
   // Acesso opcional das vendedoras (login + código, vendedoras-contas.js): a sessão vem no cabeçalho X-Vend-Token.
   const contasLinhas = async () => require("./vendedoras-contas.js").normalizarLista(await objLoad("vendedoras-contas.json", { fresh: true }).catch(() => null));
+  const contasLinhasParaGravar = async () => require("./vendedoras-contas.js").normalizarLista(await objLoadParaGravar("vendedoras-contas.json"));
   const contaDoToken = async (req) => {
     const V = require("./vendedoras-contas.js");
     const sessao = V.lerSessao(SESSION_SECRET, req.headers["x-vend-token"]);
@@ -1899,7 +1904,7 @@ async function handleApi(req, res, pathname) {
     try {
       const A = require("./avisos-store.js");
       await comFila("avisos-vendedoras", async () => {
-        const feito = A.vincularConta(A.normalizarLista(await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null)), ids, conta.nome, conta.login);
+        const feito = A.vincularConta(A.normalizarLista(await objLoadParaGravar("avisos-vendedoras.json")), ids, conta.nome, conta.login);
         if (feito.mudou) await objSave("avisos-vendedoras.json", { linhas: feito.linhas });
       });
     } catch (e) { console.error("Erro ao ligar avisos à conta:", e); }
@@ -1909,7 +1914,7 @@ async function handleApi(req, res, pathname) {
     try {
       const P = require("./prioridades-store.js");
       await comFila("prioridades-vendedoras", async () => {
-        const feito = P.vincularConta(P.normalizarLista(await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null)), ids, conta.nome, conta.login);
+        const feito = P.vincularConta(P.normalizarLista(await objLoadParaGravar("prioridades-vendedoras.json")), ids, conta.nome, conta.login);
         if (feito.mudou) await objSave("prioridades-vendedoras.json", { linhas: feito.linhas });
       });
     } catch (e) { console.error("Erro ao ligar solicitações à conta:", e); }
@@ -1956,7 +1961,7 @@ async function handleApi(req, res, pathname) {
           const cred = await V.criarHash(corpo.codigo);
           let resultado;
           await comFila("vendedoras-contas", async () => {
-            const contas = await contasLinhas();
+            const contas = await contasLinhasParaGravar();
             if (contas.some((c) => c.login === login)) { resultado = { erro: "Esse login já existe. Escolha outro, ou entre se ele é seu.", status: 409 }; return; }
             if (contas.some((c) => c.email && c.email === email)) { resultado = { erro: "Já existe um acesso com esse e-mail. Entre com o seu login, ou fale com a expedição se esqueceu o código.", status: 409 }; return; }
             if (contas.length >= V.MAX_CONTAS) { resultado = { erro: "Limite de acessos atingido. Fale com a expedição.", status: 400 }; return; }
@@ -1984,7 +1989,7 @@ async function handleApi(req, res, pathname) {
             if (erroCodigo) return sendJson(res, 400, { error: erroCodigo });
             const cred = await V.criarHash(corpo.codigoNovo);
             await comFila("vendedoras-contas", async () => {
-              const contas = await contasLinhas(), i = contas.findIndex((c) => c.id === atual.id);
+              const contas = await contasLinhasParaGravar(), i = contas.findIndex((c) => c.id === atual.id);
               if (i < 0) return;
               contas[i] = Object.assign({}, contas[i], { salt: cred.salt, hash: cred.hash, sv: contas[i].sv + 1 });
               conta = contas[i];
@@ -1992,7 +1997,7 @@ async function handleApi(req, res, pathname) {
             });
           } else {
             await comFila("vendedoras-contas", async () => {
-              const contas = await contasLinhas(), i = contas.findIndex((c) => c.id === atual.id);
+              const contas = await contasLinhasParaGravar(), i = contas.findIndex((c) => c.id === atual.id);
               if (i < 0) return;
               contas[i] = Object.assign({}, contas[i], { ultimoAcesso: new Date().toISOString() });
               conta = contas[i];
@@ -2024,7 +2029,7 @@ async function handleApi(req, res, pathname) {
         const contaAviso = await contaDoToken(req); // com acesso, o nome e o login vêm da conta
         let resultado, linhas;
         await comFila("avisos-vendedoras", async () => {
-          const atual = await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null);
+          const atual = await objLoadParaGravar("avisos-vendedoras.json");
           const feito = A.aplicar(A.normalizarLista(atual), { acao: "criar", pedido, tipo: corpo.tipo, texto: corpo.texto, pedidoPor: contaAviso ? contaAviso.nome : corpo.pedidoPor, conta: contaAviso ? contaAviso.login : "", filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, "", Date.now());
           if (feito.erro) { resultado = { erro: feito.erro }; return; }
           resultado = feito.resultado; linhas = feito.linhas;
@@ -2077,7 +2082,7 @@ async function handleApi(req, res, pathname) {
         const contaPedido = await contaDoToken(req); // com acesso, o nome e o login vêm da conta (não do que foi digitado)
         let resultado, linhas;
         await comFila("prioridades-vendedoras", async () => {
-          const atual = await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null);
+          const atual = await objLoadParaGravar("prioridades-vendedoras.json");
           const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: contaPedido ? contaPedido.nome : corpo.pedidoPor, conta: contaPedido ? contaPedido.login : "", motivo: corpo.motivo, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, corpo && corpo.pedidoPor, Date.now());
           if (feito.erro) { resultado = { erro: feito.erro }; return; }
           resultado = feito.resultado; linhas = feito.linhas;
@@ -2138,7 +2143,7 @@ async function handleApi(req, res, pathname) {
       const cred = temp ? await V.criarHash(temp) : null;
       let achou = false;
       await comFila("vendedoras-contas", async () => {
-        const contas = await contasLinhas(), i = contas.findIndex((c) => c.id === id);
+        const contas = await contasLinhasParaGravar(), i = contas.findIndex((c) => c.id === id);
         if (i < 0) return;
         achou = true;
         contas[i] = acao === "redefinir" ? Object.assign({}, contas[i], { salt: cred.salt, hash: cred.hash, sv: contas[i].sv + 1, ativo: true }) : Object.assign({}, contas[i], { ativo: acao === "ativar", sv: contas[i].sv + (acao === "desativar" ? 1 : 0) });
@@ -2172,7 +2177,7 @@ async function handleApi(req, res, pathname) {
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
       let resultado, linhas;
       await comFila("avisos-vendedoras", async () => {
-        const atual = await objLoad("avisos-vendedoras.json", { fresh: true }).catch(() => null);
+        const atual = await objLoadParaGravar("avisos-vendedoras.json");
         const feito = A.aplicar(A.normalizarLista(atual), Object.assign({}, corpo, { acao: ["status", "assumir", "interno"].includes(corpo && corpo.acao) ? corpo.acao : "status" }), sess.usuario, Date.now());
         if (feito.erro) { resultado = { erro: feito.erro }; return; }
         linhas = feito.linhas; resultado = feito.resultado;
@@ -2224,7 +2229,7 @@ async function handleApi(req, res, pathname) {
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
       let resultado, linhas;
       await comFila("prioridades-vendedoras", async () => {
-        const atual = await objLoad("prioridades-vendedoras.json", { fresh: true }).catch(() => null);
+        const atual = await objLoadParaGravar("prioridades-vendedoras.json");
         const feito = P.aplicar(P.normalizarLista(atual), Object.assign({}, corpo, { acao: ["status", "assumir", "interno"].includes(corpo && corpo.acao) ? corpo.acao : "status" }), sess.usuario, Date.now());
         if (feito.erro) { resultado = { erro: feito.erro }; return; }
         linhas = feito.linhas; resultado = feito.resultado;
@@ -2258,7 +2263,7 @@ async function handleApi(req, res, pathname) {
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
       let resultado;
       await comFila("pedidos-fixados", async () => {
-        const dado = await objLoad("pedidos-fixados.json", { fresh: true }).catch(() => null);
+        const dado = await objLoadParaGravar("pedidos-fixados.json");
         resultado = Fixados.aplicar(Fixados.normalizarLista(dado), corpo, sess.usuario, Date.now());
         if (!resultado.erro) await objSave("pedidos-fixados.json", { itens: resultado.itens });
       });
@@ -2276,10 +2281,13 @@ async function handleApi(req, res, pathname) {
     // ler: quem tem acesso, ou o link sem senha do Histórico de Atraso (?k=); registrar/apagar/importar: sempre usuário e senha
     // Gravar (só "salvar": registrar ou editar) também vale com o link do histórico, para quem recebeu o link (ex.: a Erica) poder
     // justificar atrasos sem usuário e senha. Apagar e importar do Excel continuam exigindo usuário e senha. Fica registrado como "Link do histórico".
-    let sess = null, viaLink = false;
-    if (method === "GET" && (await linkAtrasoValido(req))) { /* leitura liberada pelo link com código */ }
-    else if (method === "POST" && !(await getSession(req)) && (await linkAtrasoValido(req))) {
-      viaLink = true;
+    let sess = null, viaLink = false, semValor = false;
+    // quem tem uma sessão de operador SEM o acesso "Ocorrências" (ex.: logada na Saída no mesmo navegador) usa o link como qualquer outra pessoa
+    const sessaoOc = method === "POST" ? await getSession(req) : null;
+    const sessaoTemOc = Boolean(sessaoOc && (sessaoOc.role === "admin" || (Array.isArray(sessaoOc.perfis) && sessaoOc.perfis.includes("ocorrencias"))));
+    if (method === "GET" && (await linkAtrasoValido(req))) { semValor = true; /* leitura liberada pelo link com código */ }
+    else if (method === "POST" && !sessaoTemOc && (await linkAtrasoValido(req))) {
+      viaLink = true; semValor = true;
       if (limiteVendedoras("oc-link|" + ipDe(req), 60, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas alterações em pouco tempo. Aguarde alguns minutos." });
     } else { sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return; }
     const Oc = require("./ocorrencias-store.js");
@@ -2299,6 +2307,8 @@ async function handleApi(req, res, pathname) {
           const pedidos = Object.values(notas).concat(Object.values(porPedido)).map((n) => [n.pedido]);
           if (pedidos.length) Object.assign(saidas, await saidasDosPedidos({ ocorrencias: { dias: { hoje: { itens: pedidos } } } }).catch(() => ({})));
         } catch (e) { console.error("Erro ao cruzar as ocorrências com o SC9:", e); }
+        // pelo link (sem usuário e senha) não sai o valor em R$ da nota: a página do histórico não usa, e o link serviria para consultar qualquer nota
+        if (semValor) for (const o of Object.values(notas).concat(Object.values(porPedido))) if (o && typeof o === "object") delete o.valor;
         return sendJson(res, 200, Object.assign({ linhas, notas, pedidos: porPedido, saidas, agora: new Date().toISOString() }, extra || {}));
       };
       if (method === "GET") {
@@ -2309,11 +2319,11 @@ async function handleApi(req, res, pathname) {
       if (viaLink && !(corpo && corpo.acao === "salvar")) return sendJson(res, 403, { error: "Com o link só dá para registrar e editar. Para apagar ou importar, entre com usuário e senha." });
       let resultado;
       await comFila("ocorrencias", async () => {
-        const dado = await objLoad("ocorrencias-expedicao.json", { fresh: true }).catch(() => null);
+        const dado = await objLoadParaGravar("ocorrencias-expedicao.json");
         resultado = Oc.aplicar(Oc.normalizarLista(dado), corpo, sess ? sess.usuario : "Link do histórico", Date.now());
         if (!resultado.erro) await objSave("ocorrencias-expedicao.json", { linhas: resultado.linhas });
       });
-      if (resultado.erro) return sendJson(res, resultado.erro.startsWith("Linha não encontrada") ? 404 : 400, { error: resultado.erro });
+      if (resultado.erro) return sendJson(res, resultado.conflito ? 409 : resultado.erro.startsWith("Linha não encontrada") ? 404 : 400, { error: resultado.erro });
       return responder(resultado.linhas, { resultado: resultado.resultado || null });
     } catch (e) {
       console.error("Erro nas ocorrências:", e);
@@ -2390,7 +2400,7 @@ async function handleApi(req, res, pathname) {
       if (registro.dia > amanha) return sendJson(res, 400, { error: "Dia no futuro." });
       const mes = AtrasoHistorico.mesDoDia(registro.dia);
       await comFila("atraso-historico-" + mes, async () => {
-        const atual = await objLoad(AtrasoHistorico.nomeDoMes(mes), { fresh: true }).catch(() => null);
+        const atual = await objLoadParaGravar(AtrasoHistorico.nomeDoMes(mes));
         await objSave(AtrasoHistorico.nomeDoMes(mes), AtrasoHistorico.mesclarDia(atual, registro));
       });
       const despachados = AtrasoHistorico.normalizarDespachados(corpo.despachados);
@@ -2398,7 +2408,7 @@ async function handleApi(req, res, pathname) {
       const entregues = AtrasoHistorico.normalizarEntregues(corpo.entregues);
       if (Object.keys(entregues).length) {
         await comFila("atraso-entregues", async () => {
-          const atual = await objLoad("atraso-entregues.json", { fresh: true }).catch(() => null);
+          const atual = await objLoadParaGravar("atraso-entregues.json");
           await objSave("atraso-entregues.json", { pedidos: AtrasoHistorico.mesclarEntregues(atual && atual.pedidos, entregues, diaSP()) });
         });
       }

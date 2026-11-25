@@ -74,25 +74,26 @@
   function contarAguardando(p, itens, dia, agora) {
     let n = 0, pecas = 0;
     for (const it of itens) {
-      const cod = H().avaliarPedido(p, it, dia, agora).acao.cod;
+      const cod = H().avaliarPedidoNoDia(p, it, dia, agora).acao.cod; // como o pedido estava NAQUELE dia
       if (cod === 'levar' || cod === 'despachar') { n++; pecas += it[3]; }
     }
     return { n, pecas };
   }
   function contarAbertas(p, itens, dia, agora) {
     let n = 0;
-    for (const it of itens) { const v = H().avaliarPedido(p, it, dia, agora); if (v.ocor && !v.ocor.av.resolvida) n++; }
+    for (const it of itens) { const v = H().avaliarPedidoNoDia(p, it, dia, agora); if (v.ocor && !v.ocor.av.resolvida) n++; }
     return n;
   }
 
   // Despachados/faturados de UM armazém: só existe nos dias gravados com o detalhe por armazém (campo "por").
   // Devolve { atual, ref, refDia } ou null se o dia não tem o detalhe (aí o painel mostra o total da empresa e avisa).
   function porArmazem(mapa, dia, arm) {
-    const doDia = mapa[dia] && mapa[dia].por && mapa[dia].por[arm];
-    if (!doDia) return null;
+    // dia gravado com o detalhe por armazém em que este armazém não aparece = ele não despachou/faturou nada (0), não "sem dado"
+    if (!mapa[dia] || !mapa[dia].por) return null;
+    const zero = { pedidos: 0, pecas: 0 };
     let refDia = null;
-    for (const d of Object.keys(mapa).sort()) { if (d < dia && mapa[d].por && mapa[d].por[arm]) refDia = d; }
-    return { atual: doDia, ref: refDia ? mapa[refDia].por[arm] : null, refDia };
+    for (const d of Object.keys(mapa).sort()) { if (d < dia && mapa[d].por) refDia = d; }
+    return { atual: mapa[dia].por[arm] || zero, ref: refDia ? (mapa[refDia].por[arm] || zero) : null, refDia };
   }
 
   // ---------- cartões do topo ----------
@@ -120,6 +121,7 @@
       const v = variacao(valor, refValor);
       return Object.assign({ id, titulo, valor, ref: refValor, refDia, delta: v.delta, pct: v.pct, tom: tom(sobeEhBom, v.delta, refValor), sobeEhBom, formato: 'n', filtro: null, alvo: '', semFiltroArmazem: false, nota: '' }, extra || {});
     };
+    const comNota = itens.filter((it) => valorNota(it) > 0).length;
     const lista = [];
     lista.push(cartao('atraso', 'Pedidos em atraso', r ? r.tot : null, ra ? ra.tot : null, refTxt, false, { filtro: {}, destaque: true, estoque: r ? r.e : null, faturamento: r ? r.f : null, base: a ? (g && g.arm && !g.transp ? ((a.reg.totalPorArmazem && a.reg.totalPorArmazem[g.arm]) || null) : (!sem ? a.resumo.total : null)) : null }));
     lista.push(cartao('cinco', 'Atrasados há 5 dias ou mais', r ? r.cinco : null, ra ? ra.cinco : null, refTxt, false, { filtro: { diasMin: CRITICO } }));
@@ -128,13 +130,14 @@
     lista.push(cartao('faturamento', 'Atraso de faturamento', r ? r.f : null, ra ? ra.f : null, refTxt, false, { filtro: { tipo: 'F' } }));
     const ag = a ? contarAguardando(p, itens, dia, agora) : null;
     const agAnt = ant ? contarAguardando(p, itensAnt, ant.reg.dia, agora) : null;
-    lista.push(cartao('aguardando', 'Aguardando despacho', ag ? ag.n : null, agAnt ? agAnt.n : null, refTxt, false, { filtro: { acao: 'levar,despachar' }, nota: 'já têm nota ou já estão na Saída p/ Expedição' }));
+    lista.push(cartao('aguardando', 'Aguardando despacho', ag ? ag.n : null, agAnt ? agAnt.n : null, refTxt, false, { filtro: { acao: 'levar,despachar', noDia: true }, nota: 'já têm nota ou já estão na Saída p/ Expedição (como estavam naquele dia)' }));
     lista.push(cartao('despachados', 'Despachados no dia', dp.atual ? dp.atual.pedidos : null, dp.ref ? dp.ref.pedidos : null, dp.refDia, true, { alvo: 'produtividade', semFiltroArmazem: semArm }));
     lista.push(cartao('pecas-despachadas', 'Peças despachadas no dia', dp.atual ? dp.atual.pecas : null, dp.ref ? dp.ref.pecas : null, dp.refDia, true, { alvo: 'produtividade', semFiltroArmazem: semArm }));
     lista.push(cartao('faturados', 'Pedidos faturados no dia', ft ? ft.pedidos : null, ftRef ? ftRef.pedidos : null, refFatDia, true, { alvo: 'produtividade', semFiltroArmazem: ftArm ? false : sem }));
-    lista.push(cartao('valor', 'Valor em atraso (já faturado)', r ? r.valor : null, ra ? ra.valor : null, refTxt, false, { formato: 'brl', filtro: {}, nota: 'só pedidos com nota fiscal' }));
+    lista.push(cartao('valor', 'Valor em atraso (já faturado)', r ? r.valor : null, ra ? ra.valor : null, refTxt, false, { formato: 'brl', filtro: {}, tom: 'neutro', nota: 'soma só os ' + comNota + ' de ' + itens.length + ' pedidos que já têm nota fiscal; sobe quando mais pedidos são faturados' }));
     const ab = a ? contarAbertas(p, itens, dia, agora) : null;
-    lista.push(cartao('ocorrencias', 'Ocorrências abertas', ab, null, null, false, { filtro: { ocorr: 'aberta' }, nota: 'estado de agora (o SC9 não guarda histórico de ocorrências)' }));
+    const abAnt = ant ? contarAbertas(p, itensAnt, ant.reg.dia, agora) : null;
+    lista.push(cartao('ocorrencias', 'Pedidos com ocorrência aberta', ab, abAnt, refTxt, false, { filtro: { ocorr: 'aberta', noDia: true }, nota: 'pela data de abertura e de solução registradas em cada ocorrência (inclui as em andamento)' }));
     return { dia, refDia: refTxt, cartoes: lista, resumo: r };
   }
 
@@ -171,10 +174,14 @@
   // Períodos do filtro: 7, 15, 30 dias terminando no dia de referência, mês atual (do dia 1 ao dia de referência) ou personalizado.
   function periodo(tipo, dia, personalizado) {
     if (tipo === 'mes') return { tipo, de: dia.slice(0, 8) + '01', ate: dia };
-    if (tipo === 'custom' && personalizado && personalizado.de && personalizado.ate) {
-      const de = personalizado.de <= personalizado.ate ? personalizado.de : personalizado.ate;
-      const ate = personalizado.de <= personalizado.ate ? personalizado.ate : personalizado.de;
-      return { tipo, de, ate: ate > dia ? ate : ate };
+    const dataValida = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) && iso(ms(d)) === d;
+    if (tipo === 'custom' && personalizado && dataValida(personalizado.de) && dataValida(personalizado.ate)) {
+      let de = personalizado.de <= personalizado.ate ? personalizado.de : personalizado.ate;
+      const ate0 = personalizado.de <= personalizado.ate ? personalizado.ate : personalizado.de;
+      const ate = ate0 > dia ? dia : ate0;
+      if (de > ate) de = ate;
+      if (diasEntre(de, ate) > 365) de = somaDias(ate, -365); // no máximo 1 ano: mais que isso trava a tela
+      return { tipo, de, ate };
     }
     const n = Math.max(1, Number(tipo) || 30);
     return { tipo: String(n), de: somaDias(dia, -(n - 1)), ate: dia };
@@ -194,7 +201,7 @@
       const b = por[e];
       b.qtd++; b.pecas += it[3]; if (it[6] >= CRITICO) b.cinco++;
       const desde = H().extra(it) && (x.fa || x.ce || x.pe || x.h);
-      if (desde && a.reg.atualizadoEm) { const d = (new Date(a.reg.atualizadoEm) - new Date(desde)) / 864e5; if (Number.isFinite(d) && d >= 0) { b.somaParado += d; b.comParado++; } }
+      if (desde && a.reg.atualizadoEm) { const d = (new Date(a.reg.atualizadoEm) - new Date(desde)) / 864e5; if (Number.isFinite(d)) { b.somaParado += Math.max(0, d); b.comParado++; } }
     }
     const lista = ETAPAS.map((e) => { const b = por[e]; return Object.assign({}, b, { pct: itens.length ? b.qtd / itens.length * 100 : 0, paradoMedio: b.comParado ? b.somaParado / b.comParado : null }); });
     const maior = lista.reduce((m, b) => (b.cinco > (m ? m.cinco : -1) || (m && b.cinco === m.cinco && b.qtd > m.qtd) ? b : m), null);
@@ -208,7 +215,8 @@
     const mapa = new Map();
     for (const it of itens) { const k = it[1] || '—'; if (!mapa.has(k)) mapa.set(k, []); mapa.get(k).push(it); }
     const tpa = a.reg.totalPorArmazem || null;
-    const lista = [...mapa.entries()].map(([nome, its]) => { const base = tpa && tpa[nome] ? tpa[nome] : null; return Object.assign({ nome, pct: itens.length ? its.length / itens.length * 100 : 0, base, pctBase: base ? its.length / base * 100 : null }, resumoItens(its)); });
+    // "% da base" só vale sem filtro de transportadora (o numerador seria só dela)
+    const lista = [...mapa.entries()].map(([nome, its]) => { const base = tpa && tpa[nome] && !(g && g.transp) ? tpa[nome] : null; return Object.assign({ nome, pct: itens.length ? its.length / itens.length * 100 : 0, base, pctBase: base ? its.length / base * 100 : null }, resumoItens(its)); });
     lista.sort((x, y) => y.tot - x.tot || String(x.nome).localeCompare(String(y.nome), 'pt-BR'));
     return { lista, total: itens.length, temBase: Boolean(tpa) };
   }
@@ -218,7 +226,7 @@
     const lista = FAIXAS.map((f) => ({ id: f.id, rotulo: f.rotulo, nivel: f.nivel, qtd: 0, pecas: 0, pct: 0 }));
     for (const it of itens) {
       const d = Number(it[6]) || 0;
-      const i = FAIXAS.findIndex((f) => d >= f.de && d <= f.ate);
+      const i = FAIXAS.findIndex((f) => d >= f.de && d < f.ate + 1); // aceita dias com fração (2,5 fica em "até 2 dias")
       if (i >= 0) { lista[i].qtd++; lista[i].pecas += it[3]; }
     }
     lista.forEach((f) => { f.pct = total ? f.qtd / total * 100 : 0; });
@@ -234,7 +242,7 @@
     const atual = faixas(selecionar(a.reg.itens, g));
     const antes = ref ? faixas(selecionar(ref.reg.itens, g)) : null;
     const cincoAtual = atual.lista.slice(2).reduce((s, f) => s + f.qtd, 0);
-    return { atual, antes, refDia: ref ? ref.reg.dia : null, cincoAtual, cincoAntes: antes ? antes.lista.slice(2).reduce((s, f) => s + f.qtd, 0) : null };
+    return { atual, antes, atualDia: dia, refDia: ref ? ref.reg.dia : null, cincoAtual, cincoAntes: antes ? antes.lista.slice(2).reduce((s, f) => s + f.qtd, 0) : null };
   }
 
   // Produtividade: pedidos e peças em medidas separadas (nunca no mesmo eixo). Dia sem registro não é zero.
@@ -276,7 +284,71 @@
     return { armazens: ord(arm), transportadoras: ord(tr) };
   }
 
-  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, porArmazem, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
+  // ---------- gráficos extras (cascata do dia, mapa de calor, Pareto de transportadoras) ----------
+  // Só LEEM as mesmas fotos que o resto do painel; nenhum número novo é inventado, tudo sai dos pedidos já gravados.
+  // Cascata: pedidos em atraso na foto anterior -> saíram -> entraram -> pedidos em atraso hoje. Fecha sempre (conferido em "bate").
+  function cascata(p, dia, g) {
+    const a = p.porDia.get(dia);
+    if (!a || !a.cmp) return null;
+    const ini = selecionar(a.cmp.ant.itens, g), fim = selecionar(a.reg.itens, g);
+    const sai = selecionar(a.cmp.saiu, g), entra = selecionar(a.cmp.novos, g);
+    const cinco = (l) => l.filter((it) => (Number(it[6]) || 0) >= CRITICO).length;
+    const pecas = (l) => l.reduce((s, it) => s + (Number(it[3]) || 0), 0);
+    return {
+      refDia: a.cmp.ant.dia, dia, inicio: ini.length, saiu: sai.length, entrou: entra.length, fim: fim.length,
+      continuam: ini.length - sai.length, saldo: entra.length - sai.length, bate: ini.length - sai.length + entra.length === fim.length,
+      pecas: { inicio: pecas(ini), saiu: pecas(sai), entrou: pecas(entra), fim: pecas(fim) },
+      cinco: { inicio: cinco(ini), saiu: cinco(sai), entrou: cinco(entra), fim: cinco(fim) }
+    };
+  }
+
+  // Mapa de calor: armazém (linhas) x faixa de dias de atraso ou etapa (colunas). A cor mostra a participação da coluna no armazém.
+  function mapaCalor(p, dia, g, modo) {
+    const a = p.porDia.get(dia);
+    if (!a) return null;
+    const porEtapa = modo === 'etapa', itens = selecionar(a.reg.itens, g), ex = H().extra;
+    const colunas = porEtapa ? ETAPAS.map((e) => ({ id: e, rotulo: H().ETAPA[e].replace(/ \(.*\)/, ''), etapa: e })) : FAIXAS.map((f) => ({ id: f.id, rotulo: f.rotulo, de: f.de, ate: f.ate }));
+    const indice = (it) => {
+      if (porEtapa) { const x = ex(it) || {}, e = x.e || (it[4] === 'F' ? 'F' : ''); return ETAPAS.indexOf(e); }
+      const d = Number(it[6]) || 0; return FAIXAS.findIndex((f) => d >= f.de && d <= f.ate);
+    };
+    const mapa = new Map();
+    let semClasse = 0;
+    for (const it of itens) {
+      const i = indice(it);
+      if (i < 0) { semClasse++; continue; }
+      const k = it[1] || '—';
+      if (!mapa.has(k)) mapa.set(k, { nome: k, tot: 0, cinco: 0, cel: colunas.map(() => 0) });
+      const l = mapa.get(k); l.tot++; l.cel[i]++; if ((Number(it[6]) || 0) >= CRITICO) l.cinco++;
+    }
+    const monta = (l) => ({ nome: l.nome, tot: l.tot, cinco: l.cinco, pctCinco: l.tot ? l.cinco / l.tot * 100 : 0, celulas: l.cel.map((q) => ({ qtd: q, pct: l.tot ? q / l.tot * 100 : 0 })) });
+    const linhas = [...mapa.values()].map(monta).sort((x, y) => y.pctCinco - x.pctCinco || y.tot - x.tot || String(x.nome).localeCompare(String(y.nome), 'pt-BR'));
+    const todos = { nome: 'Todos', tot: 0, cinco: 0, cel: colunas.map(() => 0) };
+    for (const l of mapa.values()) { todos.tot += l.tot; todos.cinco += l.cinco; l.cel.forEach((q, i) => { todos.cel[i] += q; }); }
+    return { modo: porEtapa ? 'etapa' : 'faixa', colunas, linhas, total: monta(todos), semClasse };
+  }
+
+  // Pareto de transportadoras: da que mais segura pedidos para a que menos segura, com a participação acumulada.
+  // Mostra as "max" maiores e junta o resto em "Outras" (que não filtra, pois não é uma transportadora só).
+  function transportadoras(p, dia, g, max) {
+    const a = p.porDia.get(dia);
+    if (!a) return null;
+    const itens = selecionar(a.reg.itens, g), mapa = new Map();
+    for (const it of itens) { const k = it[7] || ''; if (!mapa.has(k)) mapa.set(k, []); mapa.get(k).push(it); }
+    const todas = [...mapa.entries()].map(([nome, its]) => Object.assign({ nome: nome || 'Sem transportadora', filtravel: Boolean(nome) }, resumoItens(its))).sort((x, y) => y.tot - x.tot || String(x.nome).localeCompare(String(y.nome), 'pt-BR'));
+    const lim = Math.max(1, max || 8);
+    let lista = todas.slice(0, lim);
+    if (todas.length > lim) {
+      const resto = todas.slice(lim), soma = (c) => resto.reduce((s, x) => s + x[c], 0);
+      lista.push({ nome: 'Outras (' + resto.length + ')', filtravel: false, tot: soma('tot'), e: soma('e'), f: soma('f'), pecas: soma('pecas'), cinco: soma('cinco'), idadeMedia: soma('tot') ? resto.reduce((s, x) => s + x.idadeMedia * x.tot, 0) / soma('tot') : 0 });
+    }
+    const total = itens.length;
+    let acum = 0;
+    lista = lista.map((x) => { acum += x.tot; return Object.assign({}, x, { pct: total ? x.tot / total * 100 : 0, acum: total ? acum / total * 100 : 0, pctCinco: x.tot ? x.cinco / x.tot * 100 : 0 }); });
+    return { lista, total, qtd: todas.length };
+  }
+
+  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, porArmazem, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, cascata, mapaCalor, transportadoras, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
   root.SC9AtrasoPainel = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);

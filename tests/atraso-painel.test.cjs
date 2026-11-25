@@ -44,7 +44,7 @@ test('cartões batem com o resumo existente da página e do Excel', () => {
   assert.equal(por.cinco.ref, 3);            // 6, 9 e 20 dias
   assert.equal(por.valor.valor, 250);
   assert.equal(por.valor.ref, 100);
-  assert.equal(por.valor.tom, 'ruim');
+  assert.equal(por.valor.tom, 'neutro');    // o valor só soma pedidos já faturados: subir pode ser faturamento avançando, não piora
   assert.equal(por.despachados.valor, 20);
   assert.equal(por.despachados.ref, 30);     // dia de despacho anterior: 17/11
   assert.equal(por.despachados.refDia, '2026-11-17');
@@ -230,11 +230,16 @@ test('com o detalhe por armazém, despachados e faturados acompanham o filtro e 
   assert.equal(por.despachados.semFiltroArmazem, false);
   assert.equal(por.faturados.valor, 4);
   assert.equal(por.atraso.base, 20);
-  // armazém sem detalhe no dia continua mostrando o total e avisando
+  // dia COM detalhe em que o armazém não aparece: ele não despachou nada (0), não é "sem dado" nem o total da empresa
   const c2 = P.cartoes(p, '2026-11-19', { arm: 'Barueri', transp: '' }, new Date());
   const por2 = Object.fromEntries(c2.cartoes.map((x) => [x.id, x]));
-  assert.equal(por2.despachados.valor, 20);
-  assert.equal(por2.despachados.semFiltroArmazem, true);
+  assert.equal(por2.despachados.valor, 0);
+  assert.equal(por2.despachados.semFiltroArmazem, false);
+  // dia SEM detalhe nenhum (dados antigos): continua mostrando o total da empresa e avisando
+  const c3 = P.cartoes(H.preparar(dados()), '2026-11-19', { arm: 'BH', transp: '' }, new Date());
+  const por3 = Object.fromEntries(c3.cartoes.map((x) => [x.id, x]));
+  assert.equal(por3.despachados.valor, 20);
+  assert.equal(por3.despachados.semFiltroArmazem, true);
   const r = P.armazens(p, '2026-11-19', P.filtroVazio());
   assert.equal(r.temBase, true);
   assert.equal(r.lista.find((x) => x.nome === 'BH').pctBase, 10); // 2 em atraso de 20
@@ -248,4 +253,42 @@ test('modo TV e impressão existem e o painel sai do modo TV com Esc', () => {
   assert.ok(ui.includes("ev.key === 'Escape'"));
   assert.ok(ui.includes('@page { size:A4 landscape'));
   assert.ok(ui.includes('tabelaCriticos'));
+});
+
+test('cascata do dia fecha: anterior - saíram + entraram = hoje, e respeita o filtro de armazém', () => {
+  const p = H.preparar(dados());
+  const c = P.cascata(p, '2026-11-19', P.filtroVazio());
+  assert.equal(c.refDia, '2026-11-16');
+  assert.equal(c.bate, true);
+  assert.equal(c.inicio - c.saiu + c.entrou, c.fim);
+  assert.equal(c.continuam, c.inicio - c.saiu);
+  const bh = P.cascata(p, '2026-11-19', { arm: 'BH', transp: '' });
+  assert.equal(bh.bate, true);
+  assert.equal(P.cascata(p, '2026-11-16', P.filtroVazio()), null); // primeira foto: sem comparação
+});
+
+test('mapa de calor: cada pedido cai em exatamente uma célula; ordena pelo armazém com maior parte 5+', () => {
+  const p = H.preparar(dados());
+  const m = P.mapaCalor(p, '2026-11-19', P.filtroVazio(), 'faixa');
+  const soma = m.linhas.reduce((t, l) => t + l.tot, 0);
+  assert.equal(soma, m.total.tot);
+  for (const l of m.linhas) assert.equal(l.celulas.reduce((t, x) => t + x.qtd, 0), l.tot);
+  for (let i = 1; i < m.linhas.length; i++) assert.ok(m.linhas[i - 1].pctCinco >= m.linhas[i].pctCinco);
+  const e = P.mapaCalor(p, '2026-11-19', P.filtroVazio(), 'etapa');
+  assert.equal(e.colunas.length, 4);
+  assert.equal(e.total.tot + e.semClasse, m.total.tot + m.semClasse);
+});
+
+test('Pareto de transportadoras: acumulado chega a 100% e "Outras" junta o resto', () => {
+  const d = dados();
+  const itens = [];
+  for (let i = 0; i < 12; i++) itens.push(it('9' + i, 'BH', 1, 'E', i % 7, { e: 'S' }, 'T' + (i % 5)));
+  d.meses['2026-11'].dias['2026-11-19'].itens = itens;
+  const p = H.preparar(d);
+  const t = P.transportadoras(p, '2026-11-19', P.filtroVazio(), 3);
+  assert.equal(t.lista.length, 4);
+  assert.equal(t.lista[3].filtravel, false);
+  assert.equal(t.lista.reduce((s, x) => s + x.tot, 0), 12);
+  assert.ok(Math.abs(t.lista[3].acum - 100) < 1e-9);
+  assert.ok(t.lista[0].tot >= t.lista[1].tot);
 });

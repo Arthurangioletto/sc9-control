@@ -170,6 +170,33 @@
     return { st, ocor, acao: acaoDoPedido(it, st, ocor) };
   }
 
+  // O pedido como ele estava NO DIA da foto (e não como está hoje): despacho, saída p/ expedição e solução da ocorrência
+  // que só aconteceram depois desse dia não contam. É o que os cartões do painel usam para comparar um dia com o outro.
+  const vistasNoDia = new WeakMap();
+  function vistaNoDia(p, dia) {
+    let porDia = vistasNoDia.get(p);
+    if (!porDia) { porDia = new Map(); vistasNoDia.set(p, porDia); }
+    if (porDia.has(dia)) return porDia.get(dia);
+    const entregues = {};
+    for (const [k, v] of Object.entries(p.entregues || {})) if (v <= dia) entregues[k] = v;
+    let ocorr = p.ocorr;
+    if (p.ocorr) {
+      ocorr = new Map();
+      for (const [k, lista] of p.ocorr) {
+        const l = (lista || []).filter((oc) => !oc.dataOcorrencia || oc.dataOcorrencia <= dia).map((oc) => (oc.dataSolucao && oc.dataSolucao > dia ? Object.assign({}, oc, { dataSolucao: '', solucao: /^\s*resolvid/i.test(String(oc.solucao || '')) ? '' : oc.solucao }) : oc));
+        if (l.length) ocorr.set(k, l);
+      }
+    }
+    const v = Object.assign({}, p, { entregues, ocorr });
+    porDia.set(dia, v);
+    return v;
+  }
+  function itemNoDia(it, dia) {
+    if (it[9] && diaSP(it[9]) > dia) { const c = it.slice(); c[9] = ''; c[10] = ''; return c; }
+    return it;
+  }
+  function avaliarPedidoNoDia(p, it, dia, agora) { return avaliarPedido(vistaNoDia(p, dia), itemNoDia(it, dia), dia, agora); }
+
   // "O que fazer agora": pedidos da foto agrupados pelo próximo passo (sem os já despachados) + atrasados há 5+ dias sem ocorrência.
   function prioridades(p, itens, dia, agora) {
     const grupos = new Map(), sem = { qtd: 0, pecas: 0 };
@@ -192,7 +219,7 @@
     const precisaAvaliar = ctx && ctx.p && (f.acao || f.ocorr);
     let lista = itens.filter((it) => {
       if (precisaAvaliar) {
-        const v = avaliarPedido(ctx.p, it, ctx.dia, ctx.agora);
+        const v = f.noDia ? avaliarPedidoNoDia(ctx.p, it, ctx.dia, ctx.agora) : avaliarPedido(ctx.p, it, ctx.dia, ctx.agora);
         if (f.acao && !String(f.acao).split(',').includes(v.acao.cod)) return false;
         if (f.ocorr === 'com' && !v.ocor) return false;
         if (f.ocorr === 'aberta' && !(v.ocor && !v.ocor.av.resolvida)) return false;
@@ -200,7 +227,7 @@
         if (f.ocorr === 'sem5' && (v.ocor || it[6] < 5 || v.st.tipo === 'desp')) return false;
       }
       if (f.diasMin && !(it[6] >= f.diasMin)) return false;
-      return (!f.status || (f.status === 'desp') === Boolean(entregaDe(entregues, it[0]))) && (!f.etapa || extra(it).e === f.etapa) && (!f.tipo || it[4] === f.tipo) && (!f.sit || it[5] === f.sit) && (!f.arm || it[1] === f.arm) && (!f.transp || (it[7] || '') === f.transp)
+      return (!f.status || (f.status === 'desp') === Boolean(entregaDe(entregues, it[0]))) && (!f.etapa || (extra(it).e || (it[4] === 'F' ? 'F' : '')) === f.etapa) && (!f.tipo || it[4] === f.tipo) && (!f.sit || it[5] === f.sit) && (!f.arm || it[1] === f.arm) && (!f.transp || (it[7] || '') === f.transp)
       && (!busca || String(it[0]).toLowerCase().includes(busca) || String(it[7] || '').toLowerCase().includes(busca) || String(extra(it).n || '').toLowerCase().includes(busca) || String(extra(it).nf || '').includes(busca) || String(extra(it).c || '').toLowerCase().includes(busca));
     });
     const cmp = ORDEM[f.ordem] || ORDEM.dias;
@@ -247,7 +274,7 @@
     return '﻿' + linhas.map((l) => l.map(cel).join(';')).join('\r\n');
   }
 
-  const api = { extra, ETAPA, aplicarSaidas, preparar, ocorrenciasDoPedido, ocorrenciaDoPedido, acaoDoPedido, avaliarPedido, prioridades, GLOSSARIO, sequencia, despacho, filtrar, csv, statusDoPedido, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
+  const api = { extra, ETAPA, aplicarSaidas, preparar, ocorrenciasDoPedido, ocorrenciaDoPedido, acaoDoPedido, avaliarPedido, avaliarPedidoNoDia, prioridades, GLOSSARIO, sequencia, despacho, filtrar, csv, statusDoPedido, chave, rotuloMes, diasDoMes, ddmm, ddmmaaaa, fmtN, pct, TIPO, SIT };
   root.SC9HistoricoAtraso = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (typeof document === 'undefined' || !document.getElementById || !document.getElementById('app')) return;
@@ -256,6 +283,7 @@
   const h = (tag, props, ...filhos) => {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(props || {})) {
+      if (k.startsWith('aria-') && typeof v === 'boolean') { e.setAttribute(k, String(v)); continue; } // aria-pressed/selected/expanded precisam de "true"/"false" (antes saía vazio ou sumia)
       if (v == null || v === false) continue;
       if (k === 'class') e.className = v;
       else if (k === 'text') e.textContent = v;
@@ -538,11 +566,11 @@
     if (j.dataSolucao.trim()) { dataSolucao = OC().lerData(j.dataSolucao, new Date()); if (!dataSolucao) { j.erro = 'Não entendi a data da solução. Escreva assim: 24/11/2026.'; return desenhar(); } }
     j.salvando = true; desenhar();
     try {
-      const r = await fetch(comChave('/api/ocorrencias'), { method: 'POST', credentials: 'same-origin', headers: CAB_POST, body: JSON.stringify({ acao: 'salvar', linha: { id: j.id || undefined, nf, pedido, dataOcorrencia, detalhes: j.detalhes, responsavel: j.responsavel, solucao: j.solucao, dataSolucao } }) });
+      const r = await fetch(comChave('/api/ocorrencias'), { method: 'POST', credentials: 'same-origin', headers: CAB_POST, body: JSON.stringify({ acao: 'salvar', linha: { id: j.id || undefined, nf, pedido, dataOcorrencia, detalhes: j.detalhes, responsavel: j.responsavel, solucao: j.solucao, dataSolucao }, baseAtualizadoEm: j.id ? (j.base || undefined) : undefined }) });
       const resp = await r.json().catch(() => ({}));
       if (r.status === 401 || r.status === 403) { await carregarSessao(); throw new Error(chaveLink ? 'O link não vale mais. Peça um link novo ao administrador.' : 'Sem acesso para registrar. Entre com usuário e senha de quem tem o acesso "Ocorrências".'); }
-      if (!r.ok) throw new Error(resp.error || 'Não consegui salvar.');
-      estado.data.ocorrencias = (resp.linhas || []).map((l) => ({ nf: l.nf, pedido: l.pedido || '', dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id }));
+      if (!r.ok) throw new Error(r.status === 409 ? (resp.error || 'Outra pessoa alterou esta ocorrência. Recarregue a página e confira antes de salvar.') : (resp.error || 'Não consegui salvar.'));
+      estado.data.ocorrencias = (resp.linhas || []).map((l) => ({ nf: l.nf, pedido: l.pedido || '', dataOcorrencia: l.dataOcorrencia, detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id, atualizadoEm: l.atualizadoEm }));
       ultimaSaidas = JSON.stringify([estado.data.saidas || {}, estado.data.ocorrencias]);
       estado.p = preparar(estado.data);
       estado.just = justVazia(j.k, { aviso: j.id ? 'Alteração salva.' : 'Ocorrência registrada.' });
@@ -560,7 +588,7 @@
     const itens = lista.map((oc) => {
       const av = OC().avaliar(oc, { pedido: String(it[0]), liberadoEm: it[2] || '', despachadoEm: entregaDe(estado.p.entregues, it[0]) }, it[9] || '', new Date());
       return h('li', null, h('span', { class: 'tag oc-' + av.nivel, text: av.status }), ' ', h('b', { text: OC().mostrarData(oc.dataOcorrencia) }), ' · ', oc.detalhes || '(sem detalhes)', oc.responsavel ? ' · ' + oc.responsavel : '', oc.solucao ? ' · Solução: ' + oc.solucao + (oc.dataSolucao ? ' (' + OC().mostrarData(oc.dataSolucao) + ')' : '') : '',
-        pode ? [' ', h('button', { class: 'btn peq', type: 'button', onclick: (ev) => { ev.stopPropagation(); estado.just = justVazia(k, { id: oc.id || '', data: OC().mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: OC().mostrarData(oc.dataSolucao) }); desenhar(); setTimeout(() => { const e = document.getElementById('just-detalhes'); if (e) e.focus({ preventScroll: true }); }, 60); } }, 'Editar')] : null);
+        pode ? [' ', h('button', { class: 'btn peq', type: 'button', onclick: (ev) => { ev.stopPropagation(); if (!estado.sessao) carregarSessao().then(desenhar); estado.just = justVazia(k, { id: oc.id || '', base: oc.atualizadoEm || '', data: OC().mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: OC().mostrarData(oc.dataSolucao) }); desenhar(); setTimeout(() => { const e = document.getElementById('just-detalhes'); if (e) e.focus({ preventScroll: true }); }, 60); } }, 'Editar')] : null);
     });
     const caixa = h('div', { class: 'just', id: 'just-' + k.replace(/\W/g, '_'), onclick: (ev) => ev.stopPropagation() },
       h('h3', { text: 'Por que este pedido está atrasado? (ocorrência)' }),
@@ -570,7 +598,7 @@
       return caixa;
     }
     if (j.aviso) caixa.appendChild(h('p', { class: 'aviso', role: 'status', text: j.aviso }));
-    if (!estado.sessao) { caixa.appendChild(h('p', { class: 'mudo peq', text: 'Carregando…' })); return caixa; }
+    if (!estado.sessao && !chaveLink) { caixa.appendChild(h('p', { class: 'mudo peq', text: 'Carregando…' })); return caixa; } // com o link não precisa esperar a sessão (antes, "Editar" sem ter aberto "Justificar" ficava preso aqui)
     if (!pode) {
       const l = estado.login;
       caixa.appendChild(h('p', { class: 'mudo peq', text: estado.sessao.authed ? 'Seu usuário não tem o acesso "Ocorrências". Peça ao administrador para liberar, ou entre com outro usuário.' : 'Quem registra entra com usuário e senha (os mesmos do SC9). O administrador deixa o usuário vazio.' }));
@@ -590,7 +618,7 @@
     caixa.appendChild(h('div', { class: 'acoes-just' },
       h('button', { class: 'btn primario', type: 'button', disabled: j.salvando, onclick: () => salvarJustificativa(it), text: j.salvando ? 'Salvando…' : j.id ? 'Salvar alteração' : 'Registrar ocorrência' }),
       j.id ? h('button', { class: 'btn', type: 'button', onclick: () => { estado.just = justVazia(k); desenhar(); }, text: 'Cancelar edição' }) : null,
-      estado.sessao.pode ? [h('span', { class: 'mudo peq', text: 'Entrou como ' + (estado.sessao.nome || 'usuário') + ' · ' }), h('button', { class: 'btn peq', type: 'button', onclick: sairDaConta, text: 'Sair' })] : h('span', { class: 'mudo peq', text: 'Registrando pelo link do histórico' })));
+      estado.sessao && estado.sessao.pode ? [h('span', { class: 'mudo peq', text: 'Entrou como ' + (estado.sessao.nome || 'usuário') + ' · ' }), h('button', { class: 'btn peq', type: 'button', onclick: sairDaConta, text: 'Sair' })] : h('span', { class: 'mudo peq', text: 'Registrando pelo link do histórico' })));
     if (j.erro) caixa.appendChild(h('p', { class: 'erro', role: 'alert', text: j.erro }));
     return caixa;
   }
@@ -737,16 +765,40 @@
   }
   root.SC9HistAtrasoTela = { get estado() { return estado; }, escolherDia, irParaLista, desenhar: () => desenhar(), temDia: (d) => Boolean(estado.p && estado.p.porDia.has(d)) };
 
+  // Guarda o que estava em foco (e a posição do cursor num campo de texto) para devolver depois de redesenhar.
+  // Sem isto, a atualização de 30 s mandava o cursor para o começo do texto que a pessoa estava digitando e o foco de teclado para o topo.
+  const rotuloDoFoco = (el) => (el.getAttribute('aria-label') || el.getAttribute('name') || (el.tagName === 'SELECT' ? '' : el.textContent) || '').trim().slice(0, 40);
+  function guardarFoco() {
+    const el = document.activeElement;
+    if (!el || el === document.body || !$app.contains(el)) return null;
+    const campo = typeof el.selectionStart === 'number' ? { ini: el.selectionStart, fim: el.selectionEnd, dir: el.selectionDirection, rolagem: el.scrollTop } : null;
+    if (el.id) return { id: el.id, campo };
+    const raiz = el.closest('[id]') || $app;
+    return { raizId: raiz.id || '', tag: el.tagName, indice: Array.prototype.indexOf.call(raiz.querySelectorAll(el.tagName), el), rotulo: rotuloDoFoco(el), campo };
+  }
+  function devolverFoco(g) {
+    if (!g) return;
+    let el = null;
+    if (g.id) el = document.getElementById(g.id);
+    else {
+      const raiz = (g.raizId && document.getElementById(g.raizId)) || $app;
+      const cand = raiz.querySelectorAll(g.tag)[g.indice];
+      if (cand && rotuloDoFoco(cand) === g.rotulo) el = cand; // só devolve se for o mesmo controle (a tela pode ter mudado)
+    }
+    if (!el || !el.focus) return;
+    el.focus({ preventScroll: true });
+    if (g.campo && typeof el.setSelectionRange === 'function') { try { el.setSelectionRange(g.campo.ini, g.campo.fim, g.campo.dir || 'none'); el.scrollTop = g.campo.rolagem; } catch (e) { /* tipo de campo sem seleção */ } }
+  }
   function desenhar() {
     const y = root.scrollY;
-    const foco = document.activeElement && document.activeElement.id ? document.activeElement.id : '';
+    const foco = guardarFoco();
     const vazio = !estado.p.porDia.size && !Object.keys(estado.p.exp).length;
     const blocos = vazio ? [h('section', { class: 'cartao centro' }, h('h2', { text: 'Ainda não há histórico gravado' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Cada vez que o atraso é exportado, a foto do dia fica guardada aqui.' }))]
       : [painelExecutivo(), faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()];
     $app.replaceChildren(cabecalho(), ...blocos.filter(Boolean));
     montarOcorrencias();
     root.scrollTo(0, y);
-    if (foco) { const e = document.getElementById(foco); if (e && e.focus) e.focus({ preventScroll: true }); }
+    devolverFoco(foco);
   }
 
   // Ocorrências da expedição dentro da própria página: todo mundo lê e analisa (o link libera a leitura); para registrar, a pessoa da

@@ -90,6 +90,11 @@ function aplicar(linhasAtuais, corpo, usuario, agora) {
     if (r.erro) return { linhas, erro: r.erro };
     const l = r.linha;
     const i = l.id ? linhas.findIndex((x) => x.id === l.id) : -1;
+    // editar uma linha que outra pessoa já apagou não a ressuscita com outro id
+    if (l.id && i < 0) return { linhas, erro: 'Linha não encontrada (talvez outra pessoa já apagou).' };
+    // quem editou com a tela aberta antes de outra pessoa salvar não apaga a alteração dela (a tela manda o atualizadoEm que viu; sem ele, vale como antes)
+    const base = corpo.baseAtualizadoEm ? texto(corpo.baseAtualizadoEm, 40) : '';
+    if (i >= 0 && base && linhas[i].atualizadoEm && base !== linhas[i].atualizadoEm) return { linhas, erro: 'Esta ocorrência foi alterada por outra pessoa enquanto você editava. Recarregue a lista e confira antes de salvar.', conflito: true };
     if (i >= 0) {
       linhas[i] = Object.assign({}, l, { id: linhas[i].id, criadoPor: linhas[i].criadoPor, criadoEm: linhas[i].criadoEm, atualizadoPor: quem, atualizadoEm: quando });
       return { linhas, resultado: { id: linhas[i].id } };
