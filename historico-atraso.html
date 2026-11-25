@@ -104,6 +104,9 @@
   .just input,.just textarea { font:inherit; font-size:13px; font-weight:400; color:var(--ink); padding:8px 10px; border:1px solid var(--line); border-radius:8px; box-sizing:border-box; width:100%; }
   .acoes-just { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; } .btn.peq { padding:3px 8px; font-size:11.5px; }
   @media print { .acoes,.filtros,.btn { display:none !important; } body { background:#fff; } .cartao { box-shadow:none; } }
+  /* telas estreitas (360 px): um filtro ou um cliente com texto longo não alarga a página */
+  @media (max-width:640px) { .tab.pedidos tr.clicavel,.tab.mes tr.clicavel,.tab.mes tfoot tr { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .tab.pedidos tr.clicavel td,.tab.mes tr.clicavel td { min-width:0; overflow-wrap:anywhere; white-space:normal; } }
+  .campo select, .campo input { max-width:100%; min-width:0; } .filtros .campo { min-width:0; }
 </style>
 </head>
 <body>

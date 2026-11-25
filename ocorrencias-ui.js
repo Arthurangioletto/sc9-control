@@ -22,13 +22,17 @@
 
   // chave = código do link sem senha (?k=): libera a leitura e o registrar/editar; apagar e importar exigem usuário e senha
   async function pedir(opcoes, chave) {
-    const r = await fetch('/api/ocorrencias' + (chave ? '?k=' + encodeURIComponent(chave) : ''), Object.assign({ cache: 'no-store' }, opcoes, { headers: { 'X-SC9-App': '1', 'Content-Type': 'application/json' } }));
+    let r;
+    try { r = await fetch('/api/ocorrencias' + (chave ? '?k=' + encodeURIComponent(chave) : ''), Object.assign({ cache: 'no-store' }, opcoes, { headers: { 'X-SC9-App': '1', 'Content-Type': 'application/json' } })); }
+    catch (e) { throw new Error('Sem conexão com o servidor. O que você escreveu foi mantido; tente de novo em instantes.'); }
     const j = await r.json().catch(() => ({}));
-    if (r.status === 401 || r.status === 403) throw new Error(chave && !(opcoes && opcoes.method === 'POST') ? 'Link sem acesso. Peça um link novo ao administrador.' : 'Sem acesso. Entre com seu usuário e senha, ou peça ao administrador para liberar "Ocorrências" no seu usuário.');
+    if (r.status === 409) throw new Error(j.error || 'Outra pessoa alterou esta ocorrência. Recarregue a lista e confira antes de salvar.');
+    if (r.status === 401 || r.status === 403) throw new Error(chave ? 'Link sem acesso. O link não vale mais: peça um link novo ao administrador.' : 'Sem acesso. Entre com seu usuário e senha, ou peça ao administrador para liberar "Ocorrências" no seu usuário.');
     if (!r.ok) throw new Error(j.error || 'Não consegui falar com o servidor.');
     return j;
   }
 
+  const PREFIXO_CARGA = 'Não consegui atualizar a lista: ';
   const VAZIO = { id: '', base: '', nf: '', pedido: '', dataOcorrencia: '', detalhes: '', responsavel: '', solucao: '', dataSolucao: '' };
 
   function csv(itens) {
@@ -96,7 +100,8 @@
     const nfRef = useRef(null);
 
     const carregar = useCallback(async () => {
-      try { setDados(await chamar({})); setErro(''); } catch (e) { setErro(e.message); }
+      // o aviso de falha da atualização automática some quando a atualização volta; o aviso de validação do formulário não some sozinho
+      try { setDados(await chamar({})); setErro((a) => (a && a.indexOf(PREFIXO_CARGA) === 0 ? '' : a)); } catch (e) { setErro(PREFIXO_CARGA + e.message); }
     }, []);
     // (fica depois de carregar: usar antes dava erro de inicialização e o painel não abria)
     // a lista de pedidos atrasados da página registrou uma ocorrência: recarrega
@@ -144,7 +149,9 @@
       if (rascunho.pedido.trim() && !pedido) return setErro('Número do pedido inválido (só números, de 3 a 12 dígitos).');
       if (!nf && !pedido) return setErro('Digite o número da nota fiscal ou, se o pedido ainda não tem nota, o número do pedido.');
       const dataOcorrencia = O.lerData(rascunho.dataOcorrencia, new Date(agora));
-      if (!dataOcorrencia) return setErro('A data da ocorrência é obrigatória. Escreva assim: 24/11/2026.');
+      if (!dataOcorrencia) return setErro(rascunho.dataOcorrencia.trim() ? 'A data da ocorrência não é válida. Escreva assim: 24/11/2026.' : 'A data da ocorrência é obrigatória. Escreva assim: 24/11/2026.');
+      if (dataOcorrencia > new Date(agora + 7 * 864e5).toISOString().slice(0, 10)) return setErro('A data da ocorrência está mais de 7 dias no futuro. Confira o dia e o ano.');
+      if (!rascunho.detalhes.trim()) return setErro('Escreva o motivo da ocorrência (o que está impedindo o pedido de sair).');
       let dataSolucao = '';
       if (rascunho.dataSolucao.trim()) {
         dataSolucao = O.lerData(rascunho.dataSolucao, new Date(agora));
@@ -271,7 +278,7 @@
                 td(info ? h('div', null,
                   h('div', { style: { fontWeight: 700 } }, info.nome || 'Cliente sem nome na base'),
                   h('div', { style: { color: cor.mute, fontSize: 11.5 } }, 'Pedido ' + info.pedido + (info.armazem ? ' · ' + info.armazem : '') + (info.transportadora ? ' · ' + info.transportadora : '') + (info.valor ? ' · ' + moeda(info.valor) : '')),
-                  h('div', { style: { color: cor.mute, fontSize: 11.5 } }, av.pedido.texto)) : h('span', { style: { color: cor.amber, fontSize: 12 } }, (oc.nf ? 'Nota' : 'Pedido') + ' não encontrado na base do SC9. Confira o número ou aguarde a próxima atualização da base.')),
+                  h('div', { style: { color: cor.mute, fontSize: 11.5 } }, av.pedido.texto)) : h('span', { style: { color: cor.amber, fontSize: 12 } }, (oc.nf ? 'Nota não encontrada' : 'Pedido não encontrado') + ' na base do SC9. Confira o número ou aguarde a próxima atualização da base.')),
                 td(O.mostrarData(oc.dataOcorrencia) + ' ', { whiteSpace: 'nowrap' }),
                 td(oc.detalhes),
                 td(oc.responsavel),

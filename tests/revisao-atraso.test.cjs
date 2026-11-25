@@ -148,3 +148,12 @@ test('o servidor não apaga o arquivo quando a leitura falha, e o link das menin
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('a página do histórico: foco e cursor voltam depois de redesenhar, e o formulário do link não espera a sessão', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'historico-atraso.js'), 'utf8');
+  assert.ok(src.includes('function guardarFoco()') && src.includes('setSelectionRange'), 'guarda e devolve o cursor');
+  assert.ok(src.includes('if (!estado.sessao && !chaveLink)'), 'com o link não fica em "Carregando…"');
+  assert.ok(src.includes("baseAtualizadoEm: j.id ? (j.base || undefined) : undefined"), 'a página manda a versão que viu');
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'atraso-painel-ui.js'), 'utf8');
+  assert.ok(ui.includes("k.startsWith('aria-') && typeof v === 'boolean'"), 'aria-* booleanos saem como "true"/"false"');
+});

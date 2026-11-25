@@ -283,6 +283,7 @@
   const h = (tag, props, ...filhos) => {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(props || {})) {
+      if (k.startsWith('aria-') && typeof v === 'boolean') { e.setAttribute(k, String(v)); continue; } // aria-pressed/selected/expanded precisam de "true"/"false" (antes saía vazio ou sumia)
       if (v == null || v === false) continue;
       if (k === 'class') e.className = v;
       else if (k === 'text') e.textContent = v;
@@ -586,7 +587,7 @@
     const itens = lista.map((oc) => {
       const av = OC().avaliar(oc, { pedido: String(it[0]), liberadoEm: it[2] || '', despachadoEm: entregaDe(estado.p.entregues, it[0]) }, it[9] || '', new Date());
       return h('li', null, h('span', { class: 'tag oc-' + av.nivel, text: av.status }), ' ', h('b', { text: OC().mostrarData(oc.dataOcorrencia) }), ' · ', oc.detalhes || '(sem detalhes)', oc.responsavel ? ' · ' + oc.responsavel : '', oc.solucao ? ' · Solução: ' + oc.solucao + (oc.dataSolucao ? ' (' + OC().mostrarData(oc.dataSolucao) + ')' : '') : '',
-        pode ? [' ', h('button', { class: 'btn peq', type: 'button', onclick: (ev) => { ev.stopPropagation(); estado.just = justVazia(k, { id: oc.id || '', base: oc.atualizadoEm || '', data: OC().mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: OC().mostrarData(oc.dataSolucao) }); desenhar(); setTimeout(() => { const e = document.getElementById('just-detalhes'); if (e) e.focus({ preventScroll: true }); }, 60); } }, 'Editar')] : null);
+        pode ? [' ', h('button', { class: 'btn peq', type: 'button', onclick: (ev) => { ev.stopPropagation(); if (!estado.sessao) carregarSessao().then(desenhar); estado.just = justVazia(k, { id: oc.id || '', base: oc.atualizadoEm || '', data: OC().mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: OC().mostrarData(oc.dataSolucao) }); desenhar(); setTimeout(() => { const e = document.getElementById('just-detalhes'); if (e) e.focus({ preventScroll: true }); }, 60); } }, 'Editar')] : null);
     });
     const caixa = h('div', { class: 'just', id: 'just-' + k.replace(/\W/g, '_'), onclick: (ev) => ev.stopPropagation() },
       h('h3', { text: 'Por que este pedido está atrasado? (ocorrência)' }),
@@ -596,7 +597,7 @@
       return caixa;
     }
     if (j.aviso) caixa.appendChild(h('p', { class: 'aviso', role: 'status', text: j.aviso }));
-    if (!estado.sessao) { caixa.appendChild(h('p', { class: 'mudo peq', text: 'Carregando…' })); return caixa; }
+    if (!estado.sessao && !chaveLink) { caixa.appendChild(h('p', { class: 'mudo peq', text: 'Carregando…' })); return caixa; } // com o link não precisa esperar a sessão (antes, "Editar" sem ter aberto "Justificar" ficava preso aqui)
     if (!pode) {
       const l = estado.login;
       caixa.appendChild(h('p', { class: 'mudo peq', text: estado.sessao.authed ? 'Seu usuário não tem o acesso "Ocorrências". Peça ao administrador para liberar, ou entre com outro usuário.' : 'Quem registra entra com usuário e senha (os mesmos do SC9). O administrador deixa o usuário vazio.' }));
@@ -616,7 +617,7 @@
     caixa.appendChild(h('div', { class: 'acoes-just' },
       h('button', { class: 'btn primario', type: 'button', disabled: j.salvando, onclick: () => salvarJustificativa(it), text: j.salvando ? 'Salvando…' : j.id ? 'Salvar alteração' : 'Registrar ocorrência' }),
       j.id ? h('button', { class: 'btn', type: 'button', onclick: () => { estado.just = justVazia(k); desenhar(); }, text: 'Cancelar edição' }) : null,
-      estado.sessao.pode ? [h('span', { class: 'mudo peq', text: 'Entrou como ' + (estado.sessao.nome || 'usuário') + ' · ' }), h('button', { class: 'btn peq', type: 'button', onclick: sairDaConta, text: 'Sair' })] : h('span', { class: 'mudo peq', text: 'Registrando pelo link do histórico' })));
+      estado.sessao && estado.sessao.pode ? [h('span', { class: 'mudo peq', text: 'Entrou como ' + (estado.sessao.nome || 'usuário') + ' · ' }), h('button', { class: 'btn peq', type: 'button', onclick: sairDaConta, text: 'Sair' })] : h('span', { class: 'mudo peq', text: 'Registrando pelo link do histórico' })));
     if (j.erro) caixa.appendChild(h('p', { class: 'erro', role: 'alert', text: j.erro }));
     return caixa;
   }
@@ -761,16 +762,40 @@
   }
   root.SC9HistAtrasoTela = { get estado() { return estado; }, escolherDia, irParaLista, desenhar: () => desenhar(), temDia: (d) => Boolean(estado.p && estado.p.porDia.has(d)) };
 
+  // Guarda o que estava em foco (e a posição do cursor num campo de texto) para devolver depois de redesenhar.
+  // Sem isto, a atualização de 30 s mandava o cursor para o começo do texto que a pessoa estava digitando e o foco de teclado para o topo.
+  const rotuloDoFoco = (el) => (el.getAttribute('aria-label') || el.getAttribute('name') || (el.tagName === 'SELECT' ? '' : el.textContent) || '').trim().slice(0, 40);
+  function guardarFoco() {
+    const el = document.activeElement;
+    if (!el || el === document.body || !$app.contains(el)) return null;
+    const campo = typeof el.selectionStart === 'number' ? { ini: el.selectionStart, fim: el.selectionEnd, dir: el.selectionDirection, rolagem: el.scrollTop } : null;
+    if (el.id) return { id: el.id, campo };
+    const raiz = el.closest('[id]') || $app;
+    return { raizId: raiz.id || '', tag: el.tagName, indice: Array.prototype.indexOf.call(raiz.querySelectorAll(el.tagName), el), rotulo: rotuloDoFoco(el), campo };
+  }
+  function devolverFoco(g) {
+    if (!g) return;
+    let el = null;
+    if (g.id) el = document.getElementById(g.id);
+    else {
+      const raiz = (g.raizId && document.getElementById(g.raizId)) || $app;
+      const cand = raiz.querySelectorAll(g.tag)[g.indice];
+      if (cand && rotuloDoFoco(cand) === g.rotulo) el = cand; // só devolve se for o mesmo controle (a tela pode ter mudado)
+    }
+    if (!el || !el.focus) return;
+    el.focus({ preventScroll: true });
+    if (g.campo && typeof el.setSelectionRange === 'function') { try { el.setSelectionRange(g.campo.ini, g.campo.fim, g.campo.dir || 'none'); el.scrollTop = g.campo.rolagem; } catch (e) { /* tipo de campo sem seleção */ } }
+  }
   function desenhar() {
     const y = root.scrollY;
-    const foco = document.activeElement && document.activeElement.id ? document.activeElement.id : '';
+    const foco = guardarFoco();
     const vazio = !estado.p.porDia.size && !Object.keys(estado.p.exp).length;
     const blocos = vazio ? [h('section', { class: 'cartao centro' }, h('h2', { text: 'Ainda não há histórico gravado' }), h('p', { class: 'mudo', text: 'No SC9, abra o painel e use o botão "Histórico de Atraso" (ao lado do Relatório Geral). Cada vez que o atraso é exportado, a foto do dia fica guardada aqui.' }))]
       : [painelExecutivo(), faixaDeDias(), detalheDoDia(), graficos(), tabelaDoMes()];
     $app.replaceChildren(cabecalho(), ...blocos.filter(Boolean));
     montarOcorrencias();
     root.scrollTo(0, y);
-    if (foco) { const e = document.getElementById(foco); if (e && e.focus) e.focus({ preventScroll: true }); }
+    devolverFoco(foco);
   }
 
   // Ocorrências da expedição dentro da própria página: todo mundo lê e analisa (o link libera a leitura); para registrar, a pessoa da

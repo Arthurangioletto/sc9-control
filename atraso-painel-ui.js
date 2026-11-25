@@ -23,6 +23,7 @@
   const h = (tag, props, ...filhos) => {
     const e = document.createElement(tag);
     for (const [k, v] of Object.entries(props || {})) {
+      if (k.startsWith('aria-') && typeof v === 'boolean') { e.setAttribute(k, String(v)); continue; } // aria-pressed/selected/expanded precisam de "true"/"false" (antes saía vazio ou sumia)
       if (v == null || v === false) continue;
       if (k === 'class') e.className = v;
       else if (k === 'text') e.textContent = v;
@@ -719,7 +720,7 @@
     if (!lista.length) return null;
     return h('section', { class: 'pn-bloco pn-so-print pn-quebra', 'aria-label': 'Pedidos mais críticos' },
       h('h2', { text: 'Os 20 pedidos mais atrasados' }), h('p', { class: 'sub', text: 'Posição de ' + ddmmaaaa(a.reg.dia) + '. A lista completa está na página (Baixar lista em CSV).' }),
-      tabelaDe(['Pedido', 'Cliente', 'Armazém', 'Etapa', 'Dias', 'Peças', 'O que fazer'], lista.map((it) => { const x = Hh.extra(it), v = Hh.avaliarPedido(p, it, a.reg.dia, agora); return [it[0], (x.n || '').slice(0, 28), it[1], (Hh.ETAPA[x.e] || '').replace(/ \(.*\)/, ''), fmtI(it[6]), fmtI(it[3]), v.acao.texto.slice(0, 70)]; })),
+      tabelaDe(['Pedido', 'Cliente', 'Armazém', 'Etapa', 'Dias', 'Peças', 'O que fazer'], lista.map((it) => { const x = Hh.extra(it), v = Hh.avaliarPedido(p, it, a.reg.dia, agora); return [it[0], (x.n || '').slice(0, 28), it[1], (Hh.ETAPA[x.e] || '').replace(/ \(.*\)/, ''), fmtI(it[6]), fmtI(it[3]), curtoNaPalavra(v.acao.texto, 80)]; })),
       h('p', { class: 'pn-nota', text: 'Gerado em ' + new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) + ' · SC9 Control' }));
   }
 
@@ -739,6 +740,8 @@
   }
 
   // ---------- montagem ----------
+  // corta o texto numa palavra inteira (antes cortava no meio: "Atras…")
+  const curtoNaPalavra = (t, n) => { const x = String(t || ''); if (x.length <= n) return x; const c = x.slice(0, n), i = c.lastIndexOf(' '); return (i > n * 0.5 ? c.slice(0, i) : c).replace(/[ ,.;:]+$/, '') + '…'; };
   const ehUtil = (dia) => { const w = P().diaDaSemana(dia); return w > 0 && w < 6; };
   function montar() {
     garantirEstilo(); dicaEsconder();
