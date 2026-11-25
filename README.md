@@ -484,3 +484,9 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 - **Acompanhar este pedido** (botão no resultado da consulta; também é ativado ao pedir prioridade): a lista fica só no aparelho (`localStorage`, até 30 pedidos), sem back-end novo. A situação é consultada de novo a cada minuto com a tela aberta, e o selo **Mudou** aparece quando a etapa atual, a situação geral ou a ocorrência é diferente da última vez que ela olhou. "Já vi" ou abrir o pedido zera o selo. A lista aparece na tela Acompanhar e em Minhas > Acompanho.
 - Faixa do topo mais curta (hora da atualização) com "Como funciona" recolhido; pedido não encontrado passa a ter "Digitar outro número" como ação principal, e "Avisar a expedição".
 - Botões pequenos com 44px de altura em telas de toque e cores com mais contraste (placeholder, etapa pendente, "aguarde").
+
+## Rastreio mais leve para o servidor
+
+- `GET /api/vendedoras/pedidos?pedidos=1,2,3` (até 30, com o código do link): devolve o andamento de vários pedidos numa chamada só. A lista "Pedidos que você acompanha" usa essa rota (antes seria 1 chamada por pedido, por minuto, por aparelho).
+- Cache de 20 segundos, na memória do servidor, só para o rastreio das vendedoras: lista de ocorrências e saída de cada pedido (antes cada consulta baixava `ocorrencias-expedicao.json` e `atraso-saidas.json` do Supabase e varria os dias da saída). Gravar uma ocorrência limpa o cache na hora.
+- Arquivos do app (HTML, JS, CSS até 700 KB, exceto `vendor-*`) também saem em brotli quando o navegador aceita; gzip e arquivo puro continuam para os demais.
