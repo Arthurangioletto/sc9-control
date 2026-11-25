@@ -44,7 +44,7 @@ test('cartões batem com o resumo existente da página e do Excel', () => {
   assert.equal(por.cinco.ref, 3);            // 6, 9 e 20 dias
   assert.equal(por.valor.valor, 250);
   assert.equal(por.valor.ref, 100);
-  assert.equal(por.valor.tom, 'ruim');
+  assert.equal(por.valor.tom, 'neutro');    // o valor só soma pedidos já faturados: subir pode ser faturamento avançando, não piora
   assert.equal(por.despachados.valor, 20);
   assert.equal(por.despachados.ref, 30);     // dia de despacho anterior: 17/11
   assert.equal(por.despachados.refDia, '2026-11-17');
@@ -230,11 +230,16 @@ test('com o detalhe por armazém, despachados e faturados acompanham o filtro e 
   assert.equal(por.despachados.semFiltroArmazem, false);
   assert.equal(por.faturados.valor, 4);
   assert.equal(por.atraso.base, 20);
-  // armazém sem detalhe no dia continua mostrando o total e avisando
+  // dia COM detalhe em que o armazém não aparece: ele não despachou nada (0), não é "sem dado" nem o total da empresa
   const c2 = P.cartoes(p, '2026-11-19', { arm: 'Barueri', transp: '' }, new Date());
   const por2 = Object.fromEntries(c2.cartoes.map((x) => [x.id, x]));
-  assert.equal(por2.despachados.valor, 20);
-  assert.equal(por2.despachados.semFiltroArmazem, true);
+  assert.equal(por2.despachados.valor, 0);
+  assert.equal(por2.despachados.semFiltroArmazem, false);
+  // dia SEM detalhe nenhum (dados antigos): continua mostrando o total da empresa e avisando
+  const c3 = P.cartoes(H.preparar(dados()), '2026-11-19', { arm: 'BH', transp: '' }, new Date());
+  const por3 = Object.fromEntries(c3.cartoes.map((x) => [x.id, x]));
+  assert.equal(por3.despachados.valor, 20);
+  assert.equal(por3.despachados.semFiltroArmazem, true);
   const r = P.armazens(p, '2026-11-19', P.filtroVazio());
   assert.equal(r.temBase, true);
   assert.equal(r.lista.find((x) => x.nome === 'BH').pctBase, 10); // 2 em atraso de 20

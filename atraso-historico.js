@@ -89,7 +89,9 @@ function porArmazemLimpo(corpo) {
 // Troca (ou inclui) só o dia do registro; os demais dias do mês ficam como estão.
 function mesclarDia(mesAtual, registro) {
   const dias = Object.assign({}, (mesAtual && mesAtual.dias) || {});
-  dias[registro.dia] = registro;
+  const antes = dias[registro.dia];
+  // uma foto sem o total por armazém (cliente antigo) não apaga o que já estava gravado no dia
+  dias[registro.dia] = (!registro.totalPorArmazem && antes && antes.totalPorArmazem) ? Object.assign({}, registro, { totalPorArmazem: antes.totalPorArmazem }) : registro;
   const ordenado = {};
   for (const k of Object.keys(dias).sort()) ordenado[k] = dias[k];
   return { mes: mesDoDia(registro.dia), dias: ordenado };
@@ -127,7 +129,8 @@ function normalizarDespachados(corpo) {
 function mesclarDespachados(guardado, novos) {
   const dias = Object.assign({}, guardado || {});
   for (const [dia, v] of Object.entries(novos || {})) {
-    if (!dias[dia] || v.pedidos >= dias[dia].pedidos) dias[dia] = v;
+    // um dado antigo (sem o detalhe por armazém) não apaga o detalhe que já estava gravado para o mesmo dia
+    if (!dias[dia] || v.pedidos >= dias[dia].pedidos) dias[dia] = (!v.por && dias[dia] && dias[dia].por) ? Object.assign({}, v, { por: dias[dia].por }) : v;
   }
   const ordenado = {};
   for (const k of Object.keys(dias).sort()) ordenado[k] = dias[k];

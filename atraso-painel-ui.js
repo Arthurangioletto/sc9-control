@@ -13,7 +13,7 @@
   const fmtI = (n) => Number(Math.round(n || 0)).toLocaleString('pt-BR');
   const ddmm = (d) => d.slice(8, 10) + '/' + d.slice(5, 7);
   const ddmmaaaa = (d) => d.slice(8, 10) + '/' + d.slice(5, 7) + '/' + d.slice(0, 4);
-  const brlCurto = (v) => (v >= 1e6 ? 'R$ ' + (v / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mi' : v >= 1e3 ? 'R$ ' + Math.round(v / 1e3).toLocaleString('pt-BR') + ' mil' : 'R$ ' + Math.round(v).toLocaleString('pt-BR'));
+  const brlCurto = (v) => (v >= 999500 ? 'R$ ' + (v / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mi' : v >= 1e3 ? 'R$ ' + Math.round(v / 1e3).toLocaleString('pt-BR') + ' mil' : 'R$ ' + Math.round(v).toLocaleString('pt-BR'));
   const semanaLonga = (d) => new Date(d + 'T12:00:00Z').toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'UTC' }).replace(/^./, (c) => c.toUpperCase());
   const brl = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const TOM_TXT = { bom: 'melhor', ruim: 'pior', atencao: 'atenção', neutro: 'estável' };
@@ -45,7 +45,11 @@
   const TV = q.get('modo') === 'tv';
   const MOB = !TV && typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches; // gráficos em viewBox estreito no celular: rótulos legíveis
   const TV_SLIDES = 6; // telas do rodízio da TV
+  const dataIsoValida = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) && !Number.isNaN(Date.parse(d + 'T00:00:00Z')) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
   const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, prod: 'pedidos', calor: 'faixa', mais: false };
+  // período personalizado da URL com data inválida ou faltando: volta para 30 dias (antes derrubava a página)
+  if (S.per === 'custom' && !(dataIsoValida(S.de) && dataIsoValida(S.ate))) { S.per = '30'; S.de = ''; S.ate = ''; }
+  let sincArm = '', sincTr = ''; // último valor dos filtros que o painel e a lista já combinaram entre si
   function guardarNaUrl() {
     try {
       const u = new URL(location.href);
@@ -55,7 +59,7 @@
       history.replaceState(null, '', u.pathname + u.search + u.hash);
     } catch (e) { /* sem histórico de navegação */ }
   }
-  const mudar = (fn) => { fn(); guardarNaUrl(); const f = T().estado.filtro; f.arm = S.arm; f.transp = S.transp; T().desenhar(); };
+  const mudar = (fn) => { fn(); guardarNaUrl(); const f = T().estado.filtro; f.arm = S.arm; f.transp = S.transp; sincArm = S.arm; sincTr = S.transp; T().desenhar(); };
   const global = () => ({ arm: S.arm, transp: S.transp });
 
   // ---------- estilos ----------
@@ -282,7 +286,7 @@
 
   // ---------- peças pequenas ----------
   function selo(fr) {
-    const txt = fr.estado === 'vazio' ? 'Sem posição gravada' : fr.estado === 'em-dia' ? 'Dados em dia' : fr.estado === 'atencao' ? 'Atenção: última posição de ' + ddmm(fr.dia) : 'Desatualizado: última posição de ' + ddmm(fr.dia);
+    const txt = fr.estado === 'vazio' ? 'Sem posição gravada' : fr.estado === 'em-dia' ? 'Posição em dia' : fr.estado === 'atencao' ? 'Atenção: última posição de ' + ddmm(fr.dia) : 'Desatualizado: última posição de ' + ddmm(fr.dia);
     const hora = fr.atualizadoEm ? new Date(fr.atualizadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) : '';
     return h('span', { class: 'pn-selo ' + fr.estado, role: 'status', title: 'A posição do dia só é gravada quando o Histórico de Atraso é exportado no SC9.' }, (fr.estado === 'em-dia' ? '● ' : '⚠ ') + txt + (hora ? ' · ' + hora : ''));
   }
@@ -333,7 +337,7 @@
   // ---------- gráficos ----------
   function escalaY(max) {
     const alvo = Math.max(1, max), passo = Math.pow(10, Math.floor(Math.log10(alvo / 4)));
-    let p = passo; for (const m of [1, 2, 2.5, 5, 10]) { if (alvo / (m * passo) <= 4.0001) { p = m * passo; break; } }
+    let p = passo; for (const m of [1, 2, 2.5, 5, 10]) { const cand = m * passo; if (alvo / cand <= 4.0001 && Math.abs(cand - Math.round(cand)) < 1e-9) { p = cand; break; } } // contagens: marcas sempre inteiras
     const topo = Math.ceil(alvo / p) * p, ticks = []; for (let v = 0; v <= topo + 1e-9; v += p) ticks.push(v);
     return { topo, ticks };
   }
@@ -403,9 +407,9 @@
       emTabela ? corpoTabela() : corpoGrafico(), extra || null);
   }
 
-  function evolucao(serieDias, fx, dia) {
+  function evolucao(serieDias, fx, dia, mmPre) {
     const comFoto = serieDias.filter((d) => d.foto);
-    const mm = P().mediaMovel(serieDias.map((d) => (d.foto ? d.foto.tot : null)), 5);
+    const mm = mmPre && mmPre.length === serieDias.length ? mmPre : P().mediaMovel(serieDias.map((d) => (d.foto ? d.foto.tot : null)), 5);
     const pico = comFoto.length ? comFoto.reduce((m, d) => (d.foto.tot > m.foto.tot ? d : m), comFoto[0]) : null;
     const hoje = serieDias.find((d) => d.dia === dia);
     const max = Math.max(1, ...comFoto.map((d) => d.foto.tot));
@@ -569,7 +573,7 @@
           h('div', { style: 'width:100%;height:120px;display:flex;align-items:flex-end;position:relative' }, h('div', { class: 'barra', style: 'height:' + altura + '%;background:' + cor[f.nivel] }), antes ? h('div', { class: 'fantasma', style: 'height:' + (antes / max * 100).toFixed(1) + '%' }) : null),
           h('span', { class: 'lab', text: marca[f.nivel] + f.rotulo })), () => ({ titulo: f.rotulo, linhas: [{ rot: 'Pedidos', val: fmtI(f.qtd), forte: true }, { rot: 'Participação', val: fmtN(f.pct) + '%' }, { rot: 'Peças', val: fmtI(f.pecas) }].concat(antes != null ? ['-', { rot: 'Há 7 dias (' + ddmm(dist.refDia) + ')', val: fmtI(antes) }, { rot: 'Variação', val: seta(f.qtd - antes) }] : []), rodape: f.nivel === 'neutro' ? '' : f.nivel === 'atencao' ? 'Faixa de atenção.' : 'Faixa crítica: 5 dias ou mais.' }));
       })),
-        h('div', { class: 'pn-leg' }, dist.antes ? h('span', null, 'Contorno tracejado: ', h('b', { text: ddmm(dist.refDia) }), ' (7 dias antes)') : h('span', { text: 'Ainda não há posição de 7 dias antes para comparar.' })),
+        h('div', { class: 'pn-leg' }, dist.antes ? h('span', null, 'Contorno tracejado: ', h('b', { text: ddmm(dist.refDia) }), ' (' + P().diasEntre(dist.refDia, dist.atualDia || P().somaDias(dist.refDia, 7)) + ' dias antes)') : h('span', { text: 'Ainda não há posição de 7 dias antes para comparar.' })),
         h('p', { class: 'pn-nota', text: fmtI(dist.cincoAtual) + ' pedidos (' + fmtN(dist.atual.total ? dist.cincoAtual / dist.atual.total * 100 : 0) + '%) com 5 dias ou mais' + (dist.cincoAntes != null ? ' · há 7 dias eram ' + fmtI(dist.cincoAntes) : '') + '.' }));
     };
     const tabela = () => (dist ? tabelaDe(['Faixa', 'Pedidos', '%', 'Peças', dist.antes ? 'Pedidos há 7 dias' : ''].filter(Boolean), dist.atual.lista.map((f, i) => [f.rotulo, fmtI(f.qtd), fmtN(f.pct) + '%', fmtI(f.pecas)].concat(dist.antes ? [fmtI(dist.antes.lista[i].qtd)] : []))) : h('p', { class: 'pn-vazio', text: 'Sem posição neste dia.' }));
@@ -735,11 +739,17 @@
   }
 
   // ---------- montagem ----------
+  const ehUtil = (dia) => { const w = P().diaDaSemana(dia); return w > 0 && w < 6; };
   function montar() {
     garantirEstilo(); dicaEsconder();
     const tela = T(), est = tela.estado, p = est.p, dia = est.dia;
-    if (S.arm && !est.filtro.arm) est.filtro.arm = S.arm; // o filtro global também vale para a lista de pedidos
-    if (S.transp && !est.filtro.transp) est.filtro.transp = S.transp;
+    // o filtro global vale para a lista de pedidos e o da lista volta para o painel (antes a lista não conseguia voltar a "Todos")
+    const ops0 = P().opcoesGlobais(p);
+    if (S.arm && ops0.armazens && !ops0.armazens.includes(S.arm)) S.arm = ''; // valor da URL que não existe nos dados
+    if (S.transp && ops0.transportadoras && !ops0.transportadoras.includes(S.transp)) S.transp = '';
+    if ((est.filtro.arm || '') !== S.arm) { if (S.arm !== sincArm) est.filtro.arm = S.arm; else S.arm = est.filtro.arm || ''; }
+    if ((est.filtro.transp || '') !== S.transp) { if (S.transp !== sincTr) est.filtro.transp = S.transp; else S.transp = est.filtro.transp || ''; }
+    sincArm = S.arm; sincTr = S.transp; guardarNaUrl();
     const agora = new Date();
     const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
     const fr = P().frescor(p, hoje);
@@ -749,11 +759,22 @@
     const ate = S.per === 'custom' ? per.ate : dia;
     const de = S.per === 'custom' ? per.de : per.de;
     const dias = P().serie(p, de, ate || de, g);
+    // média de 5 posições calculada com os dias anteriores ao período (senão as primeiras pontas eram médias de menos de 5 dias)
+    const antesDias = P().serie(p, P().somaDias(de, -14), ate || de, g);
+    const mmTodos = P().mediaMovel(antesDias.map((d) => (d.foto ? d.foto.tot : null)), 5);
+    const mmPre = mmTodos.slice(mmTodos.length - dias.length);
     const fx = P().fluxo(p, de, ate || de, g);
     const cs = dia ? P().cartoes(p, dia, g, agora) : null;
     const a = dia ? p.porDia.get(dia) : null;
-    const frase = a ? root.SC9AtrasoHistoricoXlsx.frase(a) : (dia ? 'Sem posição de atraso neste dia (só há dados de despacho).' : 'Ainda não há posição de atraso gravada.');
-    const tomVer = a && a.cmp ? (a.resumo.tot < a.cmp.resumoAnt.tot ? 'bom' : a.resumo.tot > a.cmp.resumoAnt.tot ? 'ruim' : '') : '';
+    const cAt = cs ? cs.cartoes.find((c) => c.id === 'atraso') : null;
+    const filtroAtivo = Boolean(g.arm || g.transp);
+    const filtroTxt0 = [g.arm ? 'armazém ' + g.arm : '', g.transp ? 'transportadora ' + g.transp : ''].filter(Boolean).join(' · ');
+    // com filtro, a frase e o selo falam do que está filtrado (iguais ao cartão), e dizem o total da empresa à parte
+    const frase = a ? (filtroAtivo && cAt && cAt.valor != null
+      ? fmtI(cAt.valor) + (cAt.valor === 1 ? ' pedido em atraso' : ' pedidos em atraso') + ' (' + filtroTxt0 + ')' + (cAt.delta ? ', ' + (cAt.delta > 0 ? '+' : '−') + fmtI(Math.abs(cAt.delta)) + ' vs ' + ddmm(cAt.refDia) : (cAt.refDia ? ', igual a ' + ddmm(cAt.refDia) : '')) + '. Total da empresa neste dia: ' + fmtI(a.resumo.tot) + '.'
+      : root.SC9AtrasoHistoricoXlsx.frase(a)) : (dia ? 'Sem posição de atraso neste dia (só há dados de despacho).' : 'Ainda não há posição de atraso gravada.');
+    const tomVer = cAt && cAt.delta != null && cAt.ref != null ? (cAt.tom === 'bom' ? 'bom' : cAt.tom === 'ruim' ? 'ruim' : cAt.tom === 'atencao' ? (cAt.delta > 0 ? 'atencao' : 'bom') : '') : '';
+    const refVer = cAt && cAt.refDia ? cAt.refDia : (a && a.cmp ? a.cmp.ant.dia : '');
     const comFoto = dias.filter((d) => d.foto).length;
     const filtroTxt = [g.arm ? 'armazém ' + g.arm : '', g.transp ? 'transportadora ' + g.transp : ''].filter(Boolean).join(' · ');
     const topo = cs ? cs.cartoes.filter((c) => ['atraso', 'cinco', 'aguardando', 'despachados', 'faturados', 'ocorrencias'].includes(c.id)).map((c) => Object.assign(c, c.id === 'atraso' ? { destaque: true } : {})) : [];
@@ -766,8 +787,8 @@
           selo(fr)),
         h('p', { class: 'pn-frase', text: frase }),
         h('div', { class: 'pn-hero-meta' },
-          a && a.cmp ? h('span', { class: 'pn-veredito-chip ' + tomVer }, tomVer === 'bom' ? '▼ Melhorou' : tomVer === 'ruim' ? '▲ Piorou' : '= Igual', ' vs ' + ddmm(a.cmp.ant.dia)) : null,
-          h('span', { text: 'Período: ' + ddmm(de) + ' a ' + ddmm(ate || de) + (filtroTxt ? ' · ' + filtroTxt : '') + ' · ' + comFoto + ' de ' + dias.length + ' dias com posição gravada' + (comFoto < 3 ? ' (o histórico está começando)' : '') })));
+          cAt && cAt.ref != null && refVer ? h('span', { class: 'pn-veredito-chip ' + tomVer }, tomVer === 'bom' ? '▼ Melhorou' : tomVer === 'ruim' ? '▲ Piorou' : tomVer === 'atencao' ? '▲ Subiu um pouco' : '= Estável', ' vs ' + ddmm(refVer)) : null,
+          h('span', { text: 'Período: ' + ddmm(de) + ' a ' + ddmm(ate || de) + (filtroTxt ? ' · ' + filtroTxt : '') + ' · ' + dias.filter((d) => d.foto && ehUtil(d.dia)).length + ' de ' + dias.filter((d) => ehUtil(d.dia)).length + ' dias úteis com posição gravada' + (p.analises.length < 3 ? ' (o histórico está começando)' : '') })));
     const aviso = fr.estado === 'desatualizado' || fr.estado === 'atencao' ? h('p', { class: 'pn-aviso', role: 'status', text: 'A última posição gravada é de ' + ddmmaaaa(fr.dia) + ' (' + fr.diasUteis + (fr.diasUteis === 1 ? ' dia útil' : ' dias úteis') + ' atrás). Os números são dessa posição; exporte o Histórico de Atraso no SC9 para atualizar.' }) : null;
     const cartoesEl = cs ? h('div', { class: 'pn-cards' }, topo.map((c) => cartao(c, dias))) : null;
     const maisEl = cs ? h('details', { class: 'pn-mais', open: S.mais, ontoggle: (ev) => { S.mais = ev.target.open; } }, h('summary', { text: 'Mais indicadores' }), h('div', { class: 'pn-cards' }, mais.map((c) => cartao(c, dias)))) : null;
@@ -779,7 +800,7 @@
       const slide = (i, ...filhos) => h('div', { class: 'pn-slide' + (S.slide === i ? ' ativo' : '') }, filhos);
       return h('div', { class: 'pn', id: 'pn-raiz' }, S.slide === 0 ? hero : mini, aviso,
         slide(0, cartoesEl, cs ? h('div', { class: 'pn-cards cinco' }, mais.map((c) => cartao(c, dias))) : null),
-        slide(1, h('div', { class: 'pn-par' }, evolucao(dias, fx, dia), produtividade(dias, dia))),
+        slide(1, h('div', { class: 'pn-par' }, evolucao(dias, fx, dia, mmPre), produtividade(dias, dia))),
         slide(2, h('div', { class: 'pn-par' }, gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)))),
         slide(3, h('div', { class: 'pn-par' }, distribuicaoBloco(P().distribuicao(p, dia, g)), cascataBloco(P().cascata(p, dia, g), dia))),
         slide(4, h('div', { class: 'pn-par' }, calorBloco(P().mapaCalor(p, dia, g, S.calor), S.calor), paretoBloco(P().transportadoras(p, dia, g, 8)))),
@@ -788,7 +809,7 @@
     }
     return h('div', { class: 'pn', id: 'pn-raiz' },
       hero, barra(p, fr), aviso, cartoesEl, maisEl,
-      h('div', { class: 'pn-par' }, evolucao(dias, fx, dia), produtividade(dias, dia), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g)), cascataBloco(P().cascata(p, dia, g), dia), calorBloco(P().mapaCalor(p, dia, g, S.calor), S.calor), paretoBloco(P().transportadoras(p, dia, g, 8))),
+      h('div', { class: 'pn-par' }, evolucao(dias, fx, dia, mmPre), produtividade(dias, dia), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g)), cascataBloco(P().cascata(p, dia, g), dia), calorBloco(P().mapaCalor(p, dia, g, S.calor), S.calor), paretoBloco(P().transportadoras(p, dia, g, 8))),
       tabelaCriticos(p, a, g, agora),
       h('p', { class: 'pn-sep', text: 'Detalhe do dia e pedidos' }));
   }

@@ -29,7 +29,7 @@
     return j;
   }
 
-  const VAZIO = { id: '', nf: '', pedido: '', dataOcorrencia: '', detalhes: '', responsavel: '', solucao: '', dataSolucao: '' };
+  const VAZIO = { id: '', base: '', nf: '', pedido: '', dataOcorrencia: '', detalhes: '', responsavel: '', solucao: '', dataSolucao: '' };
 
   function csv(itens) {
     const aspas = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
@@ -152,7 +152,7 @@
       }
       setSalvando(true);
       try {
-        const j = await chamar({ method: 'POST', body: JSON.stringify({ acao: 'salvar', linha: { id: rascunho.id || undefined, nf, pedido, dataOcorrencia, detalhes: rascunho.detalhes, responsavel: rascunho.responsavel, solucao: rascunho.solucao, dataSolucao } }) });
+        const j = await chamar({ method: 'POST', body: JSON.stringify({ acao: 'salvar', linha: { id: rascunho.id || undefined, nf, pedido, dataOcorrencia, detalhes: rascunho.detalhes, responsavel: rascunho.responsavel, solucao: rascunho.solucao, dataSolucao }, baseAtualizadoEm: rascunho.id ? (rascunho.base || undefined) : undefined }) });
         setDados(j); setRascunho(Object.assign({}, VAZIO)); avisarPagina();
         setAviso(rascunho.id ? 'Alteração salva.' : 'Ocorrência registrada.');
         if (nfRef.current) nfRef.current.focus();
@@ -160,7 +160,7 @@
       setSalvando(false);
     }
     function editar(oc) {
-      setRascunho({ id: oc.id, nf: oc.nf, pedido: oc.pedido || '', dataOcorrencia: O.mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: O.mostrarData(oc.dataSolucao) });
+      setRascunho({ id: oc.id, base: oc.atualizadoEm || '', nf: oc.nf, pedido: oc.pedido || '', dataOcorrencia: O.mostrarData(oc.dataOcorrencia), detalhes: oc.detalhes, responsavel: oc.responsavel, solucao: oc.solucao, dataSolucao: O.mostrarData(oc.dataSolucao) });
       setAviso(''); setErro('');
       if (root.scrollTo) root.scrollTo({ top: 0, behavior: 'smooth' });
       if (nfRef.current) nfRef.current.focus();
