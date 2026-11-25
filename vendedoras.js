@@ -140,7 +140,7 @@
     if (modo === 'criar') {
       if (c.nome.trim().length < 2) c.erro = 'Diga seu nome (como a equipe deve te chamar).';
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email.trim())) c.erro = 'Informe seu e-mail corporativo da Implacil (ex.: nome@implacil.com.br).';
-      else if (!c.email.trim().toLowerCase().split('@')[1].includes('implacil')) c.erro = 'Só e-mail corporativo da Implacil libera o acesso (o endereço precisa ter "implacil", ex.: nome@implacil.com.br).';
+      else if (!/(^|\.)implacil[a-z0-9-]*\.(com\.br|com|ind\.br|net\.br|net|br)$/.test(c.email.trim().toLowerCase().split('@')[1])) c.erro = 'Só e-mail corporativo da Implacil libera o acesso (o endereço precisa ter "implacil", ex.: nome@implacil.com.br).';
       else if (c.codigo !== c.codigo2) c.erro = 'Os dois códigos não são iguais.';
     }
     if (c.erro) return desenhar();

@@ -194,7 +194,9 @@ const mesmoNome = (a, b) => Boolean(a) && Boolean(b) && String(a).toLowerCase() 
 const ehDono = (l, quem) => (l.conta ? Boolean(quem && quem.login) && l.conta === quem.login : mesmoNome(l.pedidoPor, quem && quem.nome));
 const reforcou = (l, login) => Boolean(login) && l.historico.some((h) => h.acao === 'reforco' && h.conta === login);
 const ehDela = (l, login) => Boolean(login) && (l.conta === login || reforcou(l, login));
-const visaoMeu = (l, dono) => ({ id: l.id, protocolo: l.protocolo, pedido: l.pedido, nivel: l.nivel, motivo: dono === false ? '' : l.motivo, status: l.status, observacao: dono === false ? '' : l.observacao, pedidoPor: dono === false ? '' : l.pedidoPor, resposta: l.resposta, reforco: dono === false, criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l) });
+// Quem só reforçou o pedido de outra pessoa recebe um id DIFERENTE (idReforco(id), que não dá para desfazer): o id verdadeiro só fica com quem criou.
+// Assim ninguém consegue pedir a linha de outra pessoa pelo id e ler a observação dela.
+const visaoMeu = (l, dono, idReforco) => ({ id: dono === false && typeof idReforco === 'function' ? idReforco(l.id) : l.id, protocolo: l.protocolo, pedido: l.pedido, nivel: l.nivel, motivo: dono === false ? '' : l.motivo, status: l.status, observacao: dono === false ? '' : l.observacao, pedidoPor: dono === false ? '' : l.pedidoPor, resposta: l.resposta, reforco: dono === false, criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l) });
 const visaoFila = (l) => ({ pedido: l.pedido, nivel: l.nivel, status: l.status, criadoEm: l.criadoEm });
 
 // Fila ordenada: urgente primeiro, depois a mais antiga.
