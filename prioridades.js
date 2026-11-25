@@ -372,7 +372,7 @@
     else {
       const d = estado.dados, linhas = d ? ordenadas() : [];
       corpo = h('main', { class: 'pagina' },
-        h('div', { class: 'card-titulo', style: 'margin:0' }, h('div', null, h('h1', { style: 'font-size:clamp(24px,4vw,30px);font-weight:800;letter-spacing:-.02em', text: 'Solicitações de prioridade' }), h('p', { class: 'mudo', style: 'margin-top:4px', text: 'Quem decide é a logística: analise, aprove e responda. Atualiza sozinho a cada 20 segundos.' })),
+        h('div', { class: 'card-titulo', style: 'margin:0' }, C.cabecalho('lista', 'Solicitações de prioridade', 'Quem decide é a logística: analise, aprove e responda. Atualiza sozinho a cada 20 segundos.'),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.carregando = true; carregar(); } }, ic('atualizar'), 'Atualizar agora')),
         faixaSc9(),
         faixaAvisos(),

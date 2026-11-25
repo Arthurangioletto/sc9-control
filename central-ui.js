@@ -52,7 +52,8 @@
     baixar: [['p', 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'], ['p', 'm7 10 5 5 5-5'], ['p', 'M12 15V3']],
     usuario: [['p', 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'], ['c', 12, 7, 4]],
     cadeado: [['r', 3, 11, 18, 11, 2], ['p', 'M7 11V7a5 5 0 0 1 10 0v4']],
-    info: [['c', 12, 12, 10], ['p', 'M12 16v-4'], ['p', 'M12 8h.01']]
+    info: [['c', 12, 12, 10], ['p', 'M12 16v-4'], ['p', 'M12 8h.01']],
+    sino: [['p', 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9'], ['p', 'M13.7 21a2 2 0 0 1-3.4 0']]
   };
   const NS = 'http://www.w3.org/2000/svg';
   function icone(nome, extra) {
@@ -103,7 +104,15 @@
   /* ---------- pequenas peças ---------- */
   const selo = (texto, classe, semPonto) => h('span', { class: 'selo ' + (classe || '') + (semPonto ? ' sem-ponto' : ''), text: texto });
   const fato = (nomeIcone, rotulo, valor) => h('div', { class: 'fato' }, icone(nomeIcone), h('div', null, h('span', { text: rotulo }), h('b', { text: valor || '—' })));
-  const vazio = (nomeIcone, titulo, texto) => h('div', { class: 'vazio' }, h('div', { class: 'bola' }, icone(nomeIcone)), h('b', { text: titulo }), texto ? h('p', { text: texto }) : null);
+  // Ilustrações simples (SVG inline, texto fixo do próprio código) para as telas vazias: caixa aberta e lupa sobre um pacote.
+  const ILUS = {
+    caixa: '<svg class="ilus" viewBox="0 0 200 150" aria-hidden="true" focusable="false"><defs><linearGradient id="ilA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d6e4ff"/><stop offset="1" stop-color="#a3bdfb"/></linearGradient><linearGradient id="ilB" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#82a6fb"/><stop offset="1" stop-color="#3a6cf5"/></linearGradient></defs><ellipse cx="100" cy="134" rx="60" ry="8" fill="#1d4ed8" opacity=".12"/><g class="flutua"><path d="M46 72 28 58l54-20 18 12z" fill="#e3ecff" stroke="#a3bdfb" stroke-width="2" stroke-linejoin="round"/><path d="m154 72 18-14-54-20-18 12z" fill="#eef3ff" stroke="#a3bdfb" stroke-width="2" stroke-linejoin="round"/><path d="m46 72 54 22 54-22-54-22z" fill="#cfdcfb" stroke="#a3bdfb" stroke-width="2" stroke-linejoin="round"/><path d="M46 72v36l54 24V94z" fill="url(#ilA)"/><path d="M154 72v36l-54 24V94z" fill="url(#ilB)"/><path d="M62 98v9l14 6v-9z" fill="#fff" opacity=".55"/></g><path d="m168 24 3.2 7.6 7.6 3.2-7.6 3.2-3.2 7.6-3.2-7.6-7.6-3.2 7.6-3.2z" fill="#f39a35"/><circle cx="30" cy="34" r="4" fill="#7ea3fb"/><circle cx="178" cy="92" r="3" fill="#7ea3fb"/><path d="m22 96 2.2 5 5 2.2-5 2.2-2.2 5-2.2-5-5-2.2 5-2.2z" fill="#a3bdfb"/></svg>',
+    lupa: '<svg class="ilus" viewBox="0 0 200 150" aria-hidden="true" focusable="false"><defs><linearGradient id="ilC" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d6e4ff"/><stop offset="1" stop-color="#a3bdfb"/></linearGradient></defs><ellipse cx="100" cy="134" rx="62" ry="8" fill="#1d4ed8" opacity=".12"/><g class="flutua"><path d="M30 78 58 66l28 12v32L58 122 30 110z" fill="url(#ilC)"/><path d="m30 78 28 12 28-12M58 90v32" fill="none" stroke="#fff" stroke-width="2.5" stroke-linejoin="round" opacity=".8"/><circle cx="112" cy="62" r="34" fill="#fff" fill-opacity=".65" stroke="#2f63f0" stroke-width="8"/><path d="m137 88 28 28" stroke="#1a3fb4" stroke-width="13" stroke-linecap="round"/><path d="M101 54a11 11 0 1 1 15 10c-3 1.600-4 3.500-4 7" fill="none" stroke="#1d4ed8" stroke-width="6" stroke-linecap="round"/><circle cx="112" cy="82" r="3.800" fill="#1d4ed8"/></g><path d="m170 26 3 7 7 3-7 3-3 7-3-7-7-3 7-3z" fill="#f39a35"/><circle cx="26" cy="36" r="4" fill="#7ea3fb"/></svg>'
+  };
+  const ilustracao = (tipo) => { const w = root.document.createElement('span'); w.innerHTML = ILUS[tipo] || ILUS.caixa; return w.firstChild; };
+  const vazio = (nomeIcone, titulo, texto) => h('div', { class: 'vazio' }, ilustracao(nomeIcone === 'busca' || nomeIcone === 'atualizar' ? 'lupa' : 'caixa'), h('b', { text: titulo }), texto ? h('p', { text: texto }) : null);
+  // Cabeçalho de página: ícone em relevo + título + frase de apoio.
+  const cabecalho = (nomeIcone, titulo, sub) => h('div', { class: 'cab-pg' }, h('div', { class: 'orbe-pg' }, icone(nomeIcone)), h('div', null, h('h1', { text: titulo }), sub ? h('p', { text: sub }) : null));
   const esqueleto = (n) => h('div', { 'aria-label': 'Carregando', role: 'status', style: 'display:flex;flex-direction:column;gap:12px' }, Array.from({ length: n || 3 }, (_, i) => h('div', { class: 'esqueleto', style: 'height:' + (i === 0 ? 120 : 64) + 'px' })));
 
   /* ---------- exportar (CSV que abre direto no Excel em português) ---------- */
@@ -137,5 +146,5 @@
     try { await root.navigator.clipboard.writeText(texto); toast(aviso || 'Copiado.'); } catch (e) { toast('Não consegui copiar. Selecione o texto e copie.', 'erro'); }
   }
 
-  root.Central = { NOME, FUSO, h, icone, marca, NIVEL, NIVEL_DICA, STATUS, MOTIVO, TIPO_AVISO, STATUS_AVISO, ICONE_ETAPA, dataBR, curta, horaBR, dataHora, diaSP, duracao, selo, fato, vazio, esqueleto, toast, copiar, montarCsv, baixarCsv, dataHoraCsv, nomeArquivo };
+  root.Central = { NOME, FUSO, h, icone, marca, cabecalho, NIVEL, NIVEL_DICA, STATUS, MOTIVO, TIPO_AVISO, STATUS_AVISO, ICONE_ETAPA, dataBR, curta, horaBR, dataHora, diaSP, duracao, selo, fato, vazio, esqueleto, toast, copiar, montarCsv, baixarCsv, dataHoraCsv, nomeArquivo };
 })(window);
