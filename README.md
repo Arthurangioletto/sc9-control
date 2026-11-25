@@ -346,15 +346,15 @@ Cada pedido em atraso gravado na exportação leva também (campo extra da linha
 
 **Excel de atrasados autoexplicativo.** O Excel passa a usar as mesmas regras da página (reclassificação pela Saída p/ Expedição, status do pedido, ocorrências da expedição pela nota fiscal): nova aba **Como ler** (glossário, colunas e cores), bloco **O que fazer agora** na aba do dia mais recente e três colunas por pedido — Status do pedido, Ocorrência (situação atual) e O que fazer (traço nos dias antigos). Ao baixar, o botão lê o histórico completo do servidor (`/api/atraso-historico`); se a leitura falhar, gera o Excel básico como antes.
 
-### Painel executivo do Histórico de Atraso (`?painel=1`)
+### Painel executivo do Histórico de Atraso (padrão no link de sempre)
 
-Abra `/historico-atraso.html?painel=1` (com login ou com o link `?k=`). O painel aparece **acima** da página de sempre; nada foi removido e a tela atual continua igual sem o `?painel=1`. Ele só lê o histórico já gravado: não grava nem apaga nada.
+O painel aparece no próprio `/historico-atraso.html` (com login ou com o link `?k=`), **acima** da página de sempre; nada foi removido. O botão "Só a página antiga" (ou `?painel=0`) esconde o painel e o botão "Painel executivo" volta a mostrá-lo. Ele só lê o histórico já gravado: não grava nem apaga nada.
 
 - Barra de controle: período (7, 15, 30 dias, mês atual, personalizado, podendo cruzar meses), armazém e transportadora (ficam na URL: `p`, `arm`, `tr`, `de`, `ate`), selo de atualização e Imprimir.
 - Cartões com valor, variação contra a posição anterior, % e melhora/piora (cor + seta + texto); clicar abre os pedidos na lista. Despachados e faturados são sempre o total da empresa (o dado não tem armazém) e o cartão avisa quando há filtro.
 - Gráficos em SVG puro, cada um com "Ver como tabela": evolução (estoque + faturamento, média de 5 dias, dias sem posição como lacuna, fluxo entraram/saíram), produtividade (pedidos ou peças, nunca juntos; média por dia da semana), gargalos por etapa, armazéns e faixas de dias de atraso.
 - Definições: em atraso = o que está na posição do dia; 5+ dias = dias de atraso >= 5; aguardando despacho = próxima ação "levar" ou "despachar"; ocorrência aberta = estado de agora (o SC9 não guarda histórico de ocorrências); valor = só pedidos já faturados.
-- Modo TV: `?painel=1&modo=tv` (4 telas em rodízio de 20 s, setas trocam, Esc sai). Impressão: A4 paisagem, 3 páginas (painel + os 20 pedidos mais atrasados).
+- Modo TV: `&modo=tv` (4 telas em rodízio de 20 s, setas trocam, Esc sai). Impressão: A4 paisagem, 3 páginas (painel + os 20 pedidos mais atrasados).
 - Dados novos gravados a partir da próxima exportação (campos opcionais; o que já está gravado não muda): `totalPorArmazem` (pedidos da base por armazém, dá a % de atraso de cada um) e `por` dentro de despachados/faturados de cada dia (detalhe por armazém, faz o filtro de armazém valer também para esses cartões). Antes disso o painel mostra o total da empresa e avisa.
 - Código: `atraso-painel.js` (cálculo puro, testado em `tests/atraso-painel.test.cjs`) e `atraso-painel-ui.js` (tela). `historico-atraso.js` ganhou só o ponto de entrada, o filtro `diasMin` e a lista de ações separada por vírgula no `filtrar`.
 

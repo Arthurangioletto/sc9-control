@@ -386,6 +386,7 @@
         sel,
         h('button', { class: 'btn', onclick: () => i > 0 && trocarMes(meses[i - 1]), disabled: i <= 0, 'aria-label': 'Próximo mês', text: '▶' }),
         h('button', { class: 'btn', type: 'button', title: 'Ver e registrar as ocorrências da expedição (quem registra entra com usuário e senha)', onclick: () => { const c = document.getElementById('ocorrencias-box'); if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, text: 'Ocorrências da expedição ↓' }),
+        painelLigado ? h('a', { class: 'btn', href: urlComPainel('0'), title: 'Esconde o painel e mostra só a página de antes', text: 'Só a página antiga' }) : h('a', { class: 'btn primario', href: urlComPainel('1'), text: 'Painel executivo' }),
         chaveLink ? null : h('a', { class: 'btn', href: '/', text: 'Voltar ao SC9' })));
   }
 
@@ -752,7 +753,9 @@
   }
 
   // Painel executivo (?painel=1): arquivos atraso-painel.js e atraso-painel-ui.js. Fica acima do conteúdo de sempre; nada foi removido.
-  const painelLigado = new URLSearchParams(location.search).get('painel') === '1';
+  // O painel é o padrão no link de sempre; ?painel=0 mostra só a página antiga (que continua inteira abaixo do painel).
+  const painelLigado = new URLSearchParams(location.search).get('painel') !== '0';
+  const urlComPainel = (v) => { const u = new URL(location.href); u.searchParams.set('painel', v); return u.pathname + u.search + u.hash; };
   function painelExecutivo() { return painelLigado && root.SC9AtrasoPainelUI && estado.p ? root.SC9AtrasoPainelUI.montar() : null; }
   function irParaLista(filtro) {
     estado.aba = 'atraso'; estado.aberto = ''; estado.limite = 100;
