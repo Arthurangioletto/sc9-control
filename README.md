@@ -478,3 +478,9 @@ Aba nova, liberada por usuário no perfil `gaveta` (o administrador sempre vê).
 - Aponta pedidos em que a transportadora da planilha de Entrega difere da cadastrada no SC5 (comparação sem acento, caixa nem pontuação, e "TCS" casa com "TCS TRANSPORTES").
 - Rota: `GET /api/recebimento/fechamento?dia=AAAA-MM-DD`. O cálculo é `fechamento-dia.js` (função pura, não servida ao navegador). Nada é gravado: só lê o que o Recebimento já guarda.
 - Os volumes só aparecem quando a expedição informa no Recebimento; enquanto não informam, a tela mostra "não informados" em vez de 0.
+
+## Acompanhar pedidos e ajustes da tela da vendedora
+
+- **Acompanhar este pedido** (botão no resultado da consulta; também é ativado ao pedir prioridade): a lista fica só no aparelho (`localStorage`, até 30 pedidos), sem back-end novo. A situação é consultada de novo a cada minuto com a tela aberta, e o selo **Mudou** aparece quando a etapa atual, a situação geral ou a ocorrência é diferente da última vez que ela olhou. "Já vi" ou abrir o pedido zera o selo. A lista aparece na tela Acompanhar e em Minhas > Acompanho.
+- Faixa do topo mais curta (hora da atualização) com "Como funciona" recolhido; pedido não encontrado passa a ter "Digitar outro número" como ação principal, e "Avisar a expedição".
+- Botões pequenos com 44px de altura em telas de toque e cores com mais contraste (placeholder, etapa pendente, "aguarde").
