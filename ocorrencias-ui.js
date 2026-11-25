@@ -184,7 +184,7 @@
         setDados(j); setColar(null); avisarPagina();
         const r = j.resultado || {};
         const lixo = lido.invalidas.length + ((r.invalidas || []).length);
-        setAviso((r.novas || 0) + ' ocorrência(s) nova(s)' + (r.repetidas ? ', ' + r.repetidas + ' já existia(m)' : '') + (lixo ? ', ' + lixo + ' linha(s) com problema' : '') + '.'); setErro('');
+        setAviso((r.novas || 0) + ' ocorrência(s) nova(s)' + (r.completadas ? ', ' + r.completadas + ' completada(s) com o que faltava' : '') + (r.repetidas ? ', ' + r.repetidas + ' já existia(m)' : '') + (lixo ? ', ' + lixo + ' linha(s) com problema' : '') + '.'); setErro('');
       } catch (e) { setErro(e.message); }
     }
     function baixar() {

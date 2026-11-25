@@ -107,16 +107,24 @@ function aplicar(linhasAtuais, corpo, usuario, agora) {
   }
   if (acao === 'importar') {
     const entrada = Array.isArray(corpo.linhas) ? corpo.linhas.slice(0, 500) : [];
-    let novas = 0, repetidas = 0; const invalidas = [];
+    let novas = 0, repetidas = 0, completadas = 0; const invalidas = [];
     entrada.forEach((x, k) => {
       const r = normalizarLinha(x);
       if (r.erro) { invalidas.push({ linha: k + 1, motivo: r.erro }); return; }
-      if (linhas.some((e) => mesmaOcorrencia(e, r.linha))) { repetidas++; return; }
+      const ja = linhas.find((e) => mesmaOcorrencia(e, r.linha));
+      if (ja) {
+        // já existe: só completa o que está vazio (nunca troca o que já foi preenchido)
+        let mudou = false;
+        for (const campo of ['responsavel', 'solucao', 'tipo']) if (!ja[campo] && r.linha[campo]) { ja[campo] = r.linha[campo]; mudou = true; }
+        if (!ja.dataSolucao && r.linha.dataSolucao && r.linha.dataSolucao >= ja.dataOcorrencia) { ja.dataSolucao = r.linha.dataSolucao; mudou = true; }
+        if (mudou) { ja.atualizadoPor = quem; ja.atualizadoEm = quando; completadas++; } else repetidas++;
+        return;
+      }
       if (linhas.length >= MAX_LINHAS) { invalidas.push({ linha: k + 1, motivo: 'Limite de linhas atingido.' }); return; }
       linhas.push(Object.assign({}, r.linha, { id: novoId(agora), criadoPor: quem, criadoEm: quando, atualizadoPor: quem, atualizadoEm: quando }));
       novas++;
     });
-    return { linhas, resultado: { novas, repetidas, invalidas } };
+    return { linhas, resultado: { novas, repetidas, completadas, invalidas } };
   }
   return { linhas, erro: 'ação inválida' };
 }
