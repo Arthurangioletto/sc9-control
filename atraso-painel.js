@@ -161,6 +161,39 @@
     }
     return out;
   }
+  // ---------- taxa de atraso no geral (dia, semana, mês) ----------
+  // Taxa = pedidos que ENTRARAM no atraso ÷ pedidos despachados no dia (o volume que a expedição tirou). Somas, não média de porcentagens:
+  // semana e mês pesam cada dia pelo seu volume. Dia sem despacho registrado ou sem foto anterior fica de fora da taxa (não vira zero).
+  // Volume com filtro de armazém só existe nos dias gravados com o detalhe por armazém; com filtro de transportadora não existe.
+  function semanaDe(dia) { const w = diaDaSemana(dia); return somaDias(dia, -((w + 6) % 7)); } // segunda-feira da semana
+  function taxaAtraso(p, ate, g) {
+    const ex = (dia) => {
+      if (g && g.transp) return null;
+      if (g && g.arm) { const x = porArmazem(p.exp, dia, g.arm); return x ? x.atual : null; }
+      return p.exp[dia] || null;
+    };
+    const entrou = new Map();
+    for (const a of p.analises) if (a.cmp && a.reg.dia <= ate) entrou.set(a.reg.dia, selecionar(a.cmp.novos, g).length);
+    const diasComDado = [...new Set([...Object.keys(p.exp), ...entrou.keys()])].filter((d) => d <= ate).sort();
+    const dias = diasComDado.map((dia) => {
+      const e = ex(dia), n = entrou.has(dia) ? entrou.get(dia) : null, a = p.porDia.get(dia);
+      const foto = a ? resumoItens(selecionar(a.reg.itens, g)) : null;
+      const valido = e && e.pedidos > 0 && n != null;
+      return { dia, semana: SEMANA[diaDaSemana(dia)], volume: e ? e.pedidos : null, pecas: e ? e.pecas : null, entraram: n, emAtraso: foto ? foto.tot : null, valido, pct: valido ? n / e.pedidos * 100 : null };
+    });
+    const somar = (lista, chave, rotulo) => {
+      const v = lista.filter((d) => d.valido), volume = v.reduce((s, d) => s + d.volume, 0), entraram = v.reduce((s, d) => s + d.entraram, 0), pecas = v.reduce((s, d) => s + (d.pecas || 0), 0);
+      const comAtraso = lista.filter((d) => d.emAtraso != null);
+      return { chave, rotulo, dias: v.length, volume, pecas, entraram, pct: volume ? entraram / volume * 100 : null, mediaVolume: v.length ? volume / v.length : null, mediaEmAtraso: comAtraso.length ? comAtraso.reduce((s, d) => s + d.emAtraso, 0) / comAtraso.length : null, piorDia: v.length ? v.reduce((m, d) => (d.pct > m.pct ? d : m), v[0]).dia : null, diasSemTaxa: lista.length - v.length };
+    };
+    const agrupar = (chaveDe, rotuloDe) => {
+      const mapa = new Map();
+      for (const d of dias) { const k = chaveDe(d.dia); if (!mapa.has(k)) mapa.set(k, []); mapa.get(k).push(d); }
+      return [...mapa.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1)).map(([k, l]) => somar(l, k, rotuloDe(k)));
+    };
+    return { dias, semanas: agrupar(semanaDe, (k) => 'Semana de ' + k.slice(8, 10) + '/' + k.slice(5, 7)), meses: agrupar((d) => d.slice(0, 7), (k) => k.slice(5, 7) + '/' + k.slice(0, 4)), geral: somar(dias, 'geral', 'Tudo') };
+  }
+
   // Média móvel sobre os últimos n valores existentes (null é ignorado, não vira zero).
   function mediaMovel(valores, n) {
     const out = [], janela = [];
@@ -348,7 +381,7 @@
     return { lista, total, qtd: todas.length };
   }
 
-  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, porArmazem, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, cascata, mapaCalor, transportadoras, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
+  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, porArmazem, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, taxaAtraso, semanaDe, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, cascata, mapaCalor, transportadoras, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
   root.SC9AtrasoPainel = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);
