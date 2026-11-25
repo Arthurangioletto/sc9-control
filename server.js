@@ -489,6 +489,11 @@ SERVABLE.add("prioridades.html");
 SERVABLE.add("prioridades.js");
 SERVABLE.add("fechamento-dia.html");
 SERVABLE.add("fechamento-dia-ui.js");
+SERVABLE.add("expedicao.html");
+SERVABLE.add("expedicao-ui.js");
+SERVABLE.add("expedicao.css");
+SERVABLE.add("expedicao-xlsx.js");
+SERVABLE.add("recebimento-expedicao-frame.js");
 SERVABLE.add("historico-atraso.html");
 SERVABLE.add("historico-atraso.js");
 SERVABLE.add("atraso-painel.js");
@@ -509,10 +514,15 @@ function serveStatic(req, res, urlPath) {
   carregarEstatico(name, (err, e) => {
     if (err) { res.writeHead(404); return res.end("não encontrado"); }
     const cabecalhos = { "Content-Type": MIME[path.extname(name)] || "application/octet-stream", "Cache-Control": "no-cache", "ETag": e.etag, "Vary": "Accept-Encoding" };
-    if (name === "vendedoras.html" || name === "prioridades.html" || name === "fechamento-dia.html") {
+    if (name === "vendedoras.html" || name === "prioridades.html" || name === "fechamento-dia.html" || name === "expedicao.html") {
       // páginas sem React e sem scripts de terceiros: só o próprio servidor
       cabecalhos["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
       cabecalhos["Referrer-Policy"] = "no-referrer"; cabecalhos["X-Content-Type-Options"] = "nosniff"; cabecalhos["X-Robots-Tag"] = "noindex, nofollow";
+    }
+    if (name === "expedicao.html") {
+      // o Painel da Expedição abre DENTRO do SC9 (aba Recebimento Expedição), numa moldura da mesma origem
+      if (!FRAMING_OK) cabecalhos["X-Frame-Options"] = "SAMEORIGIN";
+      cabecalhos["Content-Security-Policy"] = cabecalhos["Content-Security-Policy"].replace("frame-ancestors 'none'", "frame-ancestors 'self'");
     }
     if (name === "conferencia-de-lotes.html" || name === "transferencia-de-lotes.html") {
       // essas duas páginas abrem DENTRO do SC9 (moldura da mesma origem): o X-Frame-Options DENY global as bloqueava ("recusou a se conectar")
@@ -1017,13 +1027,20 @@ const diaSP = (d = new Date()) => FORMATADOR_DIA_SP.format(d);
 const diaAnterior = (dia, n) => { const d = new Date(`${dia}T12:00:00-03:00`); d.setUTCDate(d.getUTCDate() - n); return diaSP(d); };
 const saidaObj = (dia) => `saida-pv-${dia}.json`;
 const saidaCache = new Map();
+const saidaLendo = new Map(); // leituras do mesmo dia em andamento: quem chega junto espera a mesma, em vez de baixar de novo
 async function saidaCarregar(dia) {
   if (saidaCache.has(dia)) return saidaCache.get(dia);
-  const data = await objLoad(saidaObj(dia));
-  const v = data && Array.isArray(data.entries) ? data : { dia, versao: 0, entries: [], removidos: [] };
-  if (!Array.isArray(v.removidos)) v.removidos = [];
-  saidaCache.set(dia, v);
-  return v;
+  if (saidaLendo.has(dia)) return saidaLendo.get(dia);
+  const p = (async () => {
+    const data = await objLoad(saidaObj(dia));
+    if (saidaCache.has(dia)) return saidaCache.get(dia); // uma gravação terminou enquanto esta leitura esperava: vale a gravada
+    const v = data && Array.isArray(data.entries) ? data : { dia, versao: 0, entries: [], removidos: [] };
+    if (!Array.isArray(v.removidos)) v.removidos = [];
+    saidaCache.set(dia, v);
+    return v;
+  })().finally(() => saidaLendo.delete(dia));
+  saidaLendo.set(dia, p);
+  return p;
 }
 // um pedido "pendente" é aquele que a reconciliação ainda pode precisar tocar
 // (ainda sem info do SC9, ou já tem info mas ainda sem NF — pode ganhar NF a
@@ -1192,13 +1209,20 @@ const recebPalavras = (q) => semAcento(q).split(/[\s,;]+/).filter((p) => p && !(
 const recebPalheiro = (pedido, info, quem) => semAcento([pedido, info && info.nf, info && info.cliente, info && info.codCliente, info && info.transportadora, quem].filter((x) => x !== null && x !== undefined).join(" "));
 const recebObj = (dia) => `recebimento-exp-${dia}.json`;
 const recebCache = new Map();
+const recebLendo = new Map(); // leituras do mesmo dia em andamento (painel + lista + exportação juntos não repetem a leitura)
 async function recebCarregar(dia) {
   if (recebCache.has(dia)) return recebCache.get(dia);
-  const data = await objLoad(recebObj(dia));
-  const v = data && Array.isArray(data.entries) ? data : { dia, versao: 0, entries: [], removidos: [] };
-  if (!Array.isArray(v.removidos)) v.removidos = [];
-  recebCache.set(dia, v);
-  return v;
+  if (recebLendo.has(dia)) return recebLendo.get(dia);
+  const p = (async () => {
+    const data = await objLoad(recebObj(dia));
+    if (recebCache.has(dia)) return recebCache.get(dia); // uma gravação terminou enquanto esta leitura esperava: vale a gravada, não a lida
+    const v = data && Array.isArray(data.entries) ? data : { dia, versao: 0, entries: [], removidos: [] };
+    if (!Array.isArray(v.removidos)) v.removidos = [];
+    recebCache.set(dia, v);
+    return v;
+  })().finally(() => recebLendo.delete(dia));
+  recebLendo.set(dia, p);
+  return p;
 }
 async function recebGravar(dia, novo) {
   novo.versao = (novo.versao || 0) + 1;
@@ -1222,7 +1246,7 @@ let recebEntregas = null;
 async function recebEntregasCarregar() {
   if (recebEntregas) return recebEntregas;
   const d = await objLoad(RECEB_ENTREGAS_OBJ);
-  recebEntregas = { uploads: Array.isArray(d && d.uploads) ? d.uploads : [] };
+  recebEntregas = { uploads: Array.isArray(d && d.uploads) ? d.uploads : [], bases: Array.isArray(d && d.bases) ? d.bases : [] }; // bases: quantos pedidos a Entrega tinha em cada SC9 carregado
   return recebEntregas;
 }
 const recebDiasJanela = (hoje, n) => Array.from({ length: n }, (_, i) => diaAnterior(hoje, i));
@@ -1248,6 +1272,171 @@ async function exigirRecebimento(req, res, { despacho = false, leitura = false }
     || (despacho ? perfis.includes("despacho") : leitura ? (perfis.includes("recebimento") || perfis.includes("despacho")) : perfis.includes("recebimento"));
   if (!pode) { sendJson(res, 403, { error: despacho ? "só o usuário de despacho pode confirmar a saída com a planilha de Entrega" : "seu acesso não permite isso" }); return null; }
   return sess;
+}
+
+// ---------------------------------------------------------------------------
+// Vínculo Entrega <-> Recebimento <-> Saída (painel da expedição). A lógica de casar/classificar fica em expedicao-vinculo.js (pura);
+// aqui ficam só a leitura dos caches, as filas de gravação e as rotas. Leitura de rotina = memória (recebCarregar/saidaCarregar,
+// último SC9 e índice que o próprio servidor guarda ao salvar) — nada de baixar tudo do Supabase a cada chamada.
+// ---------------------------------------------------------------------------
+let expMod = null; // carregado só na primeira vez que alguém usa (a lógica pura fica em expedicao-vinculo.js)
+const Exp = new Proxy({}, { get: (_, k) => (expMod || (expMod = require("./expedicao-vinculo.js")))[k] });
+const expDisponivel = () => { try { return Boolean(Exp.DIAS_DUP); } catch (e) { if (e && e.code === "MODULE_NOT_FOUND") return false; throw e; } };
+const EXP_DEPOIS = 5;                       // dias depois do período em que ainda se procura o recebimento de um pedido que desceu
+const EXP_CACHE_MEM_MS = 10 * 60 * 1000;    // o SC9/índice em memória vale até 10 min sem reler do armazenamento (o save atualiza na hora)
+const EXP_SAIDA_ANTES = 10;                 // a saída do estoque pode ser dias antes do recebimento
+const EXP_RASTREIO_DIAS = 366;
+async function expEmLotes(itens, n, fn) { const r = []; for (let i = 0; i < itens.length; i += n) r.push(...await Promise.all(itens.slice(i, i + n).map(fn))); return r; }
+async function expIndice() {
+  if (indiceCache && indiceCache.data && Date.now() - indiceCache.at < EXP_CACHE_MEM_MS) return indiceCache.data;
+  return indiceCarregar();
+}
+async function expSnapshot() {
+  if (snapshotCache && snapshotCache.data && Date.now() - snapshotCache.at < EXP_CACHE_MEM_MS) return snapshotCache.data;
+  return loadSnapshot();
+}
+const expPorSnapshot = new WeakMap();
+const expEntregaDe = (snap) => { let c = expPorSnapshot.get(snap); if (!c) { c = { entrega: Exp.normalizarEntrega(snap.entregaInfo), indice: null }; expPorSnapshot.set(snap, c); } return c; };
+const expIndiceDoSnapshot = (snap) => { const c = expEntregaDe(snap); if (!c.indice) c.indice = montarIndicePedidos(snap); return c.indice; };
+// versão leve (sem a lista de itens) do que o índice sabe de um pedido
+function expInfoLeve(indice, ped) {
+  const r = indice && indice.pedidos ? indice.pedidos[ped] : null;
+  return r ? { armazem: r.a, cliente: r.c, transportadora: r.tr, linhas: r.l, pecas: r.q, conferente: r.cf, nf: r.nf, liberadoEm: r.dt, fimConferencia: r.fc } : null;
+}
+let expAtrasoCache = null;
+async function expAtrasoSaidas() { // 1ª saída de cada pedido guardada pelo histórico de atraso (cobre dias já exportados/apagados da Saída); só leitura
+  if (expAtrasoCache && Date.now() - expAtrasoCache.at < 60000) return expAtrasoCache.mapa;
+  let mapa = new Map();
+  try { const d = await objLoad("atraso-saidas.json"); mapa = new Map(Object.entries((d && d.pedidos) || {})); } catch { /* sem o cache, só vale a Saída guardada */ }
+  expAtrasoCache = { at: Date.now(), mapa };
+  return mapa;
+}
+async function expRecebDias(de, ate) {
+  const dias = Exp.diasEntre(de, ate);
+  const lista = await expEmLotes(dias, 8, (d) => recebCarregar(d));
+  const porDia = {}, removidosPorDia = {}, versoes = [];
+  dias.forEach((d, i) => { porDia[d] = lista[i].entries; removidosPorDia[d] = lista[i].removidos || []; versoes.push(d.slice(5) + ":" + (lista[i].versao || 0)); });
+  return { porDia, removidosPorDia, versoes };
+}
+async function expSaidasJanela(de, ate, hoje) {
+  const dias = [...new Set([...(await saidaDiasCarregar()), hoje])].filter((d) => d >= de && d <= ate).sort();
+  const lista = await expEmLotes(dias, 8, (d) => saidaCarregar(d));
+  const porDia = {}, versoes = [];
+  dias.forEach((d, i) => { porDia[d] = lista[i].entries; versoes.push(d.slice(5) + ":" + (lista[i].versao || 0)); });
+  return { porDia, versoes };
+}
+const expMemo = new Map();
+// registros do período (uma linha por pedido/situação). Guardado por poucos segundos enquanto nada mudou (mesmas versões, mesmo SC9).
+async function expRegistros(de, ate) {
+  const hoje = diaSP();
+  const recebFim = Exp.addDias(ate, EXP_DEPOIS) > hoje ? hoje : Exp.addDias(ate, EXP_DEPOIS);
+  const receb = await expRecebDias(Exp.addDias(de, -RECEB_DIAS_ENTREGA), recebFim < ate ? ate : recebFim);
+  const saida = await expSaidasJanela(Exp.addDias(de, -EXP_SAIDA_ANTES), ate, hoje);
+  let snap = null; try { snap = await expSnapshot(); } catch { /* sem SC9: só Saída e Recebimento */ }
+  let indice = null; try { indice = await expIndice(); } catch { /* sem índice */ }
+  const atraso = await expAtrasoSaidas();
+  const entregaI = snap ? expEntregaDe(snap) : { entrega: new Map() };
+  const sig = [hoje, receb.versoes.join(","), saida.versoes.join(","), snap ? snap.savedAt : "", indice ? indice.savedAt : "", atraso.size].join("|");
+  const chave = de + "|" + ate, c = expMemo.get(chave);
+  if (c && c.sig === sig && Date.now() - c.at < 30000) return c.r;
+  const m = Exp.montarRegistros({ de, ate, hoje, agora: new Date(), recebPorDia: receb.porDia, saidaPorDia: saida.porDia, entrega: entregaI.entrega, resolver: (p) => expInfoLeve(indice, p), fallbackSaida: atraso });
+  const r = { m, hoje, snap, pedidosNaEntrega: snap && Array.isArray(snap.entregaInfo) ? entregaI.entrega.size : null, baseEntregaEm: snap ? snap.savedAt || null : null };
+  expMemo.set(chave, { sig, at: Date.now(), r });
+  if (expMemo.size > 12) expMemo.delete(expMemo.keys().next().value);
+  return r;
+}
+// Completa as entradas do período com o que o SC9 sabe agora (gravando) e cria/confirma as da Entrega. Chamado DENTRO da fila "recebimento".
+async function expExecutarPlano({ de, ate, hoje, entrega, resolver, sess, arquivo, nome, simular }) {
+  const agora = new Date();
+  const receb = await expRecebDias(Exp.addDias(de, -RECEB_DIAS_ENTREGA), hoje); // até hoje: pedido já recebido DEPOIS da data da Entrega não pode ser duplicado
+  const saida = await expSaidasJanela(Exp.addDias(de, -EXP_SAIDA_ANTES), ate, hoje);
+  const plano = Exp.planejarImportacao({
+    de, ate, agora, entrega, recebPorDia: receb.porDia, removidosPorDia: receb.removidosPorDia, saidaPorDia: saida.porDia, fallbackSaida: await expAtrasoSaidas(), resolver,
+    por: sess ? sess.usuario : "sistema", nome, arquivo, gerarId: (ped) => `rx_${ped}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`,
+  });
+  if (simular) return { plano, gravados: null, porDia: receb.porDia };
+  let diasGravados = 0;
+  for (const a of plano.alteracoes) {
+    const atual = await recebCarregar(a.dia);
+    await recebGravar(a.dia, { ...atual, entries: Exp.aplicarAlteracao(atual.entries, a) });
+    diasGravados++;
+  }
+  return { plano, gravados: { dias: diasGravados, novos: plano.novos, confirmados: plano.confirmados }, porDia: receb.porDia };
+}
+// Ao salvar o SC9: nota/cliente/transportadora que faltavam entram nas entradas dos últimos 10 dias, os pedidos da Entrega ainda sem recebimento
+// viram entradas (origem "entrega") e os recebidos são marcados como saídos. Idempotente. Roda na fila do Recebimento.
+async function expSincronizarAoSalvar(payload, indice) {
+  return comFila("recebimento", async () => {
+    const hoje = diaSP(), agoraIso = new Date().toISOString();
+    const de = diaAnterior(hoje, RECEB_DIAS_ENTREGA - 1);
+    const resolver = (p) => expInfoLeve(indice, p);
+    const entrega = Exp.normalizarEntrega(payload.entregaInfo);
+    const receb = await expRecebDias(Exp.addDias(de, -RECEB_DIAS_ENTREGA), hoje);
+    const alterados = new Map();
+    let preenchidos = 0;
+    for (const dia of Exp.diasEntre(de, hoje)) {
+      const r = Exp.reconciliarInfo(receb.porDia[dia] || [], resolver, agoraIso);
+      if (r.mudou) { alterados.set(dia, r.entries); receb.porDia[dia] = r.entries; preenchidos += r.preenchidos; }
+    }
+    let criados = 0, confirmados = 0;
+    if (entrega.size) {
+      const saida = await expSaidasJanela(Exp.addDias(de, -EXP_SAIDA_ANTES), hoje, hoje);
+      const plano = Exp.planejarImportacao({
+        de, ate: hoje, agora: new Date(), entrega, recebPorDia: receb.porDia, removidosPorDia: receb.removidosPorDia, saidaPorDia: saida.porDia, fallbackSaida: await expAtrasoSaidas(), resolver,
+        por: "sistema", nome: "SC9 carregado", arquivo: "SC9 carregado", gerarId: (ped) => `rx_${ped}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`,
+      });
+      for (const a of plano.alteracoes) alterados.set(a.dia, Exp.aplicarAlteracao(alterados.get(a.dia) || receb.porDia[a.dia] || [], a));
+      criados = plano.novos; confirmados = plano.confirmados;
+    }
+    for (const [dia, entries] of alterados) { const atual = await recebCarregar(dia); await recebGravar(dia, { ...atual, entries }); }
+    if (Array.isArray(payload.entregaInfo)) { // quantos pedidos a Entrega tinha em cada SC9: serve para denunciar planilha cortada
+      const log = await recebEntregasCarregar();
+      const ult = log.bases[log.bases.length - 1];
+      if (!ult || ult.em !== payload.savedAt) {
+        const novoLog = { ...log, bases: [...log.bases, { em: payload.savedAt, pedidosNaEntrega: entrega.size }].slice(-30) };
+        await objSave(RECEB_ENTREGAS_OBJ, novoLog);
+        recebEntregas = novoLog;
+      }
+    }
+    return { preenchidos, criados, confirmados };
+  });
+}
+// o que o bipe devolve de uma vez: tudo do pedido, sem a pessoa digitar nada
+function expResumoBipe(ped, info, entry, desceu, achadoLongo) {
+  const i = info || {}, e = entry || {};
+  const semAchado = !desceu || desceu.status !== "ok";
+  const larga = semAchado && achadoLongo ? descerResumo(achadoLongo) : null;
+  const d = larga && larga.status === "ok" ? larga : desceu || { status: "sem_saida" };
+  return {
+    pedido: ped, cliente: i.cliente || "", armazem: i.armazem || "", transportadora: i.transportadora || (e.saiuEntrega && e.saiuEntrega.transportadora) || "", linhas: i.linhas || 0, pecas: i.pecas || 0,
+    conferente: i.conferente || "", liberadoEm: i.liberadoEm || null, nf: i.nf || "", aguardandoNota: !i.nf,
+    desceu: d.status === "ok", desceuEm: d.saidaEm || null, desceuPor: d.saidaPor || null, desceuDia: d.saidaDia || null, emAlteracao: Boolean(d.emAlteracao),
+    saiuEntrega: e.saiuEntrega || null, origem: e.origem === "entrega" ? "entrega" : "bipe", semDadoSC9: !info,
+    tempos: expTempos(d.status === "ok" ? d.saidaEm : null, e.horaEstimada === true ? null : e.recebidoEm),
+  };
+}
+// quanto o pedido ficou "lá embaixo" entre o estoque descer e a expedição receber (só com hora real; null se não há saída do estoque)
+function expTempos(desceuEm, recebidoEm) {
+  const a = desceuEm ? new Date(desceuEm).getTime() : NaN, b = recebidoEm ? new Date(recebidoEm).getTime() : NaN;
+  return { desceuEm: desceuEm || null, minutosDesceuAteReceber: Number.isFinite(a) && Number.isFinite(b) && b >= a ? Math.round((b - a) / 60000) : null };
+}
+const EXP_CTRL = /[\u0000-\u001f\u007f]/;
+// parâmetros comuns das rotas de leitura: devolve { erro } ou os valores já validados
+function expParametros(q, hoje) {
+  const g = (k) => { const v = q.get(k); return v === null ? "" : v; };
+  const iv = Exp.intervalo(g("de"), g("ate"), hoje);
+  if (iv.erro) return { erro: iv.erro };
+  const transportadora = g("transportadora"), busca = g("q"), situacao = g("situacao");
+  if (transportadora.length > 60 || EXP_CTRL.test(transportadora)) return { erro: "Transportadora inválida." };
+  if (busca.length > 80 || EXP_CTRL.test(busca)) return { erro: "Busca inválida: use até 80 caracteres." };
+  if (busca.trim() && !Exp.palavrasDaBusca(busca).length) return { erro: "Digite pelo menos 3 números ou uma palavra." };
+  if (situacao && !Exp.SITUACOES.includes(situacao)) return { erro: "Situação inválida." };
+  const pg = g("pagina") || "1", lim = g("limite") || "100";
+  if (!/^\d{1,6}$/.test(pg) || Number(pg) < 1) return { erro: "Página inválida." };
+  if (!/^\d{1,4}$/.test(lim) || Number(lim) < 1 || Number(lim) > 500) return { erro: "Limite inválido: use de 1 a 500." };
+  const sp = g("somentePendentes");
+  if (sp !== "" && sp !== "0" && sp !== "1") return { erro: "somentePendentes deve ser 0 ou 1." };
+  return { de: iv.de, ate: iv.ate, transportadora: transportadora.trim(), q: busca.trim(), situacao, pagina: Number(pg), limite: Number(lim), somentePendentes: sp === "1" };
 }
 
 const LOGIN_RE = /^[a-z0-9._-]{3,30}$/;
@@ -1681,16 +1870,17 @@ async function handleApi(req, res, pathname) {
     }
     payload.savedAt = new Date().toISOString();
     try {
+      const avisosSave = []; // o que não foi gravado entra na resposta (antes só ia para o log e a resposta dizia ok)
       const info = await saveSnapshot(payload);
       // guarda À PARTE só o saldo por lote: é tudo que o operador do controle recebe
       if (Array.isArray(payload.saldoPorLote)) {
         try { await objSave(SALDO_OBJ, { saldoPorLote: payload.saldoPorLote, savedAt: payload.savedAt }); }
         catch (e) { console.error("Erro ao salvar saldo por lote:", e); avisosSave.push("saldo por lote não foi gravado"); }
       }
-      let saida = null;
-      const avisosSave = []; // o que não foi gravado entra na resposta (antes só ia para o log e a resposta dizia ok)
+      let saida = null, indiceSave = null, expedicao = null;
       try { // índice de pedidos (é o que o conferente consulta ao bipar)
         const idx = montarIndicePedidos(payload);
+        indiceSave = idx;
         await objSave(INDICE_OBJ, idx);
         indiceCache = { at: Date.now(), data: idx };
         saida = await saidaReconciliar(idx); // e revê os bipes já guardados com o SC9 novo
@@ -1700,6 +1890,9 @@ async function handleApi(req, res, pathname) {
         const fat = AH.faturadosDaBase(payload.orders, payload.faturamento, (iso) => { const d = iso ? new Date(iso) : null; return d && !isNaN(d) ? diaSP(d) : ""; }, ARMAZENS_GERAL);
         if (Object.keys(fat).length) await guardarDespacho(AH, {}, fat);
       } catch (e) { console.error("Erro ao gravar os faturados por dia:", e); avisosSave.push("faturados por dia não foram atualizados"); }
+      if (expDisponivel()) try { // Recebimento da expedição acompanha o SC9: nota/cliente/transportadora que faltavam, pedidos da Entrega sem recebimento e saída confirmada
+        expedicao = await expSincronizarAoSalvar(payload, indiceSave || montarIndicePedidos(payload));
+      } catch (e) { console.error("Erro ao sincronizar o recebimento da expedição com a Entrega:", e); avisosSave.push("recebimento da expedição não foi sincronizado com a Entrega"); }
       try {
         // Só os pedidos do Cambuci, com o que o dashboard precisa (liberação,
         // pickEnd, confEnd, nf, status, transportadora, peças). Guardado à
@@ -1785,7 +1978,7 @@ async function handleApi(req, res, pathname) {
         }
         await objSave(VALOR_GERAL_OBJ, { mes: mesReferencia, valorMes: pedidosComValorMes > 0 ? valorMes : null, notasContadas: pedidosComValorMes, atualizadoEm: new Date().toISOString() });
       } catch (e) { console.error("Erro ao calcular o valor faturado geral:", e); avisosSave.push("valor faturado do mês não foi gravado"); }
-      return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length, saida, ...(avisosSave.length ? { avisos: avisosSave } : {}) });
+      return sendJson(res, 200, { ok: true, ...info, orders: payload.orders.length, saida, ...(expedicao && (expedicao.preenchidos || expedicao.criados || expedicao.confirmados) ? { expedicao } : {}), ...(avisosSave.length ? { avisos: avisosSave } : {}) });
     } catch (e) {
       console.error("Erro ao salvar snapshot:", e);
       return sendJson(res, 500, erroPublico(e, "erro ao salvar"));
@@ -3645,9 +3838,10 @@ async function handleApi(req, res, pathname) {
       const log = await recebEntregasCarregar();
       const ultima = log.uploads.length ? log.uploads[log.uploads.length - 1] : null;
       const cfg = await recebConfigCarregar();
-      const ver = [dia, d.versao || 0, ...versoes, log.uploads.length, ultima ? ultima.em : "", cfg.alertaHoras].join("|");
+      let indiceExp = null; try { indiceExp = await expIndice(); } catch { /* sem índice: mostra o que a entrada já tem */ }
+      const ver = [dia, d.versao || 0, ...versoes, log.uploads.length, ultima ? ultima.em : "", cfg.alertaHoras, indiceExp ? indiceExp.savedAt || "" : ""].join("|");
       if (q.get("v") !== null && q.get("v") === ver) return sendJson(res, 200, { igual: true, versao: ver, hoje });
-      const entries = d.entries.map((e) => ({ ...e, desceu: descerResumo(mapa.get(e.pedido)) }));
+      const entries = d.entries.map((e) => ({ ...Exp.visaoEntrada(e, expInfoLeve(indiceExp, e.pedido)), desceu: descerResumo(mapa.get(e.pedido)) })); // a nota (e cliente/transportadora) vem do SC9 mais novo, nunca fica congelada
       // "desceu" (Saída) nos últimos 2 dias que ainda NÃO foi recebido (em nenhum dos últimos dias)
       let faltando = [];
       if (dia === hoje) {
@@ -3656,7 +3850,7 @@ async function handleApi(req, res, pathname) {
         for (const [ped, a] of mapa) {
           if (a.dia !== hoje && a.dia !== diaAnterior(hoje, 1)) continue;
           if (recebidos.has(ped)) continue;
-          faltando.push({ pedido: ped, saidaEm: a.entry.registradoEm, saidaPor: a.entry.registradoPorNome || a.entry.registradoPorUsuario, saidaDia: a.dia, info: a.entry.info || null, emAlteracao: Boolean(a.entry.alteracao && a.entry.alteracao.status === "pendente") });
+          faltando.push({ pedido: ped, saidaEm: a.entry.registradoEm, saidaPor: a.entry.registradoPorNome || a.entry.registradoPorUsuario, saidaDia: a.dia, info: Exp.mesclarInfo(a.entry.info, expInfoLeve(indiceExp, ped)).info, emAlteracao: Boolean(a.entry.alteracao && a.entry.alteracao.status === "pendente") });
         }
         faltando.sort((x, y) => String(x.saidaEm).localeCompare(String(y.saidaEm)));
       }
@@ -3683,7 +3877,8 @@ async function handleApi(req, res, pathname) {
       const d = await recebCarregar(dia);
       const log = await recebEntregasCarregar();
       const ultima = log.uploads.length ? log.uploads[log.uploads.length - 1] : null;
-      return sendJson(res, 200, { ...require("./fechamento-dia.js").montarFechamento(d.entries, { dia }), hoje, entregaEnviadaEm: ultima ? ultima.em : null });
+      let indiceF = null; try { indiceF = await expIndice(); } catch { /* sem índice */ }
+      return sendJson(res, 200, { ...require("./fechamento-dia.js").montarFechamento(d.entries.map((e) => Exp.visaoEntrada(e, expInfoLeve(indiceF, e.pedido))), { dia }), hoje, entregaEnviadaEm: ultima ? ultima.em : null });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao montar o fechamento do dia")); }
   }
 
@@ -3710,9 +3905,11 @@ async function handleApi(req, res, pathname) {
       for (const d of [...dias, diaAnterior(de, 1)]) for (const e of (await saidaCarregar(d)).entries) if (!mapa.has(e.pedido)) mapa.set(e.pedido, { entry: e, dia: d });
       const casa = (txt) => palavras.every((p) => txt.includes(p));
       const resultados = []; const recebidos = new Set(); let total = 0;
+      let indiceP = null; try { indiceP = await expIndice(); } catch { /* sem índice */ }
       for (const d of dias) {
         const lista = (await recebCarregar(d)).entries;
-        for (const e of lista) { // já vem da mais nova para a mais antiga
+        for (const e0 of lista) { // já vem da mais nova para a mais antiga
+          const e = Exp.visaoEntrada(e0, expInfoLeve(indiceP, e0.pedido));
           recebidos.add(e.pedido);
           const info = e.info || {};
           if (transp && !semAcento(info.transportadora || "").includes(transp)) continue;
@@ -3761,16 +3958,34 @@ async function handleApi(req, res, pathname) {
     if (!ped) return sendJson(res, 400, { error: "Código inválido: leia só o número do pedido." });
     let indice = null;
     try { indice = await indiceCarregar(); } catch { /* sem índice: registra mesmo assim, sinalizado */ }
-    const info = infoDoPedido(indice, ped);
+    let info = infoDoPedido(indice, ped);
+    if (!info) { // o índice pode não ter o pedido (SC9 mais novo, índice antigo): procura no último SC9 salvo
+      try { const snap = await expSnapshot(); if (snap) info = infoDoPedido(expIndiceDoSnapshot(snap), ped); } catch { /* segue sem dado do SC9 */ }
+    }
     const hoje = diaSP();
     try {
       const r = await comFila("recebimento", async () => {
+        let achado = null;
         for (const dia of recebDiasJanela(hoje, RECEB_DIAS_DUP)) {
           const ex = (await recebCarregar(dia)).entries.find((e) => e.pedido === ped);
-          if (ex) return { duplicado: ex };
+          if (ex) { achado = { dia, ex }; break; }
         }
+        if (achado && achado.ex.origem !== "entrega") return { duplicado: achado.ex };
         const { mapa } = await saidaMapaRecente(hoje, RECEB_DIAS_DUP);
         const desceu = descerResumo(mapa.get(ped));
+        const larga = desceu.status === "ok" ? null : (await saidaMapaRecente(hoje, 10)).mapa.get(ped); // desceu há mais de 3 dias: só para mostrar quando/quem
+        if (achado && achado.dia !== hoje) return { entregaAnterior: achado.ex, dataEntrega: (achado.ex.saiuEntrega && achado.ex.saiuEntrega.dataEntrega) || achado.dia }; // saiu em outro dia: não mexe em nada
+        if (achado) { // veio da planilha de Entrega e agora a expedição bipou: vira bipe de verdade (hora e pessoa reais), mantendo a saída confirmada
+          const agoraIso = new Date().toISOString();
+          const { horaEstimada: _h, ...resto } = achado.ex;
+          const m = Exp.mesclarInfo(achado.ex.info, resumoInfo(info));
+          const promovida = { ...resto, origem: "bipe", recebidoPorUsuario: sess.usuario, recebidoPorNome: sess.nome, recebidoEm: agoraIso, desceuNaHora: desceu.status, info: m.info, semDadoSC9: !m.info && !info,
+            promovidoDe: { recebidoPorNome: achado.ex.recebidoPorNome, recebidoEm: achado.ex.recebidoEm, em: agoraIso } };
+          const atualDia = await recebCarregar(achado.dia);
+          const novoDia = { ...atualDia, entries: atualDia.entries.map((x) => (x.id === achado.ex.id ? promovida : x)), removidos: atualDia.removidos };
+          await recebGravar(achado.dia, novoDia);
+          return { entry: { ...promovida, desceu }, total: (await recebCarregar(hoje)).entries.length, desceu, promovido: true, larga, base: promovida };
+        }
         const atual = await recebCarregar(hoje);
         const novo = { ...atual, entries: [...atual.entries], removidos: atual.removidos };
         const entry = {
@@ -3781,10 +3996,19 @@ async function handleApi(req, res, pathname) {
         };
         novo.entries.unshift(entry);
         await recebGravar(hoje, novo);
-        return { entry: { ...entry, desceu }, total: novo.entries.length, desceu };
+        return { entry: { ...entry, desceu }, total: novo.entries.length, desceu, larga, base: entry };
       });
-      if (r.duplicado) return sendJson(res, 409, { error: "duplicado", duplicado: r.duplicado, info });
-      return sendJson(res, 200, { ok: true, entry: r.entry, desceu: r.desceu, info, totalHoje: r.total });
+      if (r.entregaAnterior) {
+        const [a, m, d] = String(r.dataEntrega).split("-");
+        return sendJson(res, 409, { error: "duplicado", mensagem: `Esse pedido já consta como saído na planilha de Entrega em ${d}/${m}. Não precisa receber de novo.`, duplicado: r.entregaAnterior, info, saiuEntrega: r.entregaAnterior.saiuEntrega || null });
+      }
+      if (r.duplicado) {
+        let desceuDup = { status: "sem_saida" }, largaDup = null;
+        try { desceuDup = descerResumo((await saidaMapaRecente(hoje, RECEB_DIAS_DUP)).mapa.get(ped)); if (desceuDup.status !== "ok") largaDup = (await saidaMapaRecente(hoje, 10)).mapa.get(ped); } catch { /* o aviso de duplicado sai mesmo assim */ }
+        return sendJson(res, 409, { error: "duplicado", duplicado: r.duplicado, info, resumo: expResumoBipe(ped, Exp.mesclarInfo(r.duplicado.info, resumoInfo(info)).info, r.duplicado, desceuDup, largaDup) });
+      }
+      const resumo = expResumoBipe(ped, Exp.mesclarInfo(r.base.info, resumoInfo(info)).info, r.base, r.desceu, r.larga);
+      return sendJson(res, 200, { ok: true, entry: r.entry, desceu: r.desceu, info, totalHoje: r.total, ...(r.promovido ? { promovido: true } : {}), resumo, tempos: resumo.tempos });
     } catch (e) {
       console.error("Erro ao receber na expedição:", e);
       return sendJson(res, 500, erroPublico(e, "erro ao registrar o recebimento"));
@@ -3876,8 +4100,8 @@ async function handleApi(req, res, pathname) {
             if (e.recebidoPorUsuario !== sess.usuario) return { erro: 403, msg: "Só quem bipou consegue desfazer o próprio bipe." };
             if (Date.now() - new Date(e.recebidoEm).getTime() > DESFAZER_MS) return { erro: 403, msg: "O prazo pra desfazer acabou. Fale com o administrador." };
           }
-          if (e.saiuEntrega) return { erro: 409, msg: "Esse pedido já foi confirmado como saído para entrega." };
-          const novo = { ...atual, entries: atual.entries.filter((x) => x.id !== id), removidos: [...atual.removidos, { id: e.id, pedido: e.pedido, removidoPorUsuario: sess.usuario, removidoPorNome: sess.nome, removidoEm: new Date().toISOString(), recebidoPorUsuario: e.recebidoPorUsuario, recebidoEm: e.recebidoEm }] };
+          if (e.saiuEntrega && !(sess.role === "admin" && e.origem === "entrega")) return { erro: 409, msg: "Esse pedido já foi confirmado como saído para entrega." }; // o administrador pode tirar uma entrada que veio da planilha (ela não volta sozinha)
+          const novo = { ...atual, entries: atual.entries.filter((x) => x.id !== id), removidos: [...atual.removidos, { id: e.id, pedido: e.pedido, origem: e.origem || "bipe", removidoPorUsuario: sess.usuario, removidoPorNome: sess.nome, removidoEm: new Date().toISOString(), recebidoPorUsuario: e.recebidoPorUsuario, recebidoEm: e.recebidoEm }] };
           await recebGravar(dia, novo);
           return { ok: true };
         }
@@ -3932,7 +4156,7 @@ async function handleApi(req, res, pathname) {
         }
         const log = await recebEntregasCarregar();
         const registro = { em: agora, por: sess.usuario, nome: sess.nome, arquivo: nomeArq, pedidosNoArquivo: doArquivo.size, confirmados, jaConfirmados, anteriores };
-        const novoLog = { uploads: [...log.uploads, registro].slice(-30) };
+        const novoLog = { ...log, uploads: [...log.uploads, registro].slice(-30) };
         await objSave(RECEB_ENTREGAS_OBJ, novoLog);
         recebEntregas = novoLog;
         return { ok: true, ...registro, naoSairam: naoSairam.slice(0, 500), totalNaoSairam: naoSairam.length };
@@ -3942,6 +4166,95 @@ async function handleApi(req, res, pathname) {
       console.error("Erro ao confirmar a Entrega:", e);
       return sendJson(res, 500, erroPublico(e, "erro ao confirmar a saída com a planilha de Entrega"));
     }
+  }
+
+  // ---- Vínculo Entrega <-> Recebimento <-> Saída: painel, lista, importação, rastreio e exportação (leitura: admin/recebimento/despacho) ----
+  if (pathname.startsWith("/api/expedicao/")) {
+    const rota = pathname.slice("/api/expedicao/".length);
+    const dono = { "painel": ["GET", false], "pedidos": ["GET", false], "exportar": ["GET", false], "importar-entrega": ["POST", true], "rastreio": ["POST", false] }[rota];
+    if (!dono || dono[0] !== method) return sendJson(res, dono ? 405 : 404, { error: dono ? "método não permitido" : "não encontrado" });
+    const sess = await exigirRecebimento(req, res, dono[1] ? { despacho: true } : { leitura: true }); if (!sess) return;
+    const LIMITE_POR_MIN = { "painel": 60, "pedidos": 60, "exportar": 20, "importar-entrega": 10, "rastreio": 60 };
+    if (limiteVendedoras("exp|" + rota + "|" + sess.usuario, LIMITE_POR_MIN[rota], 60000)) return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
+    res.setHeader("Cache-Control", "no-store");
+    const hoje = diaSP();
+    const podeImportar = sess.role === "admin" || (sess.perfis || []).includes("despacho");
+
+    if (rota === "painel" || rota === "pedidos" || rota === "exportar") {
+      const p = expParametros(new URL(req.url, "http://localhost").searchParams, hoje);
+      if (p.erro) return sendJson(res, 400, { error: p.erro });
+      try {
+        const r = await expRegistros(p.de, p.ate);
+        if (rota === "pedidos") return sendJson(res, 200, { de: p.de, ate: p.ate, ...Exp.paginar(Exp.filtrar(r.m.registros, p), p.pagina, p.limite) });
+        if (rota === "exportar") return sendJson(res, 200, { geradoEm: new Date().toISOString(), de: p.de, ate: p.ate, ...Exp.linhasExportacao(r.m.registros, p) });
+        const log = await recebEntregasCarregar().catch(() => ({ uploads: [], bases: [] }));
+        const anteriores = log.bases.filter((b) => b.em !== r.baseEntregaEm), ant = anteriores[anteriores.length - 1] || null;
+        return sendJson(res, 200, Exp.montarPainel(r.m, { de: p.de, ate: p.ate, hoje, geradoEm: new Date().toISOString(), extras: {
+          baseEntregaEm: r.baseEntregaEm, pedidosNaEntrega: r.pedidosNaEntrega, pedidosNaEntregaAnterior: ant ? ant.pedidosNaEntrega : null, entregaAnteriorEm: ant ? ant.em : null, podeImportar,
+        } }));
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao montar o painel da expedição")); }
+    }
+
+    let body;
+    try { body = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    if (body !== null && (typeof body !== "object" || Array.isArray(body))) return sendJson(res, 400, { error: "corpo inválido" });
+    body = body || {};
+
+    if (rota === "importar-entrega") {
+      if (body.simular !== undefined && typeof body.simular !== "boolean") return sendJson(res, 400, { error: "simular deve ser verdadeiro ou falso." });
+      for (const k of ["de", "ate"]) if (body[k] !== undefined && body[k] !== null && typeof body[k] !== "string") return sendJson(res, 400, { error: "Data inválida: use o formato AAAA-MM-DD." });
+      const simular = body.simular !== false; // sem dizer nada, só simula: gravar exige simular:false
+      const iv = Exp.intervalo(body.de, body.ate, hoje);
+      if (iv.erro) return sendJson(res, 400, { error: iv.erro });
+      try {
+        const snap = await expSnapshot();
+        if (!snap) return sendJson(res, 404, { error: "Ainda não há um SC9 carregado. Carregue o SC9 e tente de novo." });
+        if (!Array.isArray(snap.entregaInfo)) return sendJson(res, 404, { error: "O último SC9 carregado não trouxe a aba Entrega." });
+        const c = expEntregaDe(snap);
+        let indiceSalvo = null; try { indiceSalvo = await expIndice(); } catch { /* usa só o SC9 */ }
+        const indiceSnap = expIndiceDoSnapshot(snap);
+        const resolver = (ped) => expInfoLeve(indiceSnap, ped) || expInfoLeve(indiceSalvo, ped);
+        const r = await comFila("recebimento", async () => {
+          const exec = await expExecutarPlano({ de: iv.de, ate: iv.ate, hoje, entrega: c.entrega, resolver, sess, nome: sess.nome || sess.usuario, arquivo: Exp.ORIGEM_IMPORTACAO, simular });
+          const p = exec.plano;
+          if (!simular && (p.novos || p.confirmados)) {
+            const log = await recebEntregasCarregar();
+            const registro = { em: new Date().toISOString(), por: sess.usuario, nome: sess.nome, arquivo: Exp.ORIGEM_IMPORTACAO, origem: Exp.ORIGEM_IMPORTACAO, de: iv.de, ate: iv.ate, pedidosNoArquivo: c.entrega.size, confirmados: p.confirmados, jaConfirmados: Math.max(0, p.jaExistiam - p.confirmados - p.anteriores), anteriores: p.anteriores, novos: p.novos };
+            const novoLog = { ...log, uploads: [...log.uploads, registro].slice(-30) };
+            await objSave(RECEB_ENTREGAS_OBJ, novoLog);
+            recebEntregas = novoLog;
+          }
+          return exec;
+        });
+        const p = r.plano;
+        const log = await recebEntregasCarregar().catch(() => ({ bases: [] }));
+        const anteriores = log.bases.filter((b) => b.em !== snap.savedAt), ant = anteriores[anteriores.length - 1] || null;
+        return sendJson(res, 200, {
+          simulacao: simular, de: iv.de, ate: iv.ate, baseEntregaEm: snap.savedAt || null, pedidosNaEntrega: c.entrega.size, pedidosNaEntregaAnterior: ant ? ant.pedidosNaEntrega : null,
+          candidatos: p.candidatos, novos: p.novos, jaExistiam: p.jaExistiam, confirmados: p.confirmados, anteriores: p.anteriores, removidosIgnorados: p.removidosIgnorados, semInfoSC9: p.semInfoSC9, porDia: p.porDia, porTransportadora: p.porTransportadora,
+          ...(r.gravados ? { gravados: r.gravados } : {}),
+        });
+      } catch (e) { console.error("Erro ao importar a Entrega:", e); return sendJson(res, 500, erroPublico(e, "erro ao trazer a planilha de Entrega")); }
+    }
+
+    // rastreio: código e/ou link que a transportadora devolve para acompanhar a entrega
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!/^[A-Za-z0-9_.-]{1,80}$/.test(id)) return sendJson(res, 400, { error: "Registro inválido." });
+    if (typeof body.dia !== "string" || !Exp.diaValido(body.dia) || body.dia > hoje || body.dia < diaAnterior(hoje, EXP_RASTREIO_DIAS)) return sendJson(res, 400, { error: "Dia inválido." });
+    const v = Exp.validarRastreio(body.codigo, body.link);
+    if (v.erro) return sendJson(res, 400, { error: v.erro });
+    try {
+      const r = await comFila("recebimento", async () => {
+        const atual = await recebCarregar(body.dia);
+        const e = atual.entries.find((x) => x.id === id);
+        if (!e) return { erro: 404, msg: "Registro não encontrado." };
+        const novo = Exp.aplicarRastreio(e, v, sess.usuario, new Date().toISOString());
+        await recebGravar(body.dia, { ...atual, entries: atual.entries.map((x) => (x.id === id ? novo : x)) });
+        return { ok: true, id, dia: body.dia, rastreio: novo.rastreio };
+      });
+      if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+      return sendJson(res, 200, r);
+    } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao guardar o rastreio")); }
   }
 
   // buscar um pedido em todos os dias guardados: "esse pedido já saiu? quem bipou e quando?"
@@ -4189,5 +4502,10 @@ server.listen(PORT, () => {
 
 // na subida: já carrega os dias guardados na memória (NADA é apagado sozinho — quem apaga é o administrador, depois de exportar)
 saidaDiasCarregar().then(async (l) => { for (const d of l) await saidaCarregar(d); }).catch(() => {});
+// aquece o Recebimento do mês corrente (e os 10 dias antes, que o painel também olha) sem segurar a subida; qualquer erro é ignorado e a tela lê de novo na hora
+setTimeout(async () => {
+  try { const hoje = diaSP(); await expEmLotes(Exp.diasEntre(Exp.addDias(hoje.slice(0, 8) + "01", -RECEB_DIAS_ENTREGA), hoje), 4, (d) => recebCarregar(d).catch(() => null)); }
+  catch { /* sem aquecer: tudo continua funcionando, só a 1ª consulta do painel é mais lenta */ }
+}, 0).unref();
 
 module.exports = server;
