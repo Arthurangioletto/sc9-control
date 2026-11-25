@@ -441,7 +441,15 @@ function carregarEstatico(name, cb) {
     fs.readFile(arquivo, (err, buf) => {
       if (err) return cb(err);
       zlib.gzip(buf, { level: 9 }, (errGz, gz) => {
-        const novo = { mtimeMs: st.mtimeMs, size: st.size, buf, gz: errGz || gz.length >= buf.length ? null : gz, etag: `"${crypto.createHash("sha1").update(buf).digest("hex").slice(0, 20)}"` };
+        const novo = { mtimeMs: st.mtimeMs, size: st.size, buf, gz: errGz || gz.length >= buf.length ? null : gz, br: null, etag: `"${crypto.createHash("sha1").update(buf).digest("hex").slice(0, 20)}"` };
+        // brotli (15-20% menor que o gzip) só para o que o app abre sempre; as bibliotecas pesadas (vendor-*) ficam em gzip
+        if (buf.length > 4096 && buf.length < 700000 && !name.startsWith("vendor-")) {
+          return zlib.brotliCompress(buf, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: buf.length } }, (errBr, br) => {
+            if (!errBr && br.length < (novo.gz ? novo.gz.length : buf.length)) novo.br = br;
+            estaticoCache.set(name, novo);
+            cb(null, novo);
+          });
+        }
         estaticoCache.set(name, novo);
         cb(null, novo);
       });
@@ -517,6 +525,7 @@ function serveStatic(req, res, urlPath) {
       res.writeHead(304, cab304);
       return res.end();
     }
+    if (e.br && /\bbr\b/i.test(String(req.headers["accept-encoding"] || ""))) { res.writeHead(200, { ...cabecalhos, "Content-Encoding": "br", "Content-Length": e.br.length }); return res.end(e.br); }
     if (e.gz && aceitaGzip(req)) { res.writeHead(200, { ...cabecalhos, "Content-Encoding": "gzip", "Content-Length": e.gz.length }); return res.end(e.gz); }
     res.writeHead(200, { ...cabecalhos, "Content-Length": e.buf.length });
     res.end(e.buf);
@@ -1321,6 +1330,11 @@ async function consultasVendedoras(login, max) {
   const dado = await objLoad("vendedoras-consultas.json", { fresh: true });
   return (dado && Array.isArray(dado.linhas) ? dado.linhas : []).filter((l) => l && (!login || l.conta === login)).reverse().slice(0, max || 500);
 }
+// Cache curto (20 s) só para o RASTREIO das vendedoras (leitura): sem ele cada consulta baixava do Supabase a lista de
+// ocorrências e a de saídas e varria os dias da expedição — e a tela atualiza sozinha a cada minuto. O handleApi é refeito
+// a cada requisição, por isso o cache fica aqui, fora dele. As gravações de ocorrência limpam o cache na hora.
+const RASTREIO_TTL_MS = 20000;
+const rastreioCache = { ocorrencias: null, saidas: new Map() };
 let ultimoFechamentoPrioridades = 0; // última vez que concluímos sozinhos os pedidos de prioridade já despachados (no máx. 1x por minuto)
 const idReforco = (id) => "r" + crypto.createHmac("sha256", SESSION_SECRET).update("reforco|" + id).digest("base64url").slice(0, 20); // ver prioridades-store.visaoMeu
 function limiteVendedoras(chave, max, janelaMs) {
@@ -1819,6 +1833,13 @@ async function handleApi(req, res, pathname) {
     }
     return Oc.normalizarLista(dado);
   }
+  const ocorrenciasParaRastreio = async () => {
+    const c = rastreioCache.ocorrencias;
+    if (c && Date.now() - c.at < RASTREIO_TTL_MS) return c.linhas;
+    const linhas = await ocorrenciasLinhas();
+    rastreioCache.ocorrencias = { at: Date.now(), linhas };
+    return linhas;
+  };
   // Versão enxuta para a página do histórico de atraso (cruza pela nota fiscal do pedido).
   const ocorrenciasParaPagina = async () => (await ocorrenciasLinhas()).map((l) => ({ nf: l.nf, pedido: l.pedido || "", dataOcorrencia: l.dataOcorrencia, tipo: l.tipo || "", detalhes: l.detalhes, responsavel: l.responsavel, solucao: l.solucao, dataSolucao: l.dataSolucao, id: l.id, atualizadoEm: l.atualizadoEm }));
   async function saidasDosPedidos(meses) {
@@ -1892,13 +1913,29 @@ async function handleApi(req, res, pathname) {
       });
     } catch (e) { console.error("Erro ao concluir prioridades despachadas:", e); }
   };
+  // Saída de vários pedidos de uma vez, com cache de 20 s por pedido (inclusive "ainda não saiu"). Em erro devolve {} e não guarda nada.
+  const saidasEmCache = async (pedidos) => {
+    const agora = Date.now(), saida = {}, faltam = [];
+    for (const p of pedidos) {
+      const c = rastreioCache.saidas.get(p);
+      if (c && agora - c.at < RASTREIO_TTL_MS) { if (c.iso) saida[p] = c.iso; } else faltam.push(p);
+    }
+    if (faltam.length) {
+      const novo = await saidasDosPedidos({ r: { dias: { hoje: { itens: faltam.map((p) => [p]) } } } }).catch(() => null);
+      if (novo) {
+        if (rastreioCache.saidas.size > 3000) for (const [k, v] of rastreioCache.saidas) if (agora - v.at >= RASTREIO_TTL_MS) rastreioCache.saidas.delete(k);
+        for (const p of faltam) { rastreioCache.saidas.set(p, { at: agora, iso: novo[p] || "" }); if (novo[p]) saida[p] = novo[p]; }
+      }
+    }
+    return saida;
+  };
   const rastrearPedido = async (pedidoDigitado, linhasOcorrencias) => {
     const Rastreio = require("./rastreio.js");
     const snap = await loadSnapshot().catch(() => null);
     const pedido = Rastreio.normalizarPedido(pedidoDigitado);
     let nomeTransp = null;
     try { nomeTransp = require("./consolidado.js").nomeTransportadora; } catch (e) { nomeTransp = null; }
-    const saidas = pedido ? await saidasDosPedidos({ r: { dias: { hoje: { itens: [[pedido]] } } } }).catch(() => ({})) : {};
+    const saidas = pedido ? await saidasEmCache([pedido]) : {};
     return Rastreio.montarRastreio(snap, pedido, { saidaIso: saidas[pedido] || "", ocorrencias: linhasOcorrencias || [], agora: new Date(), nomeTransportadora: nomeTransp });
   };
 
@@ -1947,10 +1984,22 @@ async function handleApi(req, res, pathname) {
         if (limiteVendedoras("vc|" + ip, 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
         const Rastreio = require("./rastreio.js");
         if (!Rastreio.normalizarPedido(consulta.get("pedido"))) return sendJson(res, 400, { error: "Digite o número do pedido (só números)." });
-        const r = await rastrearPedido(consulta.get("pedido"), await ocorrenciasLinhas().catch(() => []));
+        const r = await rastrearPedido(consulta.get("pedido"), await ocorrenciasParaRastreio().catch(() => []));
         if (req.headers["x-vend-token"] && consulta.get("auto") !== "1") { const contaConsulta = await contaDoToken(req); if (contaConsulta) registrarConsultaVendedora(contaConsulta, r); } // só com acesso; a atualização automática não conta
         if (!r.achado && limiteVendedoras("vn|" + ip, 40, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas sem resultado. Confira os números e tente de novo em alguns minutos." });
         return sendJson(res, 200, r);
+      }
+      if (pathname === "/api/vendedoras/pedidos" && method === "GET") {
+        // vários pedidos numa chamada só (a lista "Pedidos que você acompanha"): uma leitura de cada base, em vez de uma por pedido
+        if (limiteVendedoras("vc|" + ip, 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
+        const Rastreio = require("./rastreio.js");
+        const lista = [...new Set(String(consulta.get("pedidos") || "").split(",").map((x) => Rastreio.normalizarPedido(x)).filter(Boolean))].slice(0, 30);
+        if (!lista.length) return sendJson(res, 400, { error: "Informe os números dos pedidos (só números)." });
+        const ocorr = await ocorrenciasParaRastreio().catch(() => []);
+        await saidasEmCache(lista); // aquece o cache de uma vez só; o rastreio de cada pedido lê dele
+        const pedidos = [];
+        for (const p of lista) pedidos.push(await rastrearPedido(p, ocorr));
+        return sendJson(res, 200, { pedidos });
       }
       if (pathname === "/api/vendedoras/conta") {
         const V = require("./vendedoras-contas.js");
@@ -2339,7 +2388,7 @@ async function handleApi(req, res, pathname) {
       await comFila("ocorrencias", async () => {
         const dado = await objLoadParaGravar("ocorrencias-expedicao.json");
         resultado = Oc.aplicar(Oc.normalizarLista(dado), corpo, sess ? sess.usuario : "Link do histórico", Date.now());
-        if (!resultado.erro) await objSave("ocorrencias-expedicao.json", { linhas: resultado.linhas });
+        if (!resultado.erro) { await objSave("ocorrencias-expedicao.json", { linhas: resultado.linhas }); rastreioCache.ocorrencias = null; }
       });
       if (resultado.erro) return sendJson(res, resultado.conflito ? 409 : resultado.erro.startsWith("Linha não encontrada") ? 404 : 400, { error: resultado.erro });
       return responder(resultado.linhas, { resultado: resultado.resultado || null });

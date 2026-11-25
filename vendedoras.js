@@ -82,10 +82,10 @@
   async function carregarSeguindo(silencioso) {
     if (!estado.seguindo.length || estado.seguindoCarregando) return;
     estado.seguindoCarregando = true;
-    for (const s of estado.seguindo.slice(0, 30)) {
-      try { estado.seguindoEstado[s.pedido] = await api('/api/vendedoras/pedido?pedido=' + s.pedido + '&auto=1'); } catch (e) { /* mantém o último que tinha */ }
-      if (estado.seguindoEstado[s.pedido] && estado.seguindoEstado[s.pedido].atualizadoEm) estado.atualizadoEm = estado.seguindoEstado[s.pedido].atualizadoEm;
-    }
+    try {
+      const j = await api('/api/vendedoras/pedidos?pedidos=' + estado.seguindo.slice(0, 30).map((s) => s.pedido).join(','));
+      (j.pedidos || []).forEach((r) => { if (r && r.pedido) { estado.seguindoEstado[r.pedido] = r; if (r.atualizadoEm) estado.atualizadoEm = r.atualizadoEm; } });
+    } catch (e) { /* mantém o último que tinha */ }
     estado.seguindoCarregando = false;
     if (!silencioso || ['rastrear', 'minhas'].includes(estado.tela)) desenhar();
   }
