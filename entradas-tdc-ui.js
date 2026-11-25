@@ -542,6 +542,12 @@
     const [draft,setDraft]=useState({}),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[notice,setNotice]=useState('');
     const [comparativoAberto,setComparativoAberto]=useState(false);
     const itens=useMemo(()=>res?res.itens.filter(i=>M.combinaNota(i,[reg])):[],[res,reg]);
+    const [ends,setEnds]=useState(null);
+    const chaveEnds=itens.map(i=>i.produto+'|'+(i.lote||'')).join(',');
+    R.useEffect(()=>{let vivo=true;if(!itens.length){setEnds(null);return undefined;}
+      api('/api/entradas-tdc/enderecos',{itens:itens.map(i=>({produto:i.produto,lote:i.lote||''}))}).then(r=>{if(vivo)setEnds(r);}).catch(()=>{if(vivo)setEnds({enderecos:{},semBase:true,erro:true});});
+      return()=>{vivo=false;};},[chaveEnds]);
+    const endDe=i=>ends&&ends.enderecos?ends.enderecos[String(i.produto).trim().toUpperCase().replace(/^0+(?=\d)/,'')+'|'+String(i.lote||'').trim().toUpperCase()]:null;
     const contagens=new Map();
     for(const item of reg.conferenciaFisica||[]){
       const chave=M.chaveConferenciaFisica(item);
@@ -583,15 +589,16 @@
           h('button',{className:'sc9-tdc-btn',onClick:()=>onFichas(reg)},'Fichas ('+fichas.length+')'),
           h('button',{className:'sc9-tdc-btn bad',disabled:busy,onClick:()=>onRemover(reg)},'Tirar'))),
       h('div',{style:{overflowX:'auto'}},h('table',{className:'sc9-tdc-table'},
-        h('thead',null,h('tr',null,[['Produto','l'],['Lote da nota','l'],['Qtd. nota',''],['Qtd. física',''],['Subiu pro 01',''],['Situação','l'],['','']].map(([c,k],ix)=>h('th',{key:ix,className:k},c)))),
+        h('thead',null,h('tr',null,[['Produto','l'],['Lote da nota','l'],['End. 01 (ZZ2)','l'],['Qtd. nota',''],['Qtd. física',''],['Subiu pro 01',''],['Situação','l'],['','']].map(([c,k],ix)=>h('th',{key:ix,className:k},c)))),
         h('tbody',null,itens.map((i,ix)=>{const sit=SITUACAO(i);return h(R.Fragment,{key:ix},
-          h('tr',null,h('td',{className:'l'},h('b',null,i.produto)),h('td',{className:'l'},i.lote||'—'),h('td',null,fmtN(i.qtNota)),
+          h('tr',null,h('td',{className:'l'},h('b',null,i.produto)),h('td',{className:'l'},i.lote||'—'),h('td',{className:'l',title:endDe(i)?(endDe(i).x?'Endereço do lote no armazém 01 (ZZ2)':'O ZZ2 não tem este lote: são os endereços do produto no armazém 01'):''},endDe(i)?h('span',null,h('b',null,endDe(i).e),endDe(i).x?null:h('span',{className:'sc9-tdc-sub'},' (produto)')):h('span',{className:'sc9-tdc-sub'},ends===null?'buscando…':'sem endereço')),h('td',null,fmtN(i.qtNota)),
             h(QuantidadeFisica,{item:i,index:ix,value:quantidades[ix],qtdNota:i.qtNota,busy,onChange:updateQuantity}),
             h('td',null,fmtN(i.subiu)),h('td',{className:'l'},h('span',{className:'sc9-tdc-pill '+sit.c},sit.t)),
             h('td',null,h('button',{className:'sc9-tdc-btn',title:'Registrar um erro que o Protheus não mostrou',onClick:()=>onManual({nota:i.nota,serie:i.serie,fornecedor:i.fornecedor,produto:i.produto,lote:i.lote,qtdNota:i.qt==null?i.qtNota:i.qtNota,dtEntrada:i.dtEntrada,usuarioTDC:i.usuarioTDC})},'+ erro'))),
-          (i.eventos.length>0||i.outrasNotas.length>0)&&h('tr',null,h('td',{colSpan:7,className:'l',style:{textAlign:'left'}},
+          (i.eventos.length>0||i.outrasNotas.length>0)&&h('tr',null,h('td',{colSpan:8,className:'l',style:{textAlign:'left'}},
             i.outrasNotas.length>0&&h('div',{className:'sc9-tdc-warn'},'⚠ O mesmo produto/lote também está em outra nota: '+i.outrasNotas.map(o=>'NF '+o.nota+(o.serie?'/'+o.serie:'')+' ('+fmtD(o.dtDigit)+', '+fmtN(o.qt)+' pç)').join('; ')+'. O Protheus não diz de qual nota é cada movimentação: as de baixo foram atribuídas a esta nota por serem posteriores à entrada dela e anteriores à da próxima. Confira.'),
             i.eventos.length>0&&h('details',{className:'sc9-tdc-ev'},h('summary',null,'Movimentações no Protheus ('+i.eventos.length+')'),h('ul',null,i.eventos.map((m,k)=>h('li',{key:k},fmtD(m.dia),' · ',m.cf,' · doc ',m.doc,' · ',m.dir==='saida'?'saída ':'entrada ',h('b',null,fmtN(m.qt)),' pç · arm ',m.armazem,' · lote ',m.lote,m.usuario&&' · '+m.usuario)))))));})))),
+      ends&&ends.semBase&&h('div',{className:'sc9-tdc-sub',style:{marginTop:8}},ends.erro?'Não consegui buscar os endereços do armazém 01 agora.':'Sem base de endereços (ZZ2) salva: o administrador carrega o ZZ2 na Análise de gaveta, ou a base da Transferência.'),
       h('div',{className:'sc9-tdc-act',style:{marginTop:12}},
         h('button',{type:'button',className:'sc9-tdc-btn ok',disabled:busy,onClick:salvar},busy?'Salvando…':'Salvar e exportar')),
       err&&h('div',{className:'sc9-tdc-msg err',role:'alert'},err),
