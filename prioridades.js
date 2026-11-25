@@ -365,7 +365,7 @@
     const y = root.scrollY;
     const logado = estado.sessao && estado.sessao.pode;
     const topo = h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Painel da logística'),
-      estado.sessao && estado.sessao.authed ? h('div', { class: 'topo-lado' }, h('a', { class: 'btn peq', href: '/fechamento-dia.html' }, ic('caminhao'), 'Fechamento do dia'), estado.sessao.admin ? h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.mostraLink = !estado.mostraLink; desenhar(); } }, ic('link'), 'Link das vendedoras') : null, h('span', { class: 'mudo peq', text: estado.sessao.nome || 'Conta' }), h('button', { class: 'btn peq', type: 'button', onclick: sair }, ic('sair'), 'Sair')) : null));
+      estado.sessao && estado.sessao.authed ? h('div', { class: 'topo-lado' }, h('a', { class: 'btn peq', href: '/fechamento-dia.html' }, ic('caminhao'), 'Fechamento do dia'), h('a', { class: 'btn peq', href: '/expedicao.html' }, ic('pacote'), 'Painel da Expedição'), estado.sessao.admin ? h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.mostraLink = !estado.mostraLink; desenhar(); } }, ic('link'), 'Link das vendedoras') : null, h('span', { class: 'mudo peq', text: estado.sessao.nome || 'Conta' }), h('button', { class: 'btn peq', type: 'button', onclick: sair }, ic('sair'), 'Sair')) : null));
     let corpo;
     if (!estado.sessao) corpo = h('main', { class: 'pagina' }, C.esqueleto(3));
     else if (!logado) corpo = telaLogin();

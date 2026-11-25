@@ -73,7 +73,7 @@
   function desenhar() {
     const foco = root.document.activeElement && root.document.activeElement.id ? root.document.activeElement.id : '';
     const y = root.scrollY, logado = estado.sessao && estado.sessao.pode, d = estado.dados;
-    const topo = h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Fechamento do dia'), h('div', { class: 'topo-lado' }, h('a', { class: 'btn peq', href: '/prioridades.html' }, ic('painel'), 'Painel da logística'))));
+    const topo = h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Fechamento do dia'), h('div', { class: 'topo-lado' }, h('a', { class: 'btn peq', href: '/expedicao.html' }, ic('caminhao'), 'Painel da Expedição'), h('a', { class: 'btn peq', href: '/prioridades.html' }, ic('painel'), 'Painel da logística'))));
     let corpo;
     if (!estado.sessao) corpo = h('main', { class: 'pagina' }, C.esqueleto(3));
     else if (!logado) corpo = telaLogin();
