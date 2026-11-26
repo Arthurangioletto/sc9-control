@@ -109,6 +109,42 @@
     return wb.xlsx.writeBuffer();
   }
 
+  /* ---------- planilha de entrega do dia (aba Planilha de entrega): mesmas colunas da tela ---------- */
+  const CAB_PLAN = ['Data', 'Pedido', 'Cliente', 'Nota Fiscal', 'Transportadora', 'Armazém', 'Volumes', 'Observação', 'Bipado às', 'Bipado por', 'Situação', 'Troca de transportadora', 'Impressa às'];
+  const dataPlan = (l) => dmy(String(l.data || l.dia || '').slice(0, 10));
+  const trocaTxt = (l) => (l.trocada ? 'Era ' + (l.transportadoraOriginal || '') + ', saiu como ' + (l.transportadora || '') : '');
+  function linhasPlanilha(linhas) {
+    return linhas.map((l) => [dataPlan(l), l.pedido, l.cliente || '', l.nf || 'Aguardando nota', l.transportadora || '', l.armazem || '', l.volumes == null ? '' : Number(l.volumes), l.observacao || '', hora(l.bipadoEm), l.bipadoPor || '', l.saiuEntrega ? 'Saiu' : 'Na expedição', trocaTxt(l), hora(l.impressoEm)]);
+  }
+  async function gerarPlanilha(ExcelJS, dados, opcoes) {
+    if (!ExcelJS) throw new Error('A biblioteca do Excel não carregou.');
+    const o = opcoes || {}, linhas = dados.linhas || [];
+    const wb = new ExcelJS.Workbook(); wb.creator = 'Central de Pedidos'; wb.created = new Date();
+    const ws = wb.addWorksheet('Planilha de entrega', { views: [{ state: 'frozen', ySplit: 3, showGridLines: false }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } });
+    const larg = [11, 12, 38, 14, 18, 14, 9, 40, 11, 18, 14, 30, 11];
+    larg.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    const n = CAB_PLAN.length, vol = linhas.reduce((a, l) => a + (Number(l.volumes) || 0), 0);
+    ws.mergeCells(1, 1, 1, n); const t = ws.getCell(1, 1);
+    t.value = 'Planilha de entrega · ' + (o.diaTexto || dmy(dados.dia)) + ' · ' + linhas.length + (linhas.length === 1 ? ' pedido' : ' pedidos') + ' · ' + vol + (vol === 1 ? ' volume' : ' volumes');
+    t.font = fonte(14, { bold: true, color: { argb: COR.branco } }); t.fill = solido(COR.azul); t.alignment = { vertical: 'middle', indent: 1 }; ws.getRow(1).height = 28;
+    ws.getRow(2).height = 6;
+    const cab = ws.getRow(3); cab.height = 24;
+    CAB_PLAN.forEach((x, i) => { const c = cab.getCell(i + 1); c.value = x; c.font = fonte(10, { bold: true, color: { argb: COR.branco } }); c.fill = solido(COR.azulEscuro); c.border = bordas; c.alignment = { vertical: 'middle', horizontal: i === 6 ? 'center' : 'left', wrapText: true }; });
+    linhasPlanilha(linhas).forEach((vals, i) => {
+      const row = ws.getRow(4 + i); row.height = 20;
+      vals.forEach((v, k) => {
+        const c = row.getCell(k + 1); c.value = v; c.border = bordas;
+        c.font = fonte(10, k === 1 ? { bold: true } : (k === 3 && !linhas[i].nf ? { italic: true, color: { argb: COR.mudo } } : {}));
+        c.alignment = { vertical: 'middle', horizontal: k === 6 ? 'center' : 'left', wrapText: k === 2 || k === 7 || k === 11 };
+        if (i % 2) c.fill = solido(COR.zebra);
+      });
+      if (!linhas[i].nf) row.getCell(4).fill = solido(COR.laranja);
+      if (linhas[i].trocada) row.getCell(5).fill = solido(COR.laranja);
+    });
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3 + linhas.length, column: n } };
+    return wb.xlsx.writeBuffer();
+  }
+
   /* ---------- navegador ---------- */
   const carregando = {};
   function carregarScript(src, pronto) {
@@ -136,7 +172,17 @@
     baixarBlob(new root.Blob([texto], { type: 'text/csv;charset=utf-8' }), nomeArquivo);
   }
 
-  const api = { gerar, baixarExcel, baixarCsv, linhasCsv, CAB_CSV, situacaoTexto, porTransportadora };
+  async function baixarExcelPlanilha(dados, opcoes, nomeArquivo) {
+    await carregarScript('/vendor-exceljs.js', () => !!root.ExcelJS);
+    const bytes = await gerarPlanilha(root.ExcelJS, dados, opcoes);
+    baixarBlob(new root.Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), nomeArquivo);
+  }
+  function baixarCsvPlanilha(dados, nomeArquivo) {
+    const texto = '﻿' + root.Central.montarCsv(CAB_PLAN, linhasPlanilha(dados.linhas || []));
+    baixarBlob(new root.Blob([texto], { type: 'text/csv;charset=utf-8' }), nomeArquivo);
+  }
+
+  const api = { gerar, baixarExcel, baixarCsv, linhasCsv, CAB_CSV, situacaoTexto, porTransportadora, gerarPlanilha, baixarExcelPlanilha, baixarCsvPlanilha, linhasPlanilha, CAB_PLAN };
   root.SC9ExpedicaoXlsx = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
