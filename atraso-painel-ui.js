@@ -47,7 +47,7 @@
   const MOB = !TV && typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches; // gráficos em viewBox estreito no celular: rótulos legíveis
   const TV_SLIDES = 6; // telas do rodízio da TV
   const dataIsoValida = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) && !Number.isNaN(Date.parse(d + 'T00:00:00Z')) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
-  const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'todos', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, taxa: 'semana', prod: 'pedidos', calor: 'faixa', mais: false };
+  const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'todos', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, taxa: 'semana', geral: { chave: '', dados: null, erro: '', carregando: false }, gm: 'pecas', gn: 'normal', prod: 'pedidos', calor: 'faixa', mais: false };
   // período personalizado da URL com data inválida ou faltando: volta para 30 dias (antes derrubava a página)
   if (S.per === 'custom' && !(dataIsoValida(S.de) && dataIsoValida(S.ate))) { S.per = '30'; S.de = ''; S.ate = ''; }
   let sincArm = '', sincTr = ''; // último valor dos filtros que o painel e a lista já combinaram entre si
@@ -106,6 +106,12 @@
   .pn-seg { display:inline-flex; background:#eef1f6; border-radius:10px; padding:3px; gap:2px; } .pn-seg button { font:inherit; font-size:12.5px; font-weight:700; padding:5px 12px; border:0; border-radius:8px; background:transparent; color:#43506a; cursor:pointer; }
   .pn-seg button[aria-pressed=true] { background:#fff; color:var(--accent); box-shadow:0 1px 3px rgba(20,35,61,.15); }
   .pn-link { font:inherit; font-size:12.5px; font-weight:700; color:var(--accent); background:none; border:0; padding:6px 4px; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+  .pn-gr { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin:4px 0 12px; } .pn-gc { background:#f4f8fe; border:1px solid #dbe6f6; border-radius:16px; padding:16px 18px; } .pn-gc h3 { font-size:13px; color:#5b6a84; font-weight:600; margin:0 0 8px; text-transform:uppercase; letter-spacing:.04em; }
+  .pn-gc .par { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; } .pn-gc .par b { font-size:30px; color:#14233d; font-variant-numeric:tabular-nums; line-height:1.1; } .pn-gc .par span { font-size:13px; color:#5b6a84; } .pn-gc .par .seta { color:#8a94a8; font-size:22px; }
+  .pn-gc .pct { font-size:22px; font-weight:700; color:#1f6b3a; } .pn-gc .pct.baixo { color:#b3541b; } .pn-gc .barra2 { height:12px; background:#dbe6f6; border-radius:7px; overflow:hidden; margin:10px 0 6px; } .pn-gc .barra2 i { display:block; height:100%; background:#1c5cab; border-radius:7px; } .pn-gc small { color:#5b6a84; font-size:12px; display:block; }
+  .pn-gins { background:#fff8e6; border:1px solid #f0d99a; border-radius:12px; padding:10px 14px; font-size:14px; color:#3a2f10; margin:6px 0 12px; line-height:1.45; } .pn-gins b { color:#14233d; }
+  .pn-sem { display:grid; grid-template-columns:150px 1fr 210px; gap:10px; align-items:center; padding:5px 6px; border-bottom:1px solid #edf1f7; font-size:13px; } .pn-sem.pico { background:#fff4ec; border-radius:8px; } .pn-sem .nome { color:#14233d; font-weight:600; } .pn-sem .tr { position:relative; height:18px; background:#eef3fb; border-radius:5px; } .pn-sem .tr i.l { position:absolute; left:0; top:0; bottom:0; background:#b9cdea; border-radius:5px; } .pn-sem .tr i.f { position:absolute; left:0; top:4px; bottom:4px; background:#1c5cab; border-radius:4px; } .pn-sem .tr u { position:absolute; top:-2px; bottom:-2px; width:0; border-left:2px dashed #c63828; } .pn-sem .num { text-align:right; font-variant-numeric:tabular-nums; } .pn-sem .num small { display:block; color:#5b6a84; font-size:11px; } .pn-sem .selo { display:inline-block; background:#c75b12; color:#fff; border-radius:6px; padding:0 6px; font-size:11px; margin-left:6px; }
+  @media (max-width:720px) { .pn-sem { grid-template-columns:100px 1fr; } .pn-sem .num { grid-column:1 / -1; text-align:left; } }
   .pn-kpis { display:flex; flex-wrap:wrap; gap:10px; margin:2px 0 10px; } .pn-kpi { background:#eef3fb; border-radius:12px; padding:8px 14px; flex:1 1 130px; } .pn-kpi b { display:block; font-size:24px; line-height:1.1; color:#14233d; font-variant-numeric:tabular-nums; } .pn-kpi span { display:block; font-size:12px; color:#5b6a84; margin-top:2px; } .pn-kpi.principal { background:#14233d; } .pn-kpi.principal b, .pn-kpi.principal span { color:#fff; }
   .pn-leg { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12px; color:#5b6a84; margin-top:8px; } .pn-leg i { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:5px; vertical-align:-1px; } .pn-leg i.linha { height:3px; border-radius:2px; vertical-align:3px; }
   .pn-svg { width:100%; height:auto; display:block; } .pn-svg text { font:11px system-ui,sans-serif; fill:#6b7890; } .pn-svg .ponto { cursor:pointer; outline:none; } .pn-svg .ponto:focus-visible rect.foco { stroke:#123b7a; stroke-width:2; }
@@ -487,6 +493,83 @@
       h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:#c63828' }), '▲ Entraram no atraso (acima)'), h('span', null, h('i', { style: 'background:#1f8a4c' }), '▼ Saíram do atraso (abaixo)'), h('span', null, h('i', { class: 'linha', style: 'background:#14233d' }), 'Variação líquida (acima de 0 = o atraso cresceu)')));
   }
 
+  // ---------- Geral: o que foi lançado no SC9 × o que a gente fez (sem deixar os picos puxarem a média) ----------
+  function carregarGeral(chave, consulta) {
+    S.geral.chave = chave; S.geral.carregando = true; S.geral.erro = '';
+    const k = q.get('k');
+    root.fetch('/api/atraso-geral?' + consulta + (k ? '&k=' + encodeURIComponent(k) : ''), { cache: 'no-store', credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status === 401 || r.status === 403 ? 'Sem acesso ao geral.' : 'Não consegui calcular o geral agora.'))))
+      .then((j) => { if (S.geral.chave === chave) S.geral.dados = j; })
+      .catch((e) => { if (S.geral.chave === chave) { S.geral.dados = null; S.geral.erro = e.message; } })
+      .then(() => { if (S.geral.chave === chave) { S.geral.carregando = false; T().desenhar(); } });
+  }
+  function geralBloco(de, ate, g) {
+    const consulta = 'de=' + encodeURIComponent(de || '') + '&ate=' + encodeURIComponent(ate || '') + '&arm=' + encodeURIComponent(g.arm || '') + '&tr=' + encodeURIComponent(g.transp || '');
+    if (S.geral.chave !== consulta && !S.geral.carregando) setTimeout(() => carregarGeral(consulta, consulta), 0);
+    const medida = S.gm, ehPecas = medida === 'pecas', un = ehPecas ? 'peças' : 'pedidos', lanW = ehPecas ? 'lançadas' : 'lançados', feiW = ehPecas ? 'feitas' : 'feitos';
+    const d = S.geral.dados;
+    const ctl = h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' },
+      h('div', { class: 'pn-seg', role: 'group', 'aria-label': 'Medir em' }, [['pecas', 'Peças'], ['pedidos', 'Pedidos']].map(([k, t]) => h('button', { type: 'button', 'aria-pressed': medida === k, onclick: () => mudar(() => { S.gm = k; }), text: t }))),
+      h('div', { class: 'pn-seg', role: 'group', 'aria-label': 'Média' }, [['normal', 'Sem os picos'], ['tudo', 'Com tudo']].map(([k, t]) => h('button', { type: 'button', 'aria-pressed': S.gn === k, onclick: () => mudar(() => { S.gn = k; }), text: t }))));
+    const titulo = 'Geral: o que foi lançado no SC9 × o que a gente fez';
+    const sub = 'Lançado = pedidos e peças liberados no SC9 no período. Feito = pedidos que já saíram (Enviado, mesma regra do Consolidado). A média “sem os picos” tira as semanas e os dias fora do normal.';
+    const corpo = () => {
+      if (S.geral.carregando && !d) return h('p', { class: 'pn-vazio', text: 'Calculando o geral…' });
+      if (S.geral.erro && !d) return h('p', { class: 'pn-vazio', text: S.geral.erro });
+      if (!d || d.semBase || !d.total.pedidos) return h('p', { class: 'pn-vazio', text: d && d.semBase ? 'Ainda não há base do SC9 carregada para calcular o geral.' : 'Não há pedidos lançados neste período' + (g.arm || g.transp ? ' com esse filtro.' : '.') });
+      const t = d.total, n = d.normal, pc = d.picos;
+      const pct = (v) => (v == null ? '—' : fmtN(v) + '%');
+      const cartao = (rot, lan, fei, p, aberto, atrasado, fem) => h('div', { class: 'pn-gc' }, h('h3', { text: rot }),
+        h('div', { class: 'par' }, h('b', { text: fmtI(lan) }), h('span', { text: fem ? 'lançadas' : 'lançados' }), h('span', { class: 'seta', 'aria-hidden': 'true', text: '→' }), h('b', { text: fmtI(fei) }), h('span', { text: fem ? 'feitas' : 'feitos' })),
+        h('div', { class: 'barra2', role: 'img', 'aria-label': pct(p) + ' feito' }, h('i', { style: 'width:' + Math.min(100, p || 0).toFixed(1) + '%' })),
+        h('div', { class: 'pct' + (p != null && p < 50 ? ' baixo' : ''), text: pct(p) + ' feito' }),
+        h('small', { text: fmtI(atrasado) + ' em atraso · ' + fmtI(aberto) + ' ainda em processo' }));
+      const usaNormal = S.gn === 'normal' && n.porDia;
+      const dia = usaNormal ? n.porDia : d.mediaPorDia;
+      const med = d.normal.medianaDia;
+      const campo = (k) => (ehPecas ? { l: dia.pecas, f: dia.pecasEnviadas }[k] : { l: dia.pedidos, f: dia.enviados }[k]);
+      const kpis = h('div', { class: 'pn-kpis' },
+        dia ? h('div', { class: 'pn-kpi principal' }, h('b', { text: fmtI(campo('l')) }), h('span', { text: un + ' ' + lanW + ' por dia, em média' + (usaNormal ? ' (sem os picos)' : ' (com tudo)') })) : null,
+        dia ? h('div', { class: 'pn-kpi' }, h('b', { text: fmtI(campo('f')) }), h('span', { text: un + ' ' + feiW + ' por dia, em média' + (usaNormal ? ' (sem os picos)' : ' (com tudo)') })) : null,
+        med ? h('div', { class: 'pn-kpi' }, h('b', { text: fmtI(ehPecas ? med.pecas : med.pedidos) }), h('span', { text: 'dia típico (mediana): ' + un + ' ' + lanW })) : null,
+        n.porSemana ? h('div', { class: 'pn-kpi' }, h('b', { text: fmtI(ehPecas ? n.porSemana.pecasEnviadas : n.porSemana.enviados) }), h('span', { text: un + ' ' + feiW + ' por semana normal (' + fmtI(n.porSemana.semanas) + ' semanas)' })) : null);
+      // a análise do impacto: o que a gente consegue entregar quando o volume é normal × quando passa do normal
+      const sn = pc.semanasNormais, sp = pc.semanasDePico;
+      const pN = ehPecas ? sn.pctPecas : sn.pctPedidos, pP = ehPecas ? sp.pctPecas : sp.pctPedidos;
+      const limite = pc.limiteSemanaPecas;
+      const ins = pc.semanasPico && sn.semanas && pN != null && pP != null
+        ? h('div', { class: 'pn-gins' }, h('b', { text: 'Impacto do volume: ' }), 'nas ', h('b', { text: fmtI(sn.semanas) + ' semanas normais' }), ' a gente fez ', h('b', { text: pct(pN) }), ' do que foi lançado (' + un + '); nas ', h('b', { text: fmtI(sp.semanas) + (sp.semanas === 1 ? ' semana de pico' : ' semanas de pico') }), ' caiu para ', h('b', { text: pct(pP) }), '. ' + (pN > pP ? 'Dá para entregar o que a gente faz no ritmo normal; quando o lançamento passa de ' + fmtI(limite) + ' peças por semana, não dá para entregar tudo.' : 'Nos picos o percentual feito não caiu em relação ao normal.'))
+        : h('div', { class: 'pn-gins' }, h('b', { text: 'Sem picos neste período. ' }), 'O volume lançado ficou dentro do normal' + (limite ? ' (acima de ' + fmtI(limite) + ' peças por semana seria pico).' : '.'));
+      const sems = d.semanas.slice(-26);
+      const maxS = Math.max(1, ...sems.map((s) => (ehPecas ? s.pecas : s.pedidos)));
+      const capac = n.porSemana ? (ehPecas ? n.porSemana.pecasEnviadas : n.porSemana.enviados) : null;
+      const linhas = sems.map((s) => {
+        const lan = ehPecas ? s.pecas : s.pedidos, fei = ehPecas ? s.pecasEnviadas : s.enviados, p = ehPecas ? s.pctPecas : s.pctPedidos;
+        const rot = ddmm(s.de) + ' a ' + ddmm(s.ate);
+        return h('div', { class: 'pn-sem' + (s.pico ? ' pico' : ''), title: rot + ': ' + fmtI(lan) + ' ' + un + ' ' + lanW + ', ' + fmtI(fei) + ' ' + feiW + ' (' + pct(p) + ')' },
+          h('span', { class: 'nome' }, rot, s.pico ? h('span', { class: 'selo', text: 'pico' }) : null, s.parcial ? h('small', { style: 'display:block;font-weight:400;color:#5b6a84', text: 'semana incompleta' }) : null),
+          h('div', { class: 'tr' }, h('i', { class: 'l', style: 'width:' + (lan / maxS * 100).toFixed(1) + '%' }), h('i', { class: 'f', style: 'width:' + (fei / maxS * 100).toFixed(1) + '%' }), capac != null ? h('u', { style: 'left:' + Math.min(100, capac / maxS * 100).toFixed(1) + '%', title: 'o que fazemos numa semana normal' }) : null),
+          h('span', { class: 'num' }, h('b', { text: fmtI(fei) + ' de ' + fmtI(lan) }), h('small', { text: pct(p) + ' feito' })));
+      });
+      return h('div', null,
+        h('div', { class: 'pn-gr' }, cartao('Pedidos', t.pedidos, t.enviados, t.pctPedidos, t.pendentes, t.atrasados), cartao('Peças', t.pecas, t.pecasEnviadas, t.pctPecas, t.pecasPendentes, t.pecasAtrasadas, true)),
+        h('p', { class: 'pn-nota', style: 'margin:0 0 8px', text: 'Período: ' + ddmmaaaa(d.de) + ' a ' + ddmmaaaa(d.ate) + ' · ' + fmtI(d.mediaPorDia ? d.mediaPorDia.diasComPedidos : 0) + ' dias com pedidos lançados' + (de && d.base && d.base.de > de ? ' · a base do SC9 carregada começa em ' + ddmmaaaa(d.base.de) : '') + '.' }),
+        kpis, ins,
+        h('h3', { text: 'Semana a semana: lançado (claro) × feito (escuro)', style: 'font-size:14px;margin:10px 0 4px' }),
+        h('p', { class: 'pn-nota', style: 'margin:0 0 6px', text: capac != null ? 'A linha vermelha tracejada é o que a gente faz numa semana normal (' + fmtI(capac) + ' ' + un + '). O que passa dela só sai com hora extra ou fica para a semana seguinte. Pedidos recentes ainda em processo contam como “não feitos” até saírem.' : 'Pedidos recentes ainda em processo contam como “não feitos” até saírem.' }),
+        h('div', null, linhas),
+        h('div', { class: 'pn-leg' }, h('span', null, h('i', { style: 'background:#b9cdea' }), 'Lançado'), h('span', null, h('i', { style: 'background:#1c5cab' }), 'Feito'), h('span', null, h('i', { style: 'background:#c75b12' }), 'Semana de pico')));
+    };
+    const tabela = () => {
+      const d2 = S.geral.dados;
+      if (!d2 || !d2.semanas) return h('p', { class: 'pn-vazio', text: 'Sem dados.' });
+      const pct = (v) => (v == null ? '—' : fmtN(v) + '%');
+      return tabelaDe(['Semana', 'Pedidos lançados', 'Pedidos feitos', '% pedidos', 'Peças lançadas', 'Peças feitas', '% peças', 'Pico'], d2.semanas.map((s) => [ddmm(s.de) + ' a ' + ddmm(s.ate) + (s.parcial ? ' (incompleta)' : ''), fmtI(s.pedidos), fmtI(s.enviados), pct(s.pctPedidos), fmtI(s.pecas), fmtI(s.pecasEnviadas), pct(s.pctPecas), s.pico ? 'sim' : '']));
+    };
+    return blocoGrafico('geral', titulo, sub, ctl, corpo, tabela, null, 'm12');
+  }
+  function geralSeguro(de, ate, g) { try { return geralBloco(de, ate, g); } catch (e) { if (root.console) console.error('Geral lançado x feito:', e); return null; } }
+
   // Taxa de atraso no geral: pedidos que entraram em atraso ÷ pedidos despachados, por dia, semana ou mês (soma, não média de porcentagens).
   function taxaBloco(tx, g, ate) {
     const modo = S.taxa;
@@ -863,7 +946,7 @@
         h('div', { class: 'pn-tv-rodape' }, pontos, h('span', null, 'Troca sozinha a cada 20 s · setas ← → mudam a tela · ', h('a', { href: urlSairTv(), style: 'color:#cfe0ff', text: 'Sair (Esc)' }))));
     }
     return h('div', { class: 'pn', id: 'pn-raiz' },
-      hero, barra(p, fr), aviso, cartoesEl, maisEl,
+      hero, barra(p, fr), aviso, geralSeguro(de, ate || de, g), cartoesEl, maisEl,
       h('div', { class: 'pn-par' }, evolucao(dias, fx, dia, mmPre), produtividade(dias, dia), taxaSegura(p, g, ate || dia || hoje), gargalosBloco(P().gargalos(p, dia, g)), armazensBloco(P().armazens(p, dia, g)), distribuicaoBloco(P().distribuicao(p, dia, g)), cascataBloco(P().cascata(p, dia, g), dia), calorBloco(P().mapaCalor(p, dia, g, S.calor), S.calor), paretoBloco(P().transportadoras(p, dia, g, 8))),
       tabelaCriticos(p, a, g, agora),
       h('p', { class: 'pn-sep', text: 'Detalhe do dia e pedidos' }));

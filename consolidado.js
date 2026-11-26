@@ -273,7 +273,7 @@
     return livro;
   }
 
-  const api = { ARMAZENS, nomeTransportadora, periodos, construir, nomeArquivo, paraPlanilha };
+  const api = { ARMAZENS, nomeTransportadora, periodos, construir, nomeArquivo, paraPlanilha, montar };
   root.SC9Consolidado = Object.assign(root.SC9Consolidado || {}, api);
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);
