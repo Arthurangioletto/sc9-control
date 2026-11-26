@@ -205,7 +205,18 @@
   }
 
   // Períodos do filtro: 7, 15, 30 dias terminando no dia de referência, mês atual (do dia 1 ao dia de referência) ou personalizado.
+  // Primeiro dia com algum dado gravado (posição de atraso ou despacho): é de onde começa o período "Todos os dias".
+  function primeiroDia(p) {
+    const chaves = [...(p && p.porDia ? p.porDia.keys() : []), ...Object.keys((p && p.exp) || {})].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    return chaves.length ? chaves.reduce((m, d) => (d < m ? d : m)) : '';
+  }
   function periodo(tipo, dia, personalizado) {
+    if (tipo === 'todos') {
+      let de = personalizado && /^\d{4}-\d{2}-\d{2}$/.test(String(personalizado.de || '')) ? personalizado.de : dia;
+      if (de > dia) de = dia;
+      if (diasEntre(de, dia) > 365) de = somaDias(dia, -365); // no máximo 1 ano: mais que isso trava a tela
+      return { tipo, de, ate: dia };
+    }
     if (tipo === 'mes') return { tipo, de: dia.slice(0, 8) + '01', ate: dia };
     const dataValida = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) && iso(ms(d)) === d;
     if (tipo === 'custom' && personalizado && dataValida(personalizado.de) && dataValida(personalizado.ate)) {
@@ -381,7 +392,7 @@
     return { lista, total, qtd: todas.length };
   }
 
-  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, porArmazem, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, taxaAtraso, semanaDe, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, cascata, mapaCalor, transportadoras, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
+  const api = { CRITICO, FAIXAS, ETAPAS, SEMANA, tom, variacao, porArmazem, filtroVazio, temFiltro, selecionar, resumoItens, cartoes, serie, fluxo, taxaAtraso, semanaDe, primeiroDia, mediaMovel, periodo, gargalos, armazens, faixas, distribuicao, produtividade, frescor, opcoesGlobais, cascata, mapaCalor, transportadoras, somaDias, diasEntre, intervalo, diasUteisEntre, diaDaSemana };
   root.SC9AtrasoPainel = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window === 'object' ? window : globalThis);

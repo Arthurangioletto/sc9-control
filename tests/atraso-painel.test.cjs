@@ -317,3 +317,12 @@ test('taxa de atraso: filtro de transportadora não tem volume e não inventa ta
   const t = P.taxaAtraso(p, '2026-11-19', Object.assign(P.filtroVazio(), { transp: 'TCS' }));
   assert.equal(t.geral.pct, null); assert.ok(t.dias.every((x) => !x.valido));
 });
+
+test('período "Todos os dias": começa no primeiro dia gravado e termina no dia escolhido (no máximo 1 ano)', () => {
+  assert.deepEqual(P.periodo('todos', '2026-11-19', { de: '2026-11-03' }), { tipo: 'todos', de: '2026-11-03', ate: '2026-11-19' });
+  assert.deepEqual(P.periodo('todos', '2026-11-19', {}), { tipo: 'todos', de: '2026-11-19', ate: '2026-11-19' });
+  assert.deepEqual(P.periodo('todos', '2026-11-19', { de: '2026-12-01' }), { tipo: 'todos', de: '2026-11-19', ate: '2026-11-19' });
+  assert.equal(P.periodo('todos', '2026-11-19', { de: '2020-01-01' }).de, '2025-11-19');
+  assert.equal(P.primeiroDia({ porDia: new Map([['2026-11-19', {}], ['2026-11-16', {}]]), exp: { '2026-11-10': {} } }), '2026-11-10');
+  assert.equal(P.primeiroDia({ porDia: new Map(), exp: {} }), '');
+});

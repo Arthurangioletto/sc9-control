@@ -47,7 +47,7 @@
   const MOB = !TV && typeof matchMedia === 'function' && matchMedia('(max-width:640px)').matches; // gráficos em viewBox estreito no celular: rótulos legíveis
   const TV_SLIDES = 6; // telas do rodízio da TV
   const dataIsoValida = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || '')) && !Number.isNaN(Date.parse(d + 'T00:00:00Z')) && new Date(d + 'T00:00:00Z').toISOString().slice(0, 10) === d;
-  const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, taxa: 'semana', prod: 'pedidos', calor: 'faixa', mais: false };
+  const S = { slide: 0, timer: 0, per: ['7', '15', '30', 'mes', 'todos', 'custom'].includes(q.get('p')) ? q.get('p') : '30', arm: q.get('arm') || '', transp: q.get('tr') || '', de: q.get('de') || '', ate: q.get('ate') || '', ver: {}, taxa: 'semana', prod: 'pedidos', calor: 'faixa', mais: false };
   // período personalizado da URL com data inválida ou faltando: volta para 30 dias (antes derrubava a página)
   if (S.per === 'custom' && !(dataIsoValida(S.de) && dataIsoValida(S.ate))) { S.per = '30'; S.de = ''; S.ate = ''; }
   let sincArm = '', sincTr = ''; // último valor dos filtros que o painel e a lista já combinaram entre si
@@ -779,10 +779,11 @@
   function barra(p, fr) {
     const ops = P().opcoesGlobais(p);
     const sel = (rotulo, valor, lista, onChange, vazio) => h('label', null, rotulo, h('select', { onchange: (ev) => mudar(() => onChange(ev.target.value)), 'aria-label': rotulo }, h('option', { value: '', text: vazio }), lista.map((v) => h('option', { value: v, selected: v === valor, text: v }))));
-    const periodos = [['7', '7 dias'], ['15', '15 dias'], ['30', '30 dias'], ['mes', 'Mês atual'], ['custom', 'Personalizado']];
+    const periodos = [['7', '7 dias'], ['15', '15 dias'], ['30', '30 dias'], ['mes', 'Mês atual'], ['todos', 'Todos os dias'], ['custom', 'Personalizado']];
     return h('div', { class: 'pn-barra', role: 'toolbar', 'aria-label': 'Período e filtros' },
       h('div', { class: 'grupo-c' },
         h('label', null, 'Período', h('select', { 'aria-label': 'Período', onchange: (ev) => mudar(() => { S.per = ev.target.value; if (S.per === 'custom' && !S.de) { const d = T().estado.dia; S.ate = d; S.de = P().somaDias(d, -29); } }) }, periodos.map(([v, t]) => h('option', { value: v, selected: v === S.per, text: t })))),
+        S.per === 'todos' ? h('span', { class: 'pn-nota', style: 'align-self:center', text: P().primeiroDia(p) ? 'Média de tudo o que está gravado: de ' + ddmmaaaa(P().primeiroDia(p)) + ' até o dia escolhido.' : 'Ainda não há dias gravados.' }) : null,
         S.per === 'custom' ? [h('label', null, 'De', h('input', { type: 'date', value: S.de, max: S.ate || undefined, onchange: (ev) => mudar(() => { S.de = ev.target.value; }) })), h('label', null, 'Até', h('input', { type: 'date', value: S.ate, min: S.de || undefined, onchange: (ev) => mudar(() => { S.ate = ev.target.value; }) }))] : null,
         sel('Armazém', S.arm, ops.armazens, (v) => { S.arm = v; }, 'Todos'),
         sel('Transportadora', S.transp, ops.transportadoras, (v) => { S.transp = v; }, 'Todas'),
@@ -808,7 +809,7 @@
     const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
     const fr = P().frescor(p, hoje);
     const g = global();
-    const per = P().periodo(S.per, dia || hoje, { de: S.de, ate: S.ate });
+    const per = P().periodo(S.per, dia || hoje, { de: S.per === 'todos' ? P().primeiroDia(p) : S.de, ate: S.ate });
     // o período termina no dia escolhido (ou no fim do período personalizado)
     const ate = S.per === 'custom' ? per.ate : dia;
     const de = S.per === 'custom' ? per.de : per.de;
