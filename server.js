@@ -506,6 +506,10 @@ SERVABLE.add("vendor-html2pdf.js");
 SERVABLE.add("gaveta.css");
 SERVABLE.add("indicador-i09.js");
 SERVABLE.add("indicador-i09-ui.js");
+SERVABLE.add("solicitacoes-ui.js");
+SERVABLE.add("solicitacoes-comum.js");
+SERVABLE.add("solicitacoes-vend.js");
+SERVABLE.add("solicitacoes.css");
 
 function serveStatic(req, res, urlPath) {
   // qualquer coisa fora da lista (inclusive rotas de navegação tipo /alguma-coisa)
@@ -1568,6 +1572,34 @@ async function consultasVendedoras(login, max) {
 // a cada requisição, por isso o cache fica aqui, fora dele. As gravações de ocorrência limpam o cache na hora.
 const RASTREIO_TTL_MS = 20000;
 const rastreioCache = { ocorrencias: null, saidas: new Map() };
+// Índice em memória para a busca de produtos das vendedoras (solicitacoes-produtos.js). Só é reconstruído quando o snapshot do SC9 muda
+// (savedAt): o saldo por lote é gravado junto com ele. Chamadas seguidas dividem a mesma construção e nunca vão ao disco/Supabase por digitação.
+const produtosIdx = { indice: null, savedAt: null, construindo: null, checadoEm: 0 };
+const PRODUTOS_CHECAR_MS = 60 * 1000;
+async function indiceProdutos() {
+  const agora = Date.now();
+  if (produtosIdx.indice && agora - produtosIdx.checadoEm < PRODUTOS_CHECAR_MS) return produtosIdx.indice;
+  if (produtosIdx.construindo) return produtosIdx.construindo;
+  produtosIdx.construindo = (async () => {
+    try {
+      const snap = await loadSnapshot().catch(() => null); // já tem cache próprio (30 s)
+      const marcaSnap = snap && snap.savedAt ? String(snap.savedAt) : snap ? "sem-data" : "sem-snapshot";
+      if (produtosIdx.indice && produtosIdx.savedAt === marcaSnap) { produtosIdx.checadoEm = Date.now(); return produtosIdx.indice; }
+      const P = require("./solicitacoes-produtos.js");
+      let saldo = null, posicao = null;
+      try { saldo = await objLoad(SALDO_OBJ); } catch (e) { console.error("Busca de produtos: erro ao ler o saldo por lote:", e.message); }
+      if (!saldo || !Array.isArray(saldo.saldoPorLote) || !saldo.saldoPorLote.length) { try { posicao = await stockPositionLoad(); } catch (e) { posicao = null; } }
+      const indice = P.montarIndice({ itemNames: snap && snap.itemNames, saldoPorLote: saldo && saldo.saldoPorLote, posicao });
+      produtosIdx.indice = indice; produtosIdx.savedAt = marcaSnap; produtosIdx.checadoEm = Date.now();
+      return indice;
+    } catch (e) {
+      console.error("Busca de produtos: erro ao montar o índice:", e);
+      produtosIdx.checadoEm = Date.now() - PRODUTOS_CHECAR_MS + 10000; // falhou: tenta de novo em 10 s, sem martelar o storage
+      return produtosIdx.indice; // mantém o índice anterior, se houver
+    } finally { produtosIdx.construindo = null; }
+  })();
+  return produtosIdx.construindo;
+}
 let ultimoFechamentoPrioridades = 0; // última vez que concluímos sozinhos os pedidos de prioridade já despachados (no máx. 1x por minuto)
 const idReforco = (id) => "r" + crypto.createHmac("sha256", SESSION_SECRET).update("reforco|" + id).digest("base64url").slice(0, 20); // ver prioridades-store.visaoMeu
 function limiteVendedoras(chave, max, janelaMs) {
@@ -1916,6 +1948,7 @@ async function handleApi(req, res, pathname) {
     try {
       const avisosSave = []; // o que não foi gravado entra na resposta (antes só ia para o log e a resposta dizia ok)
       const info = await saveSnapshot(payload);
+      produtosIdx.checadoEm = 0; // novo snapshot/saldo: a busca de produtos das vendedoras confere o índice na próxima consulta
       // guarda À PARTE só o saldo por lote: é tudo que o operador do controle recebe
       if (Array.isArray(payload.saldoPorLote)) {
         try { await objSave(SALDO_OBJ, { saldoPorLote: payload.saldoPorLote, savedAt: payload.savedAt }); }
@@ -2213,6 +2246,19 @@ async function handleApi(req, res, pathname) {
       });
     } catch (e) { console.error("Erro ao ligar solicitações à conta:", e); }
   };
+  // Central de solicitações (solicitacoes-store.js): arquivo próprio, separado das prioridades e dos avisos.
+  const SOLIC_OBJ = "solicitacoes-vendedoras.json";
+  const solicLinhas = async () => require("./solicitacoes-store.js").normalizarLista(await objLoad(SOLIC_OBJ, { fresh: true }));
+  const vincularSolic = async (ids, conta) => {
+    if (!Array.isArray(ids) || !ids.length) return;
+    try {
+      const SS = require("./solicitacoes-store.js");
+      await comFila("solicitacoes-vendedoras", async () => {
+        const feito = SS.vincularConta(SS.normalizarLista(await objLoadParaGravar(SOLIC_OBJ)), ids, conta.nome, conta.login);
+        if (feito.mudou) await objSave(SOLIC_OBJ, { linhas: feito.linhas });
+      });
+    } catch (e) { console.error("Erro ao ligar solicitações da central à conta:", e); }
+  };
 
   if (pathname.startsWith("/api/vendedoras/")) {
     const ip = ipDe(req);
@@ -2254,6 +2300,7 @@ async function handleApi(req, res, pathname) {
         const acao = corpo && corpo.acao;
         const ids = Array.isArray(corpo && corpo.ids) ? corpo.ids.map(String).slice(0, 100) : [];
         const idsAvisos = Array.isArray(corpo && corpo.idsAvisos) ? corpo.idsAvisos.map(String).slice(0, 100) : [];
+        const idsSolic = Array.isArray(corpo && corpo.idsSolic) ? corpo.idsSolic.map(String).slice(0, 100) : [];
         if (acao === "criar") {
           const login = V.normalizarLogin(corpo.login), nome = nomeLimpo(corpo.nome);
           if (!login) return sendJson(res, 400, { error: "Login: de 3 a 24 caracteres, só letras, números, ponto, hífen ou sublinhado." });
@@ -2277,7 +2324,7 @@ async function handleApi(req, res, pathname) {
             resultado = { conta };
           });
           if (resultado.erro) return sendJson(res, resultado.status, { error: resultado.erro });
-          await vincularSolicitacoes(ids, resultado.conta); await vincularAvisos(idsAvisos, resultado.conta);
+          await vincularSolicitacoes(ids, resultado.conta); await vincularAvisos(idsAvisos, resultado.conta); await vincularSolic(idsSolic, resultado.conta);
           return sendJson(res, 200, { ok: true, token: V.emitirSessao(SESSION_SECRET, resultado.conta), conta: V.visaoPublica(resultado.conta) });
         }
         if (acao === "entrar" || acao === "trocar-codigo") {
@@ -2309,7 +2356,7 @@ async function handleApi(req, res, pathname) {
               conta = contas[i];
               await objSave("vendedoras-contas.json", { contas });
             });
-            await vincularSolicitacoes(ids, conta); await vincularAvisos(idsAvisos, conta);
+            await vincularSolicitacoes(ids, conta); await vincularAvisos(idsAvisos, conta); await vincularSolic(idsSolic, conta);
           }
           return sendJson(res, 200, { ok: true, token: V.emitirSessao(SESSION_SECRET, conta), conta: V.visaoPublica(conta) });
         }
@@ -2356,6 +2403,63 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, 200, {
           meus: linhas.filter((l) => meus.has(l.id) || A.ehDela(l, conta && conta.login)).map((l) => Object.assign(A.visaoMeu(l), { foraDoSc9: A.ATIVOS.includes(l.status) && !Rastreio.montarRastreio(snap, l.pedido, { agora: new Date() }).achado })),
           conta: conta ? V.visaoPublica(conta) : null, agora: new Date().toISOString()
+        });
+      }
+      if (pathname === "/api/vendedoras/solicitacao" && method === "POST") {
+        // Com login o limite é por vendedora (várias dividem o mesmo IP da empresa); sem login, por IP.
+        const quemLimite = req.headers["x-vend-token"] ? await contaDoToken(req) : null;
+        if (limiteVendedoras(quemLimite ? "vs|c|" + quemLimite.login : "vs|" + ip, quemLimite ? 12 : 8, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas solicitações em pouco tempo. Aguarde alguns minutos ou fale com a logística." });
+        let corpo;
+        try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const SS = require("./solicitacoes-store.js"), P = require("./prioridades-store.js");
+        if (!corpo || !SS.TIPOS[corpo.tipo]) return sendJson(res, 400, { error: "Escolha o tipo de solicitação." });
+        const def = SS.TIPOS[corpo.tipo], informou = corpo.pedido != null && String(corpo.pedido).trim() !== "";
+        const pedido = P.numeroDoPedido(corpo.pedido) || "";
+        if ((def.pedido || informou) && !pedido) return sendJson(res, 400, { error: "Número do pedido inválido (só números, de 4 a 10 dígitos)." });
+        const prevDados = SS.dadosDoTipo(corpo.tipo, corpo.dados, true, Date.now());
+        if (prevDados.erro) return sendJson(res, 400, { error: prevDados.erro });
+        // a cota geral só conta solicitação válida: requisição inválida não gasta a cota das outras vendedoras
+        if (limiteVendedoras("vs-total", 80, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas solicitações em pouco tempo. Aguarde alguns minutos ou fale com a logística." });
+        const r = pedido ? await rastrearPedido(pedido, []) : null; // onde o pedido está agora (cancelamento esperto) e a filial dele
+        const contaSol = await contaDoToken(req); // com acesso, o nome e o login vêm da conta
+        const cancela = corpo.tipo === "cancelar_pedido" || corpo.tipo === "segurar_pedido";
+        const indice = corpo.tipo === "transferencia_peca" ? await indiceProdutos() : null; // descrição e saldo na origem vêm do servidor, não do aparelho
+        const ctxProd = { produto: (codigo, onde) => require("./solicitacoes-produtos.js").consultarProduto(indice, codigo, onde) };
+        let resultado, linhas;
+        await comFila("solicitacoes-vendedoras", async () => {
+          const atual = await objLoadParaGravar(SOLIC_OBJ);
+          const feito = SS.aplicar(SS.normalizarLista(atual), { acao: "criar", tipo: corpo.tipo, pedido, texto: corpo.texto, dados: corpo.dados, pedidoPor: contaSol ? contaSol.nome : corpo.pedidoPor, conta: contaSol ? contaSol.login : "", filial: r && r.achado && r.detalhes ? r.detalhes.armazem : "", etapa: cancela && r ? SS.etapaDoRastreio(r) : "", naoAchado: Boolean(r && !r.achado) }, "", Date.now(), ctxProd);
+          if (feito.erro) { resultado = { erro: feito.erro }; return; }
+          resultado = feito.resultado; linhas = feito.linhas;
+          await objSave(SOLIC_OBJ, { linhas });
+        });
+        if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
+        const criada = SS.visaoMeu(linhas.find((l) => l.id === resultado.id));
+        return sendJson(res, 200, { ok: true, naoAchado: Boolean(r && !r.achado), etapa: criada.etapa, aviso: criada.aviso, linha: Object.assign(criada, { foraDoSc9: Boolean(r && !r.achado) }) });
+      }
+      if (pathname === "/api/vendedoras/produtos" && method === "GET") {
+        // busca a cada digitação (o aparelho espera ~250 ms): limite generoso por IP; a resposta sai do índice em memória, sem ler disco
+        if (limiteVendedoras("vp|" + ip, 60, 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas seguidas. Aguarde um instante." });
+        res.setHeader("Cache-Control", "no-store");
+        const PR = require("./solicitacoes-produtos.js");
+        const q = String(consulta.get("q") || "");
+        if (q.trim().length < PR.MIN_BUSCA) return sendJson(res, 200, { produtos: [], q: q.trim().slice(0, 60), minimo: PR.MIN_BUSCA });
+        const indice = await indiceProdutos();
+        const produtos = PR.buscar(indice, q, { filial: consulta.get("filial") || "", armazem: consulta.get("armazem") || "" });
+        return sendJson(res, 200, { produtos, q: q.trim().slice(0, 60), catalogoVazio: !indice || !indice.lista.length, saldoEm: indice && indice.fonte !== "nenhuma" ? indice.fonte : null });
+      }
+      if (pathname === "/api/vendedoras/solicitacoes" && method === "GET") {
+        if (limiteVendedoras("vc|" + ip, 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
+        const SS = require("./solicitacoes-store.js"), V = require("./vendedoras-contas.js"), Rastreio = require("./rastreio.js");
+        const conta = await contaDoToken(req), snap = await loadSnapshot().catch(() => null);
+        const meus = new Set(String(consulta.get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 100));
+        // cada vendedora só recebe o que ela mesma enviou
+        const minhas = (await solicLinhas()).filter((l) => meus.has(l.id) || SS.ehDela(l, conta && conta.login))
+          .map((l) => Object.assign(SS.visaoMeu(l), { foraDoSc9: SS.ATIVOS.includes(l.status) && Boolean(l.pedido) && !Rastreio.montarRastreio(snap, l.pedido, { agora: new Date() }).achado }));
+        const recentes = (a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm));
+        return sendJson(res, 200, {
+          ativas: minhas.filter((l) => SS.ATIVOS.includes(l.status)).sort(recentes), recentes: minhas.filter((l) => !SS.ATIVOS.includes(l.status)).sort(recentes).slice(0, 30),
+          conta: conta ? V.visaoPublica(conta) : null, sessaoRecusada: Boolean(req.headers["x-vend-token"] && !conta), agora: new Date().toISOString()
         });
       }
       if (pathname === "/api/vendedoras/prioridades" && method === "GET") {
@@ -2499,6 +2603,54 @@ async function handleApi(req, res, pathname) {
     } catch (e) {
       console.error("Erro nos avisos das vendedoras:", e);
       return sendJson(res, 500, erroPublico(e, "erro nos avisos"));
+    }
+  }
+
+  // Equipe (logada, perfil "ocorrencias" ou administrador): central de solicitações das vendedoras (solicitacoes-store.js).
+  // GET lista (com filtros), POST age (status | assumir | interno | prioridade | area), /dashboard e /exportar só leem.
+  if ((pathname === "/api/solicitacoes" && (method === "GET" || method === "POST")) || (method === "GET" && (pathname === "/api/solicitacoes/dashboard" || pathname === "/api/solicitacoes/exportar"))) {
+    const sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    if (limiteVendedoras("sol|u|" + sess.usuario, method === "POST" ? 60 : 240, 60 * 1000)) return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
+    const SS = require("./solicitacoes-store.js"), consultaEq = new URL(req.url, "http://x").searchParams;
+    try {
+      if (pathname === "/api/solicitacoes/dashboard") {
+        const D = require("./solicitacoes-dashboard.js"), AV = require("./avisos-store.js");
+        const dias = Math.min(D.DIAS_MAX, Math.max(1, Math.floor(Number(consultaEq.get("dias"))) || D.DIAS_PADRAO));
+        return sendJson(res, 200, D.montarDashboard({ solicitacoes: await solicLinhas(), prioridades: await prioridadesLinhas(), avisos: AV.normalizarLista(await objLoad("avisos-vendedoras.json", { fresh: true })), agora: Date.now(), dias }));
+      }
+      if (pathname === "/api/solicitacoes/exportar") {
+        const csv = SS.paraCsv(SS.ordenarFila(await solicLinhas()).sort((a, b) => String(b.criadoEm).localeCompare(String(a.criadoEm))));
+        res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="solicitacoes-' + SS.diaSP(Date.now()) + '.csv"', "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+        return res.end(csv);
+      }
+      const filtros = { status: consultaEq.get("status"), tipo: consultaEq.get("tipo"), area: consultaEq.get("area"), de: consultaEq.get("de"), ate: consultaEq.get("ate"), q: consultaEq.get("q") };
+      const responder = async (todas) => {
+        const Rastreio = require("./rastreio.js"), snap = await loadSnapshot().catch(() => null), agora = Date.now();
+        const lista = SS.filtrar(todas, filtros);
+        const situacao = (l) => { if (!l.pedido) return null; const r = Rastreio.montarRastreio(snap, l.pedido, { agora: new Date(agora) }); return r.achado ? { texto: r.resumo.texto, nivel: r.resumo.nivel, cliente: r.detalhes.cliente, armazem: r.detalhes.armazem } : null; };
+        const ativos = SS.ordenarFila(lista.filter((l) => SS.ATIVOS.includes(l.status))).map((l) => Object.assign({}, l, SS.slaDe(l, agora), { situacao: situacao(l) }));
+        const demais = lista.filter((l) => !SS.ATIVOS.includes(l.status)).sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 300).map((l) => Object.assign({}, l, SS.slaDe(l, agora)));
+        const tipos = {}; for (const k of SS.TIPOS_IDS) tipos[k] = { rotulo: SS.TIPOS[k].rotulo, pedido: SS.TIPOS[k].pedido, area: SS.TIPOS[k].area, sla: SS.TIPOS[k].sla };
+        return sendJson(res, 200, { ativos, demais, tipos, areas: SS.AREAS_ROTULO, filiais: SS.FILIAIS_ROTULO, baseEm: snap && snap.savedAt ? new Date(snap.savedAt).toISOString() : null, agora: new Date(agora).toISOString() });
+      };
+      if (method === "GET") return responder(await solicLinhas());
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      if (!["status", "assumir", "interno", "prioridade", "area"].includes(corpo && corpo.acao)) return sendJson(res, 400, { error: "ação inválida" });
+      let resultado, linhas;
+      await comFila("solicitacoes-vendedoras", async () => {
+        const atual = await objLoadParaGravar(SOLIC_OBJ);
+        const feito = SS.aplicar(SS.normalizarLista(atual), corpo, sess.usuario, Date.now());
+        if (feito.erro) { resultado = { erro: feito.erro }; return; }
+        linhas = feito.linhas; resultado = feito.resultado;
+        await objSave(SOLIC_OBJ, { linhas });
+      });
+      if (resultado.erro) return sendJson(res, resultado.erro.includes("não encontrada") ? 404 : 400, { error: resultado.erro });
+      return responder(linhas);
+    } catch (e) {
+      console.error("Erro na central de solicitações:", e);
+      return sendJson(res, 500, erroPublico(e, "erro na central de solicitações"));
     }
   }
 

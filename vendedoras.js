@@ -212,10 +212,10 @@
     if (c.erro) return desenhar();
     c.enviando = true; desenhar();
     try {
-      const corpo = modo === 'criar' ? { acao: 'criar', nome: c.nome, email: c.email, login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) } : { acao: 'entrar', login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []) };
+      const corpo = modo === 'criar' ? { acao: 'criar', nome: c.nome, email: c.email, login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []), idsSolic: lerLS('sc9v_solic', []) } : { acao: 'entrar', login: c.login, codigo: c.codigo, ids: lerLS(LS.meus, []), idsAvisos: lerLS(LS.avisos, []), idsSolic: lerLS('sc9v_solic', []) };
       const j = await api('/api/vendedoras/conta', { method: 'POST', body: JSON.stringify(corpo) });
       salvarSessao(j); c.codigo = ''; c.codigo2 = ''; C.toast(modo === 'criar' ? 'Acesso criado. Você já está dentro.' : 'Bem-vinda, ' + j.conta.nome + '.');
-      estado.tela = 'minhas'; estado.visao = 'minhas'; carregarPrioridades(true); carregarAvisos(true);
+      estado.tela = 'minhas'; estado.visao = 'minhas'; carregarPrioridades(true); carregarAvisos(true); if (root.SolicitacoesVend) root.SolicitacoesVend.carregar(true);
     } catch (e) { c.erro = e.message; }
     c.enviando = false; desenhar(); root.scrollTo(0, 0);
   }
@@ -508,8 +508,15 @@
     return blocos;
   }
 
+  /* ---------- Central de solicitações (solicitacoes-vend.js): aba "Solicitar" ---------- */
+  function telaSolicitar() {
+    if (!root.SolicitacoesVend) return [h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'Não consegui carregar esta aba. Recarregue a página.')];
+    root.SolicitacoesVend.ligar({ api, conta: () => estado.conta, redesenhar: desenhar });
+    return root.SolicitacoesVend.tela();
+  }
+
   /* ---------- tela ---------- */
-  const NAV = [['rastrear', 'busca', 'Acompanhar pedidos', 'Acompanhar'], ['prioridade', 'raio', 'Solicitar prioridade', 'Prioridade'], ['avisar', 'comentario', 'Avisar a expedição', 'Avisar'], ['minhas', 'lista', 'Minhas solicitações', 'Minhas'], ['exportar', 'baixar', 'Exportar', 'Exportar']];
+  const NAV = [['rastrear', 'busca', 'Acompanhar pedidos', 'Acompanhar'], ['prioridade', 'raio', 'Solicitar prioridade', 'Prioridade'], ['avisar', 'comentario', 'Avisar a expedição', 'Avisar'], ['solicitar', 'enviar', 'Solicitar à logística', 'Solicitar'], ['minhas', 'lista', 'Minhas solicitações', 'Minhas'], ['exportar', 'baixar', 'Exportar', 'Exportar']];
   function desenhar() {
     const foco = root.document.activeElement && root.document.activeElement.id ? root.document.activeElement.id : '';
     const y = root.scrollY;
@@ -519,12 +526,12 @@
         h('button', { class: 'btn peq conta-botao' + (estado.tela === 'conta' ? ' ativo' : ''), type: 'button', 'aria-label': estado.conta ? 'Seu acesso: ' + estado.conta.nome : 'Criar acesso ou entrar', onclick: () => { estado.tela = 'conta'; estado.aberta = null; desenhar(); root.scrollTo(0, 0); } }, ic(estado.conta ? 'usuarioCheck' : 'usuario'), h('span', { class: 'conta-nome', text: estado.conta ? estado.conta.nome.split(' ')[0] : 'Entrar' }))) : null));
     let corpo;
     if (!chaveLink) corpo = [h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'Este link está incompleto. Peça o link das vendedoras ao administrador do SC9.')];
-    else corpo = estado.tela === 'avisar' ? telaAvisar() : estado.tela === 'prioridade' ? telaPrioridade() : estado.tela === 'minhas' ? telaMinhas() : estado.tela === 'exportar' ? telaExportar() : estado.tela === 'conta' ? telaConta() : telaRastrear();
+    else corpo = estado.tela === 'solicitar' ? telaSolicitar() : estado.tela === 'avisar' ? telaAvisar() : estado.tela === 'prioridade' ? telaPrioridade() : estado.tela === 'minhas' ? telaMinhas() : estado.tela === 'exportar' ? telaExportar() : estado.tela === 'conta' ? telaConta() : telaRastrear();
     const velha = chaveLink && estado.atualizadoEm && idadeBaseH() > LIMITE_BASE_VELHA_H;
     $raiz.replaceChildren(topo, h('main', { class: 'pagina estreita' + (estado.animada !== estado.tela ? ' anima' : '') },
       velha ? h('div', { class: 'aviso', role: 'status' }, ic('relogio'), 'A base do SC9 foi atualizada em ' + C.dataHora(estado.atualizadoEm) + ' (há ' + C.duracao(estado.atualizadoEm) + '). O andamento pode estar atrasado.') : null, ...corpo));
     estado.animada = estado.tela;
-    root.document.title = ({ prioridade: 'Solicitar prioridade', avisar: 'Avisar a expedição', minhas: 'Minhas solicitações', exportar: 'Exportar', conta: 'Seu acesso' }[estado.tela] || 'Acompanhe seus pedidos') + ' · ' + C.NOME;
+    root.document.title = ({ solicitar: 'Solicitar à logística', prioridade: 'Solicitar prioridade', avisar: 'Avisar a expedição', minhas: 'Minhas solicitações', exportar: 'Exportar', conta: 'Seu acesso' }[estado.tela] || 'Acompanhe seus pedidos') + ' · ' + C.NOME;
     root.scrollTo(0, y);
     if (foco) { const e = root.document.getElementById(foco); if (e && e.focus) { e.focus({ preventScroll: true }); if (e.setSelectionRange && e.type === 'text') { try { e.setSelectionRange(e.value.length, e.value.length); } catch (x) { /* ok */ } } } }
   }
