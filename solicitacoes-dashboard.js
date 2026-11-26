@@ -75,7 +75,7 @@ function montarDashboard({ solicitacoes, prioridades, avisos, agora, dias } = {}
   for (const l of criadas) if (l.filial) fil.set(l.filial, (fil.get(l.filial) || 0) + 1);
   const porFilial = [...fil].map(([filial, total]) => ({ filial, total })).sort((a, b) => b.total - a.total || a.filial.localeCompare(b.filial));
 
-  const canc = criadas.filter((l) => (l.tipo === 'cancelar_pedido' || l.tipo === 'segurar_pedido') && l.etapa);
+  const canc = criadas.filter((l) => (l.tipo === 'cancelar_pedido' || l.tipo === 'segurar_pedido') && l.etapa && l.etapa !== 'nao_achado');
   const cancelamentos = { total: canc.length, aTempo: canc.filter((l) => l.aTempo).length, tarde: canc.filter((l) => !l.aTempo).length, pctATempo: pct(canc.filter((l) => l.aTempo).length, canc.length) };
 
   // transferências: rotas origem -> destino (filial + armazém) e produtos mais pedidos, com a descrição e o total de peças

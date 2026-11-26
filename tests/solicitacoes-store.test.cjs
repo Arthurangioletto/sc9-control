@@ -192,7 +192,7 @@ test('filtros e busca (inclui itens da transferência) e CSV seguro', () => {
   assert.equal(S.filtrar(linhas, { de: '2026-11-24', ate: '2026-11-24' }).length, 2);
   assert.deepEqual(S.ordenarFila(linhas).map((l) => l.tipo), ['cancelar_pedido', 'transferencia_peca'], 'alta antes de normal');
   const csv = S.paraCsv(linhas);
-  assert.ok(csv.startsWith('﻿id,protocolo,tipo,pedido,vendedora,filial,status,prioridade,criada,1ª resposta,concluída,minutos até resposta,minutos até conclusão\r\n'));
+  assert.ok(csv.startsWith('﻿id;protocolo;tipo;pedido;vendedora;filial;status;prioridade;criada;1ª resposta;concluída;minutos até resposta;minutos até conclusão\r\n'));
   assert.equal(csv.trim().split('\r\n').length, 3);
   assert.ok(csv.includes('Transferência de peça') && csv.includes('Tamboré') === false && csv.includes('Cambuci'));
 });
@@ -275,4 +275,13 @@ test('produtos: sem saldo-lotes usa a posição do SB8 (com filial, armazém e v
   const p = PR.buscar(ind, 'k01', { filial: 'Tambore', armazem: '01' })[0];
   assert.deepEqual([p.saldoOrigem, p.saldoTotal, p.lotes], [9, 11, [{ lote: 'LT', saldo: 9, filial: 'Tambore', armazem: '01', validade: '2027-05-01' }]]);
   assert.equal(PR.buscar(ind, 'kit').length, 10);
+});
+
+test('revisão: tipo "constructor"/"__proto__" é tratado como inválido (nunca erro 500) e CSV usa ponto e vírgula', () => {
+  assert.equal(S.TIPOS['constructor'], undefined);
+  assert.equal(S.TIPOS['__proto__'], undefined);
+  const r = S.aplicar([], { acao: 'criar', tipo: 'constructor', pedidoPor: 'Ana (Vendas)', texto: 'oi tudo bem' }, '', Date.now());
+  assert.ok(r.erro, 'deve recusar com mensagem');
+  const r2 = S.aplicar([], { acao: 'criar', tipo: '__proto__', pedidoPor: 'Ana (Vendas)', texto: 'oi tudo bem' }, '', Date.now());
+  assert.ok(r2.erro);
 });

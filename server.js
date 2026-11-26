@@ -1583,14 +1583,18 @@ async function indiceProdutos() {
   produtosIdx.construindo = (async () => {
     try {
       const snap = await loadSnapshot().catch(() => null); // já tem cache próprio (30 s)
+      if (!snap && produtosIdx.indice) { produtosIdx.checadoEm = Date.now() - PRODUTOS_CHECAR_MS + 10000; return produtosIdx.indice; } // sem snapshot agora: mantém o índice bom que já existe
       const marcaSnap = snap && snap.savedAt ? String(snap.savedAt) : snap ? "sem-data" : "sem-snapshot";
       if (produtosIdx.indice && produtosIdx.savedAt === marcaSnap) { produtosIdx.checadoEm = Date.now(); return produtosIdx.indice; }
       const P = require("./solicitacoes-produtos.js");
       let saldo = null, posicao = null;
-      try { saldo = await objLoad(SALDO_OBJ); } catch (e) { console.error("Busca de produtos: erro ao ler o saldo por lote:", e.message); }
+      let saldoFalhou = false;
+      try { saldo = await objLoad(SALDO_OBJ); } catch (e) { saldoFalhou = true; console.error("Busca de produtos: erro ao ler o saldo por lote:", e.message); }
       if (!saldo || !Array.isArray(saldo.saldoPorLote) || !saldo.saldoPorLote.length) { try { posicao = await stockPositionLoad(); } catch (e) { posicao = null; } }
       const indice = P.montarIndice({ itemNames: snap && snap.itemNames, saldoPorLote: saldo && saldo.saldoPorLote, posicao });
-      produtosIdx.indice = indice; produtosIdx.savedAt = marcaSnap; produtosIdx.checadoEm = Date.now();
+      produtosIdx.indice = indice;
+      if (saldoFalhou) { produtosIdx.savedAt = ""; produtosIdx.checadoEm = Date.now() - PRODUTOS_CHECAR_MS + 10000; } // saldo não veio: não "trava" o índice sem saldo; tenta de novo em 10 s
+      else { produtosIdx.savedAt = marcaSnap; produtosIdx.checadoEm = Date.now(); }
       return indice;
     } catch (e) {
       console.error("Busca de produtos: erro ao montar o índice:", e);
@@ -1953,6 +1957,7 @@ async function handleApi(req, res, pathname) {
       if (Array.isArray(payload.saldoPorLote)) {
         try { await objSave(SALDO_OBJ, { saldoPorLote: payload.saldoPorLote, savedAt: payload.savedAt }); }
         catch (e) { console.error("Erro ao salvar saldo por lote:", e); avisosSave.push("saldo por lote não foi gravado"); }
+        produtosIdx.savedAt = ""; produtosIdx.checadoEm = 0; // o saldo acabou de mudar: o índice de produtos precisa ser refeito
       }
       let saida = null, indiceSave = null, expedicao = null;
       try { // índice de pedidos (é o que o conferente consulta ao bipar)
@@ -2611,7 +2616,7 @@ async function handleApi(req, res, pathname) {
   if ((pathname === "/api/solicitacoes" && (method === "GET" || method === "POST")) || (method === "GET" && (pathname === "/api/solicitacoes/dashboard" || pathname === "/api/solicitacoes/exportar"))) {
     const sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return;
     res.setHeader("Cache-Control", "no-store");
-    if (limiteVendedoras("sol|u|" + sess.usuario, method === "POST" ? 60 : 240, 60 * 1000)) return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
+    if (limiteVendedoras("sol|" + (method === "POST" ? "w|" : "r|") + sess.usuario, method === "POST" ? 60 : 240, 60 * 1000)) return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
     const SS = require("./solicitacoes-store.js"), consultaEq = new URL(req.url, "http://x").searchParams;
     try {
       if (pathname === "/api/solicitacoes/dashboard") {

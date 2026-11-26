@@ -157,7 +157,7 @@ test('cancelamento esperto: etapa do pedido no SC9, urgente só se ainda não se
     assert.equal(painel.ativos.find((x) => x.pedido === '999000').naoAchado, true);
     assert.equal(painel.ativos.find((x) => x.pedido === '400001').slaMin, 30);
     const dash = (await call('/api/solicitacoes/dashboard', null, { cookie: admin })).data;
-    assert.deepEqual(dash.cancelamentos, { total: 5, aTempo: 1, tarde: 4, pctATempo: 20 });
+    assert.deepEqual(dash.cancelamentos, { total: 4, aTempo: 1, tarde: 3, pctATempo: 25 });
   } finally { await fechar(); }
 });
 
@@ -215,9 +215,9 @@ test('equipe: permissões, assumir/responder/comentar/prioridade/área, a vended
     // CSV: UTF-8 com BOM e sem fórmula solta
     const csv = await call('/api/solicitacoes/exportar', null, { cookie: logi });
     assert.equal(csv.status, 200); assert.match(csv.headers.get('content-type'), /text\/csv; charset=utf-8/);
-    assert.ok(csv.texto.startsWith('﻿id,protocolo,tipo,pedido,vendedora,filial,status,prioridade,criada,1ª resposta,concluída,minutos até resposta,minutos até conclusão'));
+    assert.ok(csv.texto.startsWith('﻿id;protocolo;tipo;pedido;vendedora;filial;status;prioridade;criada;1ª resposta;concluída;minutos até resposta;minutos até conclusão'));
     assert.equal(csv.texto.trim().split('\r\n').length, 3);
-    assert.ok(!/(^|,)=HYPERLINK/.test(csv.texto));
+    assert.ok(!/(^|;)=HYPERLINK/.test(csv.texto));
     // nada apagado: o arquivo guarda as duas, com histórico
     const arq = JSON.parse(fs.readFileSync(path.join(data, 'solicitacoes-vendedoras.json'), 'utf8'));
     assert.equal(arq.linhas.length, 2); assert.equal(arq.linhas.find((x) => x.id === id).historico.length, 6);

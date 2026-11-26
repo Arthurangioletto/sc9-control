@@ -65,6 +65,7 @@
     outro: { rotulo: 'Outro assunto', completo: 'Outro assunto', frase: 'Algo que não está nas opções ao lado.', icone: 'comentario', tom: 'neutro', grupo: 'outros', pedido: false, area: 'expedicao', sla: 240,
       campos: [{ id: 'texto', rotulo: 'Conte o que você precisa', tipo: 'area', obrig: true, max: 500, dica: 'Escreva tudo que a equipe precisa para agir, sem depender de outra mensagem.' }] }
   };
+  Object.setPrototypeOf(TIPOS, null);
   const ORDEM_TIPOS = Object.keys(TIPOS);
   const tipoDe = (l) => TIPOS[l && l.tipo] || { rotulo: (l && l.tipo) || 'Solicitação', completo: (l && l.tipo) || 'Solicitação', frase: '', icone: 'comentario', tom: 'neutro', grupo: 'outros', pedido: false, area: 'expedicao', sla: 240, campos: [] };
 

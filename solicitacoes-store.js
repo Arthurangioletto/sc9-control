@@ -23,6 +23,7 @@ const TIPOS = {
   nota_fiscal: { rotulo: 'Nota fiscal (reemitir/enviar/corrigir)', pedido: true, area: 'faturamento', sla: 120 },
   outro: { rotulo: 'Outro assunto', pedido: false, area: 'expedicao', sla: 240 }
 };
+Object.setPrototypeOf(TIPOS, null); // "constructor", "__proto__" etc. não contam como tipo
 const TIPOS_IDS = Object.keys(TIPOS);
 const AREAS = ['estoque', 'expedicao', 'faturamento'];
 const AREAS_ROTULO = { estoque: 'Estoque', expedicao: 'Expedição', faturamento: 'Faturamento' };
@@ -319,10 +320,11 @@ function aplicar(linhasAtuais, corpo, quem, agora, ctx) {
     if (!STATUS.includes(corpo.status)) return { linhas, erro: 'Status inválido.' };
     const resposta = texto(corpo.resposta, 300);
     if (corpo.status === 'negada' && !resposta && !l.resposta) return { linhas, erro: 'Explique o motivo para a vendedora ao negar (resposta obrigatória).' };
+    const jaNesseStatus = l.status === corpo.status;
     l.status = corpo.status; if (resposta) l.resposta = resposta;
     if (!l.responsavel && por) l.responsavel = por;
-    if (!l.primeiraRespostaEm) l.primeiraRespostaEm = quando;
-    l.concluidaEm = FINAIS.includes(l.status) ? quando : '';
+    if (!l.primeiraRespostaEm && corpo.status !== 'recebida') l.primeiraRespostaEm = quando;
+    if (!FINAIS.includes(l.status)) l.concluidaEm = ''; else if (!jaNesseStatus || !l.concluidaEm) l.concluidaEm = quando;
     l.respondidoPor = por; l.atualizadoEm = quando;
     add(l, { em: quando, acao: 'status', por, texto: resposta, status: corpo.status });
     return { linhas, resultado: { id: l.id } };
@@ -419,8 +421,8 @@ const celula = (v) => {
 function paraCsv(linhas) {
   const dt = (v) => (v ? new Date(v).toLocaleString('sv-SE', { timeZone: FUSO }) : '');
   const corpo = linhas.map((l) => [l.id, l.protocolo, (TIPOS[l.tipo] || TIPOS.outro).rotulo, l.pedido, l.pedidoPor, FILIAIS_ROTULO[l.filial] || l.filial, l.status, l.prioridade, dt(l.criadoEm), dt(l.primeiraRespostaEm), dt(l.concluidaEm),
-    l.primeiraRespostaEm ? minutos(l.criadoEm, l.primeiraRespostaEm) : '', l.concluidaEm ? minutos(l.criadoEm, l.concluidaEm) : ''].map(celula).join(','));
-  return '﻿' + [CABECALHO_CSV.map(celula).join(',')].concat(corpo).join('\r\n') + '\r\n';
+    l.primeiraRespostaEm ? minutos(l.criadoEm, l.primeiraRespostaEm) : '', l.concluidaEm ? minutos(l.criadoEm, l.concluidaEm) : ''].map(celula).join(';'));
+  return '﻿' + [CABECALHO_CSV.map(celula).join(';')].concat(corpo).join('\r\n') + '\r\n';
 }
 
 module.exports = {

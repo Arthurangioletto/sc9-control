@@ -109,7 +109,7 @@ function buscar(indice, consulta, { filial, armazem } = {}) {
     else if (c.norm && palavras.every((p) => c.norm.includes(p))) rank = c.norm.startsWith(palavras[0]) ? 2 : 3;
     if (rank >= 0) achados.push({ c, rank });
   }
-  achados.sort((x, y) => x.rank - y.rank || (indice.saldos.has(y.c.codigo) - indice.saldos.has(x.c.codigo)) || x.c.codigo.localeCompare(y.c.codigo, 'pt-BR', { numeric: true }));
+  achados.sort((x, y) => x.rank - y.rank || (indice.saldos.has(y.c.codigo) - indice.saldos.has(x.c.codigo)) || (x.c.codigo < y.c.codigo ? -1 : x.c.codigo > y.c.codigo ? 1 : 0));
   return achados.slice(0, MAX_RESULTADOS).map((x) => visaoProduto(indice, x.c, filtro));
 }
 
