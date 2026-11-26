@@ -260,7 +260,8 @@
   }
   function abas() {
     const nAv = estado.avisos ? estado.avisos.ativos.filter((l) => l.status === 'recebido').length : 0;
-    const lista = [['fila', 'lista', 'Solicitações'], ['avisos', 'comentario', 'Avisos das vendedoras' + (nAv ? ' (' + nAv + ')' : '')], ['exportar', 'baixar', 'Exportar']].concat(estado.sessao.admin ? [['acessos', 'usuarioCheck', 'Acessos das vendedoras']] : []);
+    const nSol = root.SolicitacoesUI ? root.SolicitacoesUI.contagem() : 0; // Central de solicitações (solicitacoes-ui.js)
+    const lista = [['fila', 'lista', 'Solicitações'], ['avisos', 'comentario', 'Avisos das vendedoras' + (nAv ? ' (' + nAv + ')' : '')], ['solic', 'caixaEntrada', 'Caixa de entrada' + (nSol ? ' (' + nSol + ')' : '')], ['dash', 'grafico', 'Dashboard'], ['exportar', 'baixar', 'Exportar']].concat(estado.sessao.admin ? [['acessos', 'usuarioCheck', 'Acessos das vendedoras']] : []);
     return h('div', { class: 'cx-abas', role: 'group', 'aria-label': 'Seções do painel' }, lista.map(([id, i, nome]) => h('button', { type: 'button', 'aria-pressed': String(estado.aba === id), onclick: () => { estado.aba = id; estado.aberta = null; if (id === 'acessos' && !estado.contas) carregarContas(); desenhar(); } }, ic(i), nome)));
   }
 
@@ -360,6 +361,8 @@
         l.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), l.erro) : null)));
   }
 
+  // Ponte com a Central de solicitações (solicitacoes-ui.js)
+  const ctxSolic = { pedir, redesenhar: () => desenhar(), sessao: () => estado.sessao, irPara: (a) => { estado.aba = a; estado.aberta = null; desenhar(); } };
   function desenhar() {
     const foco = root.document.activeElement && root.document.activeElement.id ? root.document.activeElement.id : '';
     const y = root.scrollY;
@@ -371,21 +374,23 @@
     else if (!logado) corpo = telaLogin();
     else {
       const d = estado.dados, linhas = d ? ordenadas() : [];
+      const sol = root.SolicitacoesUI ? root.SolicitacoesUI.tela(estado.aba, ctxSolic) : null; // abas "Caixa de entrada" e "Dashboard"
       corpo = h('main', { class: 'pagina' },
-        h('div', { class: 'card-titulo', style: 'margin:0' }, C.cabecalho('lista', 'Solicitações de prioridade', 'Quem decide é a logística: analise, aprove e responda. Atualiza sozinho a cada 20 segundos.'),
+        h('div', { class: 'card-titulo', style: 'margin:0' }, estado.aba === 'solic' || estado.aba === 'dash' ? C.cabecalho(estado.aba === 'dash' ? 'grafico' : 'caixaEntrada', estado.aba === 'dash' ? 'Dashboard da logística' : 'Central de solicitações', estado.aba === 'dash' ? 'O que as vendedoras pedem, quanto tempo a logística leva e onde estão os gargalos.' : 'Transferências, cancelamentos e outros pedidos das vendedoras. Atualiza sozinho a cada 20 segundos.') : C.cabecalho('lista', 'Solicitações de prioridade', 'Quem decide é a logística: analise, aprove e responda. Atualiza sozinho a cada 20 segundos.'),
           h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.carregando = true; carregar(); } }, ic('atualizar'), 'Atualizar agora')),
         faixaSc9(),
         faixaAvisos(),
         abas(),
         estado.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro) : null,
         estado.mostraLink && estado.sessao.admin ? cartaoLink() : null,
+        sol,
         estado.aba === 'avisos' ? telaAvisos() : estado.aba === 'exportar' ? (d ? telaExportar(linhas) : C.esqueleto(2)) : estado.aba === 'acessos' && estado.sessao.admin ? [telaAcessos(), cartaoConsultas()] : null,
         estado.aba !== 'fila' ? null : d ? indicadores() : C.esqueleto(2),
         estado.aba !== 'fila' ? null : d ? h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Solicitações' }), h('span', { class: 'mudo peq', text: linhas.length + (algumFiltro() ? ' de ' + todas().length : '') + (todas().length === 1 ? ' solicitação' : ' solicitações') })), barraFiltros(), h('div', { style: 'margin-top:14px' }, tabela(linhas))) : null);
     }
     const ab = logado && estado.dados && estado.aberta ? todas().find((x) => x.id === estado.aberta) : null;
     const av = logado && estado.avisos && estado.avisoAberto ? todosAvisos().find((x) => x.id === estado.avisoAberto) : null;
-    $raiz.replaceChildren(topo, corpo, ...(ab ? gaveta(ab) : av ? gavetaAviso(av) : []));
+    $raiz.replaceChildren(topo, corpo, ...(ab ? gaveta(ab) : av ? gavetaAviso(av) : root.SolicitacoesUI && logado ? root.SolicitacoesUI.gaveta() : []));
     root.scrollTo(0, y);
     if (foco) { const e = root.document.getElementById(foco); if (e && e.focus) e.focus({ preventScroll: true }); }
   }
