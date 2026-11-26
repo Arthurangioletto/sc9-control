@@ -6,13 +6,29 @@
   'use strict';
   const C = root.Central, h = C.h;
   const doc = root.document;
+  /* Colunas da aba "Planilha de entrega", na ordem e com os nomes da planilha de Entrega que o SC9 carrega.
+   * Para trocar o nome ou a ordem de uma coluna, mexa SÓ aqui (k = qual dado a coluna mostra; nome = o que aparece no cabeçalho).
+   * As três últimas são mais discretas (cls "discreta"). Os mesmos nomes saem no Excel/CSV baixado. */
+  const COLUNAS_PLANILHA = [
+    { k: 'data', nome: 'Data', cls: 'c-data' },
+    { k: 'pedido', nome: 'Pedido', cls: 'c-ped' },
+    { k: 'cliente', nome: 'Cliente', cls: 'c-cli' },
+    { k: 'nf', nome: 'Nota Fiscal', cls: 'c-nf' },
+    { k: 'transportadora', nome: 'Transportadora', cls: 'c-tr' },
+    { k: 'armazem', nome: 'Armazém', cls: 'c-arm' },
+    { k: 'volumes', nome: 'Volumes', cls: 'c-vol dir' },
+    { k: 'obs', nome: 'Observação', cls: 'c-obs' },
+    { k: 'bipadoEm', nome: 'Bipado às', cls: 'c-hora discreta' },
+    { k: 'bipadoPor', nome: 'Bipado por', cls: 'c-por discreta' },
+    { k: 'situacao', nome: 'Situação', cls: 'c-sit discreta' }
+  ];
   const $raiz = doc.getElementById('raiz');
   const CAB = { 'Content-Type': 'application/json', 'X-SC9-App': '1' };
   const params = new root.URLSearchParams(root.location.search);
   const EMBED = params.get('embed') === '1'; // dentro do SC9 (iframe da mesma origem): sem faixa da marca, sem botões de navegação
   const TV = !EMBED && params.get('modo') === 'tv';
   const REDUZ = Boolean(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const LIMITE = 25;
+  const LIMITE = 25, LIMITE_POD = 25;
   if (TV) doc.body.classList.add('tv');
   if (EMBED) doc.body.classList.add('embed');
 
@@ -33,6 +49,10 @@
     esq: [['p', 'm15 18-6-6 6-6']],
     dir: [['p', 'm9 18 6-6-6-6']],
     estrela: [['p', 'm12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z']],
+    impressora: [['p', 'M6 9V2h12v7'], ['p', 'M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2'], ['r', 6, 14, 12, 8, 1]],
+    troca: [['p', 'm16 3 4 4-4 4'], ['p', 'M20 7H4'], ['p', 'm8 21-4-4 4-4'], ['p', 'M4 17h16']],
+    som: [['p', 'M11 5 6 9H2v6h4l5 4z'], ['p', 'M15.5 8.5a5 5 0 0 1 0 7'], ['p', 'M19 5a10 10 0 0 1 0 14']],
+    mudo: [['p', 'M11 5 6 9H2v6h4l5 4z'], ['p', 'm22 9-6 6'], ['p', 'm16 9 6 6']],
     sol: [['c', 12, 12, 4], ['p', 'M12 2v2'], ['p', 'M12 20v2'], ['p', 'm4.9 4.9 1.4 1.4'], ['p', 'm17.7 17.7 1.4 1.4'], ['p', 'M2 12h2'], ['p', 'M20 12h2']]
   };
   function ic(nome, extra) {
@@ -105,7 +125,10 @@
     graficoTabela: false, series: { desceram: true, recebidos: true, saiu: true },
     imp: { aberto: false, fase: 'ocioso', sim: null, res: null, erro: '', passo: 0 },
     exp: { aberta: false, transportadora: '', soPendentes: false, ocupado: '' },
-    bipe: { pode: false, totalHoje: 0, ocupado: false, res: null, recebidosAgora: new Set(), volSalvo: '' },
+    acesso: null, tab: '', dialogos: 0,
+    bipar: { fila: [], ocupado: false, res: null, hist: [], faltando: [], carregouHist: false, erroHist: '', som: true, ult: 0 },
+    plan: { dia: '', dados: null, carregando: false, erro: '', sel: new Set(), transp: new Set(), q: '', ultima: 0, ultimoIdx: -1, seq: 0, ocupado: false, menuAberto: false, timer: 0 },
+    pod: { de: '', ate: '', preset: '15', transportadora: '', status: '', q: '', pagina: 1, dados: null, carregando: false, erro: '', nomes: new Set(), seq: 0, ult: 0, timer: 0, ajudaAberta: false },
     animado: false
   };
   const ui = {};       // pedaços da tela (criados uma vez)
@@ -144,13 +167,27 @@
     if (!r.ok) { const e = new Error(j.error || 'Não consegui falar com o servidor. Tente de novo.'); e.status = r.status; e.dados = j; throw e; }
     return j;
   }
-  function seSessaoCaiu(e) { if (e && e.auth) { estado.sessao = { authed: false, pode: false }; estado.painel = null; estado.pedidos = null; ui.montada = false; desenhar(); return true; } return false; }
+  function seSessaoCaiu(e) { if (e && e.auth) { estado.sessao = { authed: false, pode: false }; estado.acesso = null; estado.painel = null; estado.pedidos = null; ui.montada = false; desenhar(); return true; } return false; }
 
+  // Compatibilidade: se o servidor ainda não tem /api/expedicao/acesso, deduz das permissões antigas do usuário.
+  function acessoPelosPerfis(j) {
+    const p = j.perfis || [], adm = j.role === 'admin';
+    const bipar = adm || p.includes('exp_bipar') || p.includes('recebimento'), planilha = adm || p.includes('exp_planilha') || p.includes('recebimento') || p.includes('despacho'), pod = adm || p.includes('exp_pod');
+    return { admin: adm, abas: { bipar, planilha, pod, visaoGeral: planilha }, usuario: j.usuario || '', nome: j.nome || j.usuario || '' };
+  }
   async function carregarSessao() {
     try {
       const j = await (await root.fetch('/api/session', { cache: 'no-store', credentials: 'same-origin' })).json();
-      const perfis = j.perfis || [];
-      estado.sessao = { authed: Boolean(j.authed), nome: j.nome || j.usuario || '', admin: j.role === 'admin', pode: Boolean(j.authed && (j.role === 'admin' || perfis.includes('recebimento') || perfis.includes('despacho'))) };
+      estado.sessao = { authed: Boolean(j.authed), nome: j.nome || j.usuario || '', admin: j.role === 'admin', pode: false };
+      estado.acesso = null;
+      if (j.authed) {
+        let a = null;
+        try { a = await api('/api/expedicao/acesso'); } catch (e) { /* servidor sem a rota: usa os perfis */ }
+        if (!a || !a.abas) a = acessoPelosPerfis(j);
+        a.abas = { bipar: Boolean(a.abas.bipar), planilha: Boolean(a.abas.planilha), pod: Boolean(a.abas.pod), visaoGeral: Boolean(a.abas.visaoGeral) };
+        estado.acesso = a; estado.sessao.nome = a.nome || estado.sessao.nome; estado.sessao.admin = Boolean(a.admin);
+        estado.sessao.pode = a.abas.bipar || a.abas.planilha || a.abas.pod || a.abas.visaoGeral;
+      }
     } catch (e) { estado.sessao = { authed: false, pode: false }; }
   }
   async function carregarPainel() {
@@ -180,7 +217,7 @@
     estado.carregandoPedidos = false;
   }
   async function recarregar(silencioso) {
-    if (!estado.sessao || !estado.sessao.pode) return;
+    if (!estado.sessao || !estado.sessao.pode || !abaPermitida('geral')) return;
     if (!silencioso) { renderTudo(); }
     await Promise.all([carregarPainel(), TV ? null : carregarPedidos()]);
     renderTudo();
@@ -196,7 +233,7 @@
       const r = await root.fetch('/api/login', { method: 'POST', credentials: 'same-origin', headers: CAB, body: JSON.stringify({ usuario: l.usuario, password: l.senha }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) throw new Error(j.error || 'Não consegui entrar.');
-      l.senha = ''; await carregarSessao(); if (estado.sessao.pode) await carregarPodeReceber(); ui.montada = false; estado.carregando = true; desenhar(); await recarregar(true);
+      l.senha = ''; await carregarSessao(); ui.montada = false; estado.carregando = true; desenhar();
     } catch (e) { l.erro = e.message; }
     l.entrando = false; if (!estado.sessao.pode) desenhar();
   }
@@ -239,17 +276,18 @@
   function barraEmbed(comHora) {
     return h('div', { class: 'emb-barra' },
       comHora ? (ui.atualizado = h('span', { class: 'atualizado', role: 'status' }, h('i', { class: 'ponto' }), h('span', { class: 'rotulo-hora', text: 'Carregando…' }))) : h('span', null),
-      h('a', { class: 'emb-link', href: '/expedicao.html', target: '_blank', rel: 'noopener' }, 'Abrir em tela cheia', ic('externo')));
+      h('a', { class: 'emb-link', href: '/expedicao.html', target: '_blank', rel: 'noopener', onclick: (ev) => { ev.currentTarget.href = '/expedicao.html' + (estado.tab ? '#' + estado.tab : ''); } }, 'Abrir em tela cheia', ic('externo')));
   }
-  const cabeca = () => (EMBED ? barraEmbed(false) : h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Painel da Expedição'))));
+  const cabeca = () => (EMBED ? barraEmbed(false) : h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Expedição'))));
   function montarTopo() {
     if (EMBED) return barraEmbed(true);
     const nome = estado.sessao && estado.sessao.nome;
-    return h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Painel da Expedição'),
+    const gerente = Boolean(estado.acesso && estado.acesso.abas.visaoGeral);
+    return h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Expedição'),
       h('div', { class: 'topo-lado' },
-        TV ? null : h('a', { class: 'btn peq', href: '/fechamento-dia.html' }, ic('caminhao'), h('span', { class: 'so-largo', text: 'Fechamento do dia' })),
-        TV ? null : h('a', { class: 'btn peq', href: '/prioridades.html' }, ic('painel'), h('span', { class: 'so-largo', text: 'Painel da logística' })),
-        h('a', { class: 'btn peq', href: TV ? '/expedicao.html' : '/expedicao.html?modo=tv', 'aria-label': TV ? 'Sair do modo TV' : 'Abrir em modo TV (tela grande)' }, ic('tv'), h('span', { class: 'so-largo', text: TV ? 'Sair do modo TV' : 'Modo TV' })),
+        TV || !gerente ? null : h('a', { class: 'btn peq', href: '/fechamento-dia.html' }, ic('caminhao'), h('span', { class: 'so-largo', text: 'Fechamento do dia' })),
+        TV || !gerente ? null : h('a', { class: 'btn peq', href: '/prioridades.html' }, ic('painel'), h('span', { class: 'so-largo', text: 'Painel da logística' })),
+        gerente ? h('a', { class: 'btn peq', href: TV ? '/expedicao.html' : '/expedicao.html?modo=tv', 'aria-label': TV ? 'Sair do modo TV' : 'Abrir em modo TV (tela grande)' }, ic('tv'), h('span', { class: 'so-largo', text: TV ? 'Sair do modo TV' : 'Modo TV' })) : null,
         ui.atualizado = h('span', { class: 'atualizado', role: 'status' }, h('i', { class: 'ponto' }), h('span', { class: 'rotulo-hora', text: 'Carregando…' })),
         !TV && nome ? h('button', { class: 'btn peq', type: 'button', onclick: sair }, ic('sair'), h('span', { class: 'so-largo', text: 'Sair' })) : null)));
   }
@@ -270,7 +308,7 @@
     const abas = [['hoje', 'Hoje'], ['7', '7 dias'], ['mes', 'Mês'], ['datas', 'Datas']];
     peca('cab', ui.cab, { p, cargaTxt, cargaTom, tv: TV, podeIm: pn && pn.podeImportar, exp: estado.exp.ocupado }, () => [
       h('div', { class: 'cab-linha' },
-        C.cabecalho('caminhao', 'Painel da Expedição', TV || EMBED ? null : 'O que desceu do estoque, o que a expedição recebeu e o que já saiu para as transportadoras.'),
+        C.cabecalho('painel', TV ? 'Painel da Expedição' : 'Visão geral', TV || EMBED ? null : 'O que desceu do estoque, o que a expedição recebeu e o que já saiu para as transportadoras.'),
         TV ? h('div', { class: 'tv-relogio', 'aria-hidden': 'true' }, h('b', { class: 'tv-hora', text: C.horaBR(new Date().toISOString()) }), h('span', { text: periodoTexto(p.de, p.ate) })) : null),
       h('div', { class: 'barra-periodo' },
         TV ? null : h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'Período' }, abas.map(([k, t]) => h('button', { type: 'button', 'aria-pressed': String(p.tipo === k), onclick: () => (k === 'datas' ? definirPeriodo('datas', p.de, p.ate) : definirPeriodo(k)) }, t))),
@@ -734,115 +772,686 @@
     } catch (e) { if (!seSessaoCaiu(e)) C.toast('Não consegui montar o resumo agora. ' + e.message, 'erro'); }
   }
 
-  /* ---------- bipar pedido recebido (quem tem acesso "Recebimento") ---------- */
-  async function carregarPodeReceber() {
-    try { const j = await api('/api/recebimento'); estado.bipe.pode = Boolean(j.podeReceber); estado.bipe.totalHoje = (j.entries || []).length; } catch (e) { estado.bipe.pode = false; }
+  /* ---------- preferências simples (só neste aparelho) ---------- */
+  const PREF = {
+    ler(k, padrao) { try { const v = root.localStorage.getItem('sc9exp.' + k); return v == null ? padrao : JSON.parse(v); } catch (e) { return padrao; } },
+    gravar(k, v) { try { root.localStorage.setItem('sc9exp.' + k, JSON.stringify(v)); } catch (e) { /* sem armazenamento: segue sem lembrar */ } }
+  };
+  const semAcento = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const diaLongoTxt = (d) => DIA_LONGO[dow(d)] + ', ' + dmy(d);
+  const horaDe = (iso) => (iso ? C.horaBR(iso) : '');
+  const interativo = (alvo) => Boolean(alvo && alvo.closest && alvo.closest('button, a, input, select, textarea, summary, label, [role="tab"], [role="menuitem"]'));
+
+  /* ---------- janelas (diálogo central; gaveta lateral no computador, folha no celular) ---------- */
+  let seqDialogo = 0;
+  function abrirDialogo(o) {
+    const antes = doc.activeElement, idT = 'dlg-t-' + (++seqDialogo);
+    estado.dialogos++;
+    const fundo = h('div', { class: 'gaveta-fundo abre', onclick: () => fechar() });
+    const painel = h('div', { class: (o.lado ? 'gaveta exp-gaveta lado' : 'dialogo') + ' abre' + (o.larga ? ' larga' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': idT },
+      h('div', { class: 'gaveta-cab' }, h('div', null, h('h3', { id: idT, text: o.titulo }), o.sub ? h('p', { class: 'mudo peq', text: o.sub }) : null), h('button', { type: 'button', class: 'btn peq fantasma', 'aria-label': 'Fechar', onclick: () => fechar() }, ic('fechar'))),
+      h('div', { class: 'gaveta-corpo' }, o.corpo),
+      o.rodape ? h('div', { class: 'dialogo-rodape' }, o.rodape) : null);
+    let fechado = false;
+    function fechar() {
+      if (fechado) return; fechado = true;
+      fundo.remove(); painel.remove(); doc.removeEventListener('keydown', tecla); estado.dialogos = Math.max(0, estado.dialogos - 1);
+      if (o.aoFechar) o.aoFechar();
+      if (antes && antes.focus && doc.contains(antes)) antes.focus(); else if (estado.tab === 'bipar') focarBipe();
+    }
+    const tecla = (ev) => {
+      if (ev.key === 'Escape') { ev.stopPropagation(); fechar(); return; }
+      if (ev.key === 'Tab') {
+        const f = Array.from(painel.querySelectorAll('button, select, input, textarea, a[href]')).filter((e) => !e.disabled && e.offsetParent !== null);
+        if (!f.length) return; const a = f[0], z = f[f.length - 1];
+        if (ev.shiftKey && doc.activeElement === a) { ev.preventDefault(); z.focus(); } else if (!ev.shiftKey && doc.activeElement === z) { ev.preventDefault(); a.focus(); }
+      }
+    };
+    doc.addEventListener('keydown', tecla); doc.body.append(fundo, painel);
+    const foco = o.foco ? painel.querySelector(o.foco) : painel.querySelector('textarea, input:not([type="checkbox"]), select, button.primario');
+    if (foco) foco.focus({ preventScroll: true });
+    return { fechar, el: painel };
   }
+  const msgEm = (el, texto, tipo) => { el.className = 'rast-msg' + (tipo === 'erro' ? ' erro-t' : tipo === 'ok' ? ' ok-t' : ''); el.textContent = texto || ''; };
+  // contador "123/400" que acompanha um campo de texto
+  function contador(campo, max, minimo) {
+    const c = h('span', { class: 'contador', 'aria-hidden': 'true' });
+    const atualiza = () => { const n = campo.value.trim().length; c.textContent = campo.value.length + '/' + max; c.classList.toggle('falta', Boolean(minimo) && n < minimo); };
+    campo.addEventListener('input', atualiza); atualiza();
+    return c;
+  }
+  const nomeCurto = (n) => primeiroNome(n) || '—';
+
+  /* ====================================================================================================================
+   * ABA BIPAR: uma pessoa, um campo. O leitor de código de barras digita o número e aperta Enter; o cartão mostra tudo do pedido.
+   * ==================================================================================================================== */
+  const bp = estado.bipar;
   const celularPequeno = () => Boolean(root.matchMedia && root.matchMedia('(pointer: coarse) and (max-width: 700px)').matches);
-  function focarBipe() { if (ui.bipeCampo && !celularPequeno()) ui.bipeCampo.focus({ preventScroll: true }); }
-  function montarBipe() {
-    ui.bipeCampo = h('input', { id: 'bipe', class: 'bipe-campo', type: 'text', inputmode: 'numeric', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'send', placeholder: 'Leia o código ou digite o pedido', 'aria-label': 'Número do pedido para receber' });
-    ui.bipeBotao = h('button', { type: 'submit', class: 'btn verde bipe-ok' }, ic('ok'), 'Receber');
-    ui.bipeAviso = h('p', { class: 'bipe-aviso', role: 'status', 'aria-live': 'polite' });
-    ui.bipeRes = h('div', { class: 'bipe-res' });
-    ui.bipeContador = h('div', { class: 'bipe-contador', title: 'Pedidos recebidos hoje pela expedição' });
-    ui.bipeLista = h('section', { class: 'card bipe-lista', 'aria-labelledby': 'bl-t' });
-    const form = h('form', { class: 'bipe-form', autocomplete: 'off', onsubmit: (ev) => { ev.preventDefault(); const v = ui.bipeCampo.value; ui.bipeCampo.value = ''; bipar(v); } }, h('span', { class: 'bipe-ic' }, ic('bipe')), ui.bipeCampo, ui.bipeBotao);
-    ui.bipeCard = h('section', { class: 'card bipe-hero', 'aria-labelledby': 'bipe-t' },
-      h('div', { class: 'bipe-cab' }, h('div', null, h('h2', { id: 'bipe-t', text: 'Bipar pedido recebido' }), h('p', { text: 'Passe o leitor no código de barras ou digite o número e aperte Enter. A tela fica pronta para o próximo.' })), ui.bipeContador),
-      form, ui.bipeAviso, ui.bipeRes);
-    renderBipeContador();
-    return h('div', { class: 'bipe-grade' }, ui.bipeCard, ui.bipeLista);
+  function focarBipe() { if (ui.bipeCampo && estado.tab === 'bipar' && !estado.dialogos && !celularPequeno()) ui.bipeCampo.focus({ preventScroll: true }); }
+  let audioCtx = null;
+  function sinal(tipo) {
+    if (!bp.som) return;
+    try {
+      if (root.navigator.vibrate) root.navigator.vibrate(tipo === 'erro' ? [120, 60, 120] : 35);
+      const AC = root.AudioContext || root.webkitAudioContext; if (!AC) return;
+      audioCtx = audioCtx || new AC(); if (audioCtx.state === 'suspended') audioCtx.resume();
+      const nota = (f, ini, dur) => { const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime + ini; o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + 0.012); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t + dur + 0.03); };
+      if (tipo === 'ok') { nota(880, 0, 0.08); nota(1175, 0.09, 0.12); } else if (tipo === 'dup') { nota(620, 0, 0.1); nota(620, 0.15, 0.1); } else nota(280, 0, 0.26);
+    } catch (e) { /* som e vibração são opcionais */ }
   }
-  function renderBipeContador() {
-    if (!ui.bipeContador) return;
-    ui.bipeContador.replaceChildren(h('b', { class: 'num', text: num(estado.bipe.totalHoje) }), h('span', { text: estado.bipe.totalHoje === 1 ? 'recebido hoje' : 'recebidos hoje' }));
+  const limpaPedido = (v) => String(v || '').replace(/\D/g, '').replace(/^0+/, '');
+  function avisoBipe(texto, tom) { if (!ui.bipeAviso) return; ui.bipeAviso.className = 'bipe-aviso ' + (tom || ''); ui.bipeAviso.textContent = texto || ''; }
+
+  // Tudo do pedido num formato só, venha do bipe, de um pedido já bipado ou do histórico do dia.
+  function normalizarBipe(j, entrada) {
+    const e = entrada || {}, R = (j && j.resumo) || {}, I = Object.assign({}, (j && j.info) || {}, e.info || {});
+    const d = (j && j.desceu) || e.desceu || {}, t = (j && j.tempos) || R.tempos || {};
+    const nf = R.nf || I.nf || '';
+    const desceuEm = R.desceuEm || t.desceuEm || (d.status === 'ok' ? d.saidaEm : '') || '';
+    const minutos = t.minutosDesceuAteReceber != null ? t.minutosDesceuAteReceber : (desceuEm && e.recebidoEm ? Math.max(0, Math.round((new Date(e.recebidoEm) - new Date(desceuEm)) / 60000)) : null);
+    return {
+      id: e.id || '', pedido: e.pedido || R.pedido || '', cliente: R.cliente || I.cliente || '', transportadora: R.transportadora || I.transportadora || '', armazem: R.armazem || I.armazem || '',
+      linhas: R.linhas != null ? R.linhas : I.linhas, pecas: R.pecas != null ? R.pecas : I.pecas, conferente: R.conferente || I.conferente || '', nf,
+      semDado: Boolean(R.semDadoSC9 != null ? R.semDadoSC9 : e.semDadoSC9) || (!I.cliente && !I.transportadora && !nf),
+      desceuEm, desceuPor: R.desceuPor || (d.status === 'ok' ? d.saidaPor : '') || '', minutos, recebidoEm: e.recebidoEm || '', recebidoPor: e.recebidoPorNome || '', volumes: e.volumes == null ? null : e.volumes, origem: e.origem || R.origem || 'bipe'
+    };
   }
-  function avisoBipe(texto, tom) { ui.bipeAviso.className = 'bipe-aviso ' + (tom || ''); ui.bipeAviso.textContent = texto || ''; }
-  async function bipar(valor) {
-    const b = estado.bipe; if (b.ocupado) return;
-    const ped = String(valor || '').replace(/\D/g, '').replace(/^0+/, '');
-    if (ped.length < 4 || ped.length > 10) { avisoBipe(ped ? 'Esse número não parece um pedido. Leia o código de novo ou digite de 4 a 10 números.' : 'Leia o código de barras ou digite o número do pedido.', 'laranja'); focarBipe(); return; }
-    b.ocupado = true; ui.bipeBotao.disabled = true; ui.bipeCard.classList.add('ocupado'); avisoBipe('Recebendo o pedido ' + ped + '…', '');
+  async function biparUm(ped) {
+    avisoBipe('Recebendo o pedido ' + ped + '…', '');
     try {
       const j = await api('/api/recebimento/bipar', { method: 'POST', corpo: { pedido: ped } });
-      b.totalHoje = j.totalHoje != null ? j.totalHoje : b.totalHoje + 1; b.recebidosAgora.add(ped);
-      b.res = { tipo: 'ok', ped, entry: j.entry || {}, info: (j.entry && j.entry.info) || j.info || null, desceu: j.desceu || (j.entry && j.entry.desceu) || null, tempos: j.tempos || null, volumes: j.entry ? j.entry.volumes : null, chave: Date.now() };
-      avisoBipe('Pedido ' + ped + ' recebido.', 'verde');
-      carregarPainel().then(() => { renderTudo(); }); carregarPedidos().then(renderTabela);
+      const entry = j.entry || { pedido: ped, recebidoEm: new Date().toISOString() };
+      const c = normalizarBipe(j, entry);
+      bp.res = { tipo: 'ok', c, chave: Date.now() };
+      bp.hist = [entry].concat(bp.hist.filter((x) => x.id !== entry.id && x.pedido !== entry.pedido));
+      avisoBipe('', ''); sinal('ok');
+      if (ui.geralMontada) { carregarPainel().then(renderTudo); }
     } catch (e) {
-      if (seSessaoCaiu(e)) { b.ocupado = false; return; }
-      if (e.status === 409 && e.dados && e.dados.error === 'duplicado') { b.res = { tipo: 'dup', ped, entry: e.dados.duplicado || {}, info: e.dados.info || (e.dados.duplicado && e.dados.duplicado.info) || null, chave: Date.now() }; avisoBipe('', ''); }
-      else { b.res = { tipo: 'erro', ped, msg: e.message, chave: Date.now() }; avisoBipe('', ''); }
+      if (seSessaoCaiu(e)) return;
+      if (e.status === 409 && e.dados && e.dados.error === 'duplicado') {
+        const dup = e.dados.duplicado || { pedido: ped };
+        bp.res = { tipo: 'dup', c: normalizarBipe(e.dados, dup), msg: e.dados.mensagem || '', chave: Date.now() }; avisoBipe('', ''); sinal('dup');
+      } else { bp.res = { tipo: 'erro', c: { pedido: ped }, msg: e.message, chave: Date.now() }; avisoBipe('', ''); sinal('erro'); }
     }
-    b.ocupado = false; ui.bipeBotao.disabled = false; ui.bipeCard.classList.remove('ocupado');
-    renderBipeContador(); renderBipeRes(); renderBipeLista(); focarBipe();
+    renderBipeRes(); renderBipeHist(); renderBipeTopo();
   }
-  const dataDoDia = (iso) => (iso && C.diaSP(iso) === hoje() ? 'hoje' : iso ? 'em ' + C.curta(iso) : '');
-  function blocoTempo(r) {
-    const d = r.desceu, min = r.tempos && r.tempos.minutosDesceuAteReceber != null ? r.tempos.minutosDesceuAteReceber : (d && d.status === 'ok' && d.saidaEm && r.entry.recebidoEm ? Math.max(0, Math.round((new Date(r.entry.recebidoEm) - new Date(d.saidaEm)) / 60000)) : null);
-    const desceuEm = (r.tempos && r.tempos.desceuEm) || (d && d.saidaEm);
-    if (!desceuEm || (d && d.status === 'sem_saida') || min == null) return h('div', { class: 'tempo-faixa suave' }, ic('info'), h('div', null, h('b', { text: 'Ainda não desceu pelo estoque' }), h('span', { text: 'Foi recebido mesmo assim. Quando o estoque registrar a saída, o tempo aparece no painel.' })));
-    const tom = tomTempo(min), hh = C.horaBR(desceuEm), quem = d && d.saidaPor ? ' por ' + primeiroNome(d.saidaPor) : '';
-    return h('div', { class: 'tempo-faixa ' + tom, role: 'status' }, ic(tom === 'verde' ? 'okCirculo' : tom === 'ambar' ? 'relogio' : 'alerta'), h('div', null,
-      h('b', { text: min < 1 ? 'Recebido na hora' : 'Ficou ' + fmtMin(min) + ' lá embaixo' }), h('span', { text: 'Desceu ' + (C.diaSP(desceuEm) === hoje() ? '' : 'em ' + C.curta(desceuEm) + ' ') + 'às ' + hh + quem + ' · foi recebido ' + (min < 1 ? 'em seguida' : fmtMin(min) + ' depois') })));
+  async function processarFila() {
+    if (bp.ocupado) return; bp.ocupado = true;
+    try { while (bp.fila.length) { const ped = bp.fila.shift(); renderBipeFila(); await biparUm(ped); } } finally { bp.ocupado = false; renderBipeFila(); focarBipe(); }
+  }
+  function enfileirar(valor) {
+    const ped = limpaPedido(valor);
+    if (ped.length < 4 || ped.length > 10) { avisoBipe(ped ? 'Esse número não parece um pedido. Leia o código de novo ou digite de 4 a 10 números.' : 'Leia o código de barras ou digite o número do pedido.', 'laranja'); sinal('erro'); focarBipe(); return; }
+    bp.fila.push(ped); renderBipeFila(); processarFila();
+  }
+  function renderBipeFila() { if (ui.bipeFila) { ui.bipeFila.textContent = bp.fila.length ? 'Na fila: ' + bp.fila.length : ''; ui.bipeFila.hidden = !bp.fila.length; } }
+
+  function tomMinutos(min) { return min == null ? 'suave' : tomTempo(min); }
+  function fatoG(icone, rotulo, conteudo, classe) { return h('div', { class: 'fato-g ' + (classe || '') }, h('span', { class: 'fg-ic' }, ic(icone)), h('div', { class: 'fg-corpo' }, h('span', { class: 'fg-rot', text: rotulo }), conteudo)); }
+  const valorG = (texto, classe) => h('b', { class: 'fg-val ' + (classe || ''), text: texto });
+  function chipNota(nf, grande) {
+    return nf ? h('b', { class: 'fg-val num', text: nf }) : h('span', { class: 'chip-aguarda' + (grande ? ' grande' : ''), title: 'A nota só aparece depois que o SC9 é carregado de novo.' }, ic('relogio'), 'Aguardando nota');
+  }
+  function blocoDesceu(c, consulta) {
+    if (!c.desceuEm) return fatoG('descer', 'Desceu do estoque', [valorG('Ainda não desceu pelo estoque', 'suave'), h('span', { class: 'fg-sub tom-suave', text: 'Foi recebido mesmo assim.' })], 'dois-terco suave');
+    const hojeDia = C.diaSP(c.desceuEm) === hoje();
+    const quando = (hojeDia ? 'às ' : 'em ' + C.curta(c.desceuEm) + ' às ') + horaDe(c.desceuEm) + (c.desceuPor ? ' · ' + primeiroNome(c.desceuPor) : '');
+    const min = c.minutos != null ? c.minutos : Math.max(0, Math.round((Date.now() - new Date(c.desceuEm).getTime()) / 60000));
+    const tom = c.minutos != null ? tomTempo(c.minutos) : 'suave';
+    const frase = c.minutos != null ? (c.minutos < 1 ? 'Recebido na hora' : 'Ficou ' + fmtMin(c.minutos) + ' lá embaixo') : 'Desceu há ' + fmtMin(min);
+    return fatoG(tom === 'verde' ? 'okCirculo' : tom === 'ambar' ? 'relogio' : tom === 'vermelho' ? 'alerta' : 'descer', 'Desceu do estoque', [valorG(quando), h('span', { class: 'fg-sub tom-' + tom, text: frase })], 'dois-terco tempo ' + tom);
+  }
+  function cartaoPedido(r) {
+    const c = r.c, dup = r.tipo === 'dup', cons = r.tipo === 'consulta';
+    const topo = h('div', { class: 'res-topo' },
+      h('span', { class: 'selo-ok' + (dup || cons ? ' info' : '') }, ic(dup || cons ? 'info' : 'ok')),
+      h('div', { class: 'res-tit' }, h('b', { class: 'res-t', text: dup ? 'Este pedido já tinha sido bipado' : cons ? 'Pedido bipado hoje' : 'Pedido recebido' }),
+        h('span', { class: 'res-h', text: (dup ? (c.recebidoEm ? 'Bipado ' + (C.diaSP(c.recebidoEm) === hoje() ? 'às ' + horaDe(c.recebidoEm) : 'em ' + C.dataHora(c.recebidoEm)) : '') + (c.recebidoPor ? ' por ' + primeiroNome(c.recebidoPor) : '') + '. Não foi contado de novo.' : 'às ' + horaDe(c.recebidoEm || new Date().toISOString()) + (c.recebidoPor && cons ? ' por ' + primeiroNome(c.recebidoPor) : '')) })),
+      h('b', { class: 'res-ped num', text: c.pedido }));
+    const semDado = c.semDado ? h('div', { class: 'faixa-aguarda', role: 'note' }, ic('info'), h('div', null, h('b', { text: 'Sem dado do SC9' }), h('span', { text: 'O SC9 ainda não conhece este pedido, mas ele foi registrado. Cliente, transportadora e nota aparecem sozinhos quando o SC9 for carregado de novo.' }))) : null;
+    const notaFato = c.nf ? fatoG('nota', 'Nota fiscal', chipNota(c.nf, true), 'meia') : fatoG('relogio', 'Nota fiscal', [h('b', { class: 'fg-val' }, 'Aguardando nota'), h('span', { class: 'fg-sub tom-ambar', text: 'Normal: aparece sozinha quando o SC9 for carregado de novo.' })], 'meia nota-espera');
+    const fatos = h('div', { class: 'fatos-g' },
+      fatoG('predio', 'Cliente', valorG(c.cliente || 'Ainda sem cliente', c.cliente ? 'grande' : 'suave'), 'larga'),
+      fatoG('caminhao', 'Transportadora', valorG(c.transportadora || 'Ainda sem transportadora', c.transportadora ? '' : 'suave'), 'meia'),
+      notaFato,
+      fatoG('predio', 'Armazém', valorG(c.armazem || '—'), 'meia'),
+      fatoG('lista', 'Linhas e peças', valorG(c.linhas != null ? plural(c.linhas, 'linha', 'linhas') + ' · ' + plural(c.pecas || 0, 'peça', 'peças') : '—'), 'meia'),
+      blocoDesceu(c, cons),
+      dup || cons ? fatoG('relogio', 'Bipado', valorG((c.recebidoEm ? horaDe(c.recebidoEm) : '—') + (c.recebidoPor ? ' · ' + primeiroNome(c.recebidoPor) : '')), 'terco') : (c.conferente ? fatoG('conferencia', 'Conferido por', valorG(primeiroNome(c.conferente)), 'terco') : null));
+    return h('div', { class: 'res-bipe ' + (dup || cons ? 'r-dup' : 'r-ok'), key: r.chave }, topo, semDado, fatos, dup ? null : blocoVolumes(r));
   }
   async function guardarVolumes(r, valor, msg, botoes) {
     const v = String(valor == null ? '' : valor).trim();
-    if (v && (!/^\d{1,3}$/.test(v) || Number(v) < 1)) { msg.className = 'rast-msg erro-t'; msg.textContent = 'Volumes: digite um número de 1 a 999.'; return; }
-    if (!r.entry.id) return;
-    botoes.forEach((x) => { x.disabled = true; }); msg.className = 'rast-msg'; msg.textContent = 'Guardando…';
+    if (v && (!/^\d{1,3}$/.test(v) || Number(v) < 1)) { msgEm(msg, 'Volumes: digite um número de 1 a 999.', 'erro'); return; }
+    if (!r.c.id) return;
+    botoes.forEach((x) => { x.disabled = true; }); msgEm(msg, 'Guardando…');
     try {
-      await api('/api/recebimento/atualizar', { method: 'POST', corpo: { id: r.entry.id, volumes: v ? Number(v) : null } });
-      r.volumes = v ? Number(v) : null; renderBipeRes(); focarBipe(); carregarPainel().then(() => { renderKpis(); renderTransp(); });
+      await api('/api/recebimento/atualizar', { method: 'POST', corpo: { id: r.c.id, volumes: v ? Number(v) : null } });
+      r.c.volumes = v ? Number(v) : null; bp.hist = bp.hist.map((x) => (x.id === r.c.id ? Object.assign({}, x, { volumes: r.c.volumes }) : x));
+      renderBipeRes(); focarBipe(); if (ui.geralMontada) carregarPainel().then(() => { renderKpis(); renderTransp(); });
       const t = ui.bipeRes.querySelector('.vol-salvo'); if (t) t.classList.add('pop');
-    } catch (e) { if (!seSessaoCaiu(e)) { botoes.forEach((x) => { x.disabled = false; }); msg.className = 'rast-msg erro-t'; msg.textContent = e.message; } }
+    } catch (e) { if (!seSessaoCaiu(e)) { botoes.forEach((x) => { x.disabled = false; }); msgEm(msg, e.message, 'erro'); } }
   }
   function blocoVolumes(r) {
-    if (r.volumes) return h('div', { class: 'vol-salvo' }, ic('caixaEntrada'), h('span', null, h('b', { text: plural(r.volumes, 'volume', 'volumes') }), ' guardados'), h('button', { type: 'button', class: 'link-botao', onclick: () => { r.volumes = null; renderBipeRes(); const c = doc.getElementById('vol'); if (c) c.focus(); }, text: 'Mudar' }));
-    const msg = h('p', { class: 'rast-msg', role: 'status' });
-    const campo = h('input', { id: 'vol', class: 'entrada vol-campo', type: 'text', inputmode: 'numeric', maxlength: '3', placeholder: 'Quantos?', autocomplete: 'off', 'aria-label': 'Quantidade de volumes (opcional)' });
-    const botoes = [];
+    if (r.c.volumes) return h('div', { class: 'vol-salvo' }, ic('caixaEntrada'), h('span', null, h('b', { text: plural(r.c.volumes, 'volume', 'volumes') }), ' anotados'), h('button', { type: 'button', class: 'link-botao', onclick: () => { r.c.volumes = null; renderBipeRes(); const x = doc.getElementById('vol'); if (x) x.focus(); }, text: 'Mudar' }));
+    const msg = h('p', { class: 'rast-msg', role: 'status' }), botoes = [];
+    const campo = h('input', { id: 'vol', class: 'entrada vol-campo', type: 'text', inputmode: 'numeric', maxlength: '3', placeholder: 'Outro', autocomplete: 'off', 'aria-label': 'Quantidade de volumes (opcional)' });
     const chips = [1, 2, 3, 4, 5].map((n) => { const b = h('button', { type: 'button', class: 'chip-vol', 'aria-label': n + (n === 1 ? ' volume' : ' volumes'), onclick: () => guardarVolumes(r, n, msg, botoes) }, String(n)); botoes.push(b); return b; });
     const ok = h('button', { type: 'button', class: 'btn peq', onclick: () => guardarVolumes(r, campo.value, msg, botoes) }, 'Guardar'); botoes.push(ok);
     campo.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); if (campo.value.trim()) guardarVolumes(r, campo.value, msg, botoes); else focarBipe(); } });
-    return h('div', { class: 'vol-bloco' }, h('label', { class: 'rotulo', for: 'vol', text: 'Volumes (se quiser anotar agora)' }), h('div', { class: 'vol-linha' }, h('div', { class: 'chips-vol' }, chips), campo, ok), msg);
+    return h('div', { class: 'vol-bloco' }, h('span', { class: 'rotulo', id: 'vol-rot', text: 'Quantos volumes? (se quiser anotar agora)' }), h('div', { class: 'vol-linha', role: 'group', 'aria-labelledby': 'vol-rot' }, h('div', { class: 'chips-vol' }, chips), campo, ok), msg);
   }
   function renderBipeRes() {
-    const r = estado.bipe.res; if (!ui.bipeRes) return;
-    if (!r) { ui.bipeRes.replaceChildren(h('div', { class: 'bipe-espera' }, ic('bipe'), h('span', { text: 'Aguardando o próximo pedido…' }))); return; }
-    let el;
-    if (r.tipo === 'ok') {
-      const i = r.info || {}, nf = i.nf || (r.entry.info && r.entry.info.nf);
-      const fato = (icone, rot, valor, extra) => h('div', { class: 'fato' }, ic(icone), h('div', null, h('span', { text: rot }), valor, extra || null));
-      el = h('div', { class: 'res-bipe r-ok', key: r.chave },
-        h('div', { class: 'res-topo' }, h('span', { class: 'selo-ok mini' }, ic('ok')), h('div', null, h('b', { class: 'res-t', text: 'Pedido recebido' }), h('span', { class: 'res-h', text: 'às ' + C.horaBR(r.entry.recebidoEm || new Date().toISOString()) + ' · ' + plural(estado.bipe.totalHoje, 'recebido hoje', 'recebidos hoje') })), h('b', { class: 'res-ped num', text: r.ped })),
-        blocoTempo(r),
-        h('div', { class: 'fatos' },
-          fato('predio', 'Cliente', h('b', { text: i.cliente || 'Ainda sem cliente' })),
-          fato('caminhao', 'Transportadora', h('b', { text: i.transportadora || 'Ainda sem transportadora' })),
-          fato('lista', 'Linhas e peças', h('b', { text: i.linhas != null ? plural(i.linhas, 'linha', 'linhas') + ' · ' + plural(i.pecas || 0, 'peça', 'peças') : '—' })),
-          fato('nota', 'Nota fiscal', nf ? h('b', { class: 'num', text: nf }) : h('b', { class: 'aguarda', title: 'A nota só aparece depois que o SC9 é carregado de novo.' }, 'Aguardando nota'))),
-        !r.info ? h('p', { class: 'res-sem', role: 'note' }, ic('info'), 'O SC9 ainda não tem os dados deste pedido. Cliente, transportadora e nota aparecem sozinhos quando o SC9 for carregado de novo.') : (!nf ? h('p', { class: 'res-sem', role: 'note' }, ic('info'), 'A nota fiscal só existe depois que o SC9 é carregado de novo. Não precisa fazer nada: ela aparece sozinha.') : null),
-        blocoVolumes(r));
-    } else if (r.tipo === 'dup') {
-      const e = r.entry || {}, i = r.info || e.info || {};
-      el = h('div', { class: 'res-bipe r-dup', key: r.chave }, h('div', { class: 'res-topo' }, h('span', { class: 'selo-ok mini info' }, ic('info')), h('div', null, h('b', { class: 'res-t', text: 'Este pedido já tinha sido recebido' }), h('span', { class: 'res-h', text: (e.recebidoEm ? 'Recebido ' + (C.diaSP(e.recebidoEm) === hoje() ? 'às ' + C.horaBR(e.recebidoEm) : 'em ' + C.dataHora(e.recebidoEm)) : '') + (e.recebidoPorNome ? ' por ' + primeiroNome(e.recebidoPorNome) : '') + '. Não foi contado de novo.' })), h('b', { class: 'res-ped num', text: r.ped })),
-        i.cliente || i.transportadora ? h('p', { class: 'res-sub', text: [i.cliente, i.transportadora].filter(Boolean).join(' · ') }) : null);
-    } else el = h('div', { class: 'res-bipe r-erro', key: r.chave, role: 'alert' }, h('div', { class: 'res-topo' }, h('span', { class: 'selo-ok mini erro' }, ic('alerta')), h('div', null, h('b', { class: 'res-t', text: 'Não consegui receber o pedido ' + r.ped }), h('span', { class: 'res-h', text: r.msg + ' Leia o código de novo.' }))));
-    ui.bipeRes.replaceChildren(el);
+    if (!ui.bipeRes) return; const r = bp.res;
+    if (!r) { ui.bipeRes.replaceChildren(h('div', { class: 'bipe-espera' }, ic('bipe'), h('div', null, h('b', { text: 'Pronto para o próximo pedido' }), h('span', { text: 'Passe o leitor no código de barras. O resultado aparece aqui.' })))); return; }
+    if (r.tipo === 'erro') { ui.bipeRes.replaceChildren(h('div', { class: 'res-bipe r-erro', key: r.chave, role: 'alert' }, h('div', { class: 'res-topo' }, h('span', { class: 'selo-ok erro' }, ic('alerta')), h('div', { class: 'res-tit' }, h('b', { class: 'res-t', text: 'Não consegui receber o pedido ' + r.c.pedido }), h('span', { class: 'res-h', text: r.msg + ' Leia o código de novo.' }))))); return; }
+    ui.bipeRes.replaceChildren(cartaoPedido(r));
   }
-  function renderBipeLista() {
-    if (!ui.bipeLista) return;
-    const pn = estado.painel, b = estado.bipe;
-    if (!pn) { peca('bipeLista', ui.bipeLista, 'esq', () => h('div', { class: 'esqueleto', style: 'height:100%;min-height:200px' })); return; }
-    const todos = ((pn.pendencias || {}).desceuNaoRecebido || []).filter((x) => !b.recebidosAgora.has(x.pedido)), total = Math.max(0, totalPend(pn, 'desceuNaoRecebido') - ((pn.pendencias || {}).desceuNaoRecebido || []).filter((x) => b.recebidosAgora.has(x.pedido)).length);
-    peca('bipeLista', ui.bipeLista, { t: todos.slice(0, 6), total, o: b.ocupado }, () => [
-      h('div', { class: 'card-titulo' }, h('div', null, h('h2', { id: 'bl-t', text: 'Desceu e ainda não foi recebido' }), h('p', { class: 'mudo peq', text: total ? 'Toque em "Bipar" quando o pedido chegar na expedição.' : '' })), total ? h('span', { class: 'pend-cont', text: num(total) }) : null),
-      total ? [h('ul', { class: 'bl-lista' }, todos.slice(0, 6).map((x) => { const tom = tomParado(Number(x.horasParado) || 0); return h('li', { class: 'tom-' + tom }, h('div', { class: 'bl-info' }, h('b', { class: 'num', text: x.pedido }), h('span', { text: x.cliente || 'Cliente não informado' }), h('small', { text: (x.transportadora || 'Sem transportadora') + ' · desceu há ' + parado(Number(x.horasParado) || 0) })), h('button', { type: 'button', class: 'btn peq', 'aria-label': 'Bipar o pedido ' + x.pedido, onclick: () => bipar(x.pedido) }, ic('bipe'), 'Bipar')); })),
-        total > 6 ? h('button', { type: 'button', class: 'link-botao bl-mais', onclick: () => irParaPend('desceuNaoRecebido') }, 'Ver os outros ' + num(total - 6)) : null]
-        : h('div', { class: 'pend-ok' }, h('span', { class: 'pend-ok-ic' }, ic('ok')), h('div', null, h('b', { text: 'Tudo o que desceu já foi recebido' }), h('p', { text: 'Quando o estoque descer um pedido novo, ele aparece aqui.' })))
+  function renderBipeTopo() {
+    if (!ui.bipeContador) return;
+    const n = bp.hist.length;
+    ui.bipeContador.replaceChildren(h('b', { class: 'num', text: num(n) }), h('span', { text: n === 1 ? 'bipado hoje por você' : 'bipados hoje por você' }));
+  }
+  function renderBipeHist() {
+    if (!ui.bipeHist) return;
+    const lista = bp.hist.slice(0, 15);
+    peca('bipeHist', ui.bipeHist, { l: lista.map((e) => [e.id, e.nf, (e.info || {}).nf, (e.info || {}).cliente, e.volumes]), erro: bp.erroHist, c: bp.carregouHist, f: bp.faltando.map((x) => x.pedido) }, () => [
+      h('div', { class: 'card-titulo' }, h('div', null, h('h2', { id: 'bh-t', text: 'Bipados hoje por mim' }), h('p', { class: 'mudo peq', text: 'Os 15 últimos. Toque em um para ver os dados dele.' })), lista.length ? h('span', { class: 'pend-cont azul', text: String(bp.hist.length) }) : null),
+      bp.erroHist ? h('p', { class: 'erro', role: 'alert' }, ic('alerta'), bp.erroHist)
+        : !bp.carregouHist ? h('div', { class: 'esqueleto', style: 'height:180px' })
+        : lista.length ? h('ul', { class: 'hist-lista' }, lista.map((e) => { const c = normalizarBipe(null, e); return h('li', null, h('button', { type: 'button', class: 'hist-item', onclick: () => { bp.res = { tipo: 'consulta', c, chave: Date.now() }; renderBipeRes(); focarBipe(); }, 'aria-label': 'Ver o pedido ' + c.pedido + ', bipado às ' + horaDe(e.recebidoEm) },
+          h('span', { class: 'hi-hora num', text: horaDe(e.recebidoEm) }), h('span', { class: 'hi-meio' }, h('b', { class: 'num', text: c.pedido }), h('span', { text: c.cliente || 'Sem dado do SC9' }), h('small', { text: c.transportadora || 'Sem transportadora' })),
+          c.nf ? h('span', { class: 'hi-nf num', text: 'NF ' + c.nf }) : h('span', { class: 'chip-aguarda mini' }, ic('relogio'), 'Aguardando nota'))); }))
+        : h('div', { class: 'pend-ok' }, h('span', { class: 'pend-ok-ic' }, ic('bipe')), h('div', null, h('b', { text: 'Nenhum pedido bipado ainda hoje' }), h('p', { text: 'Quando você bipar, eles aparecem aqui, do mais novo para o mais antigo.' }))),
+      bp.faltando.length ? h('details', { class: 'faltam' }, h('summary', null, ic('descer'), 'Desceram do estoque e ainda não chegaram', h('span', { class: 'pend-cont', text: String(bp.faltando.length) })),
+        h('ul', { class: 'bl-lista' }, bp.faltando.slice(0, 12).map((x) => h('li', null, h('div', { class: 'bl-info' }, h('b', { class: 'num', text: x.pedido }), h('span', { text: (x.info && x.info.cliente) || 'Cliente não informado' }), h('small', { text: ((x.info && x.info.transportadora) || 'Sem transportadora') + (x.saidaEm ? ' · desceu às ' + horaDe(x.saidaEm) : '') })), h('button', { type: 'button', class: 'btn peq', 'aria-label': 'Bipar o pedido ' + x.pedido, onclick: () => enfileirar(x.pedido) }, ic('bipe'), 'Bipar'))))) : null
     ]);
+  }
+  async function carregarHistorico(silencioso) {
+    try {
+      const j = await api('/api/recebimento');
+      const eu = String(j.usuario || (estado.acesso && estado.acesso.usuario) || '');
+      const meus = (j.entries || []).filter((e) => !eu || e.recebidoPorUsuario === eu).sort((a, b) => String(b.recebidoEm).localeCompare(String(a.recebidoEm)));
+      bp.hist = meus; bp.faltando = (j.faltando || []).filter((x) => !meus.some((m) => m.pedido === x.pedido)); bp.erroHist = ''; bp.carregouHist = true; marcarAtualizado();
+    } catch (e) { if (seSessaoCaiu(e)) return; if (!silencioso || !bp.carregouHist) { bp.erroHist = e.message; bp.carregouHist = true; } }
+    cache.bipeHist = ''; renderBipeHist(); renderBipeTopo();
+  }
+  function montarBipar() {
+    bp.som = PREF.ler('som', true);
+    ui.bipeCampo = h('input', { id: 'bipe', class: 'bipe-campo', type: 'text', inputmode: 'numeric', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'send', placeholder: 'Leia o código ou digite o pedido', 'aria-label': 'Número do pedido para bipar' });
+    ui.bipeAviso = h('p', { class: 'bipe-aviso', role: 'status', 'aria-live': 'polite' });
+    ui.bipeFila = h('span', { class: 'bipe-fila', hidden: true, role: 'status' });
+    ui.bipeRes = h('div', { class: 'bipe-res', 'aria-live': 'polite' });
+    ui.bipeContador = h('div', { class: 'bipe-contador', role: 'status' });
+    ui.bipeHist = h('section', { class: 'card bipe-hist', 'aria-labelledby': 'bh-t' });
+    const botaoSom = h('button', { type: 'button', class: 'btn peq som-botao', 'aria-pressed': String(bp.som), title: 'Som e vibração ao bipar', onclick: () => { bp.som = !bp.som; PREF.gravar('som', bp.som); botaoSom.setAttribute('aria-pressed', String(bp.som)); botaoSom.replaceChildren(ic(bp.som ? 'som' : 'mudo'), bp.som ? 'Som ligado' : 'Som desligado'); if (bp.som) sinal('ok'); focarBipe(); } }, ic(bp.som ? 'som' : 'mudo'), bp.som ? 'Som ligado' : 'Som desligado');
+    const form = h('form', { class: 'bipe-form', autocomplete: 'off', onsubmit: (ev) => { ev.preventDefault(); const v = ui.bipeCampo.value; ui.bipeCampo.value = ''; enfileirar(v); } },
+      h('span', { class: 'bipe-ic' }, ic('bipe')), ui.bipeCampo, h('button', { type: 'submit', class: 'btn verde bipe-ok' }, ic('ok'), 'Receber'));
+    ui.bipeCampo.addEventListener('blur', () => { root.setTimeout(() => { if (estado.tab === 'bipar' && !estado.dialogos && (doc.activeElement === doc.body || doc.activeElement === null)) focarBipe(); }, 60); });
+    const principal = h('section', { class: 'card bipe-hero', 'aria-labelledby': 'bipe-t' },
+      h('div', { class: 'bipe-cab' }, h('h2', { id: 'bipe-t', text: 'Bipar pedido recebido' }), h('div', { class: 'bipe-cab-lado' }, ui.bipeContador, botaoSom)),
+      form, h('div', { class: 'bipe-linha' }, ui.bipeAviso, ui.bipeFila), ui.bipeRes);
+    renderBipeRes(); renderBipeTopo(); renderBipeHist();
+    return h('div', { class: 'bipe-grade' }, principal, ui.bipeHist);
+  }
+
+  /* ====================================================================================================================
+   * ABA PLANILHA DE ENTREGA: parecida com a planilha de Entrega do SC9, de UM dia só. Filtra por transportadora (várias),
+   * marca linhas, imprime a lista de saída, troca a transportadora (com motivo) e guarda observações.
+   * ==================================================================================================================== */
+  const pl = estado.plan;
+  const nomeTr = (n) => n || 'Sem transportadora';
+  const linhasDoDia = () => (pl.dados && pl.dados.linhas) || [];
+  // o servidor agrupa as transportadoras sem olhar maiúsculas/acentos e chama a vazia de "Sem transportadora": a comparação daqui faz o mesmo
+  const motivoTroca = (l) => (l.troca && l.troca.motivo) || l.trocaMotivo || '';
+  const chaveTr = (n) => { const k = semAcento(n).replace(/\s+/g, ' ').trim(); return k === 'sem transportadora' ? '' : k; };
+  const chavesMarcadas = () => new Set(Array.from(pl.transp).map(chaveTr));
+  function passaFiltro(l, ks) {
+    ks = ks || chavesMarcadas();
+    if (pl.transp.size && !ks.has(chaveTr(l.transportadora))) return false;
+    const q = semAcento(pl.q).trim(); if (!q) return true;
+    const palheiro = semAcento([l.pedido, l.cliente, l.nf, l.observacao, l.transportadora, l.bipadoPor].join(' '));
+    return q.split(/\s+/).every((p) => palheiro.includes(p));
+  }
+  const linhasFiltradas = () => { const ks = chavesMarcadas(); return linhasDoDia().filter((l) => passaFiltro(l, ks)); };
+  const selecionadas = () => linhasDoDia().filter((l) => pl.sel.has(l.id));
+  function escopoAcao() { const sel = selecionadas(); return sel.length ? { linhas: sel, selecionado: true } : { linhas: linhasFiltradas(), selecionado: false }; }
+  const podeVoltarHoje = () => pl.dia && pl.dia !== hoje();
+  function podarSelecao() { const ok = new Set(linhasFiltradas().map((l) => l.id)); for (const id of Array.from(pl.sel)) if (!ok.has(id)) pl.sel.delete(id); }
+
+  async function carregarPlanilha(silencioso) {
+    if (!estado.acesso || !estado.acesso.abas.planilha) return;
+    const meu = ++pl.seq; if (!pl.dia) pl.dia = hoje();
+    if (!silencioso) { pl.carregando = true; pl.erro = ''; renderPlanilha(); }
+    try {
+      const j = await api('/api/expedicao/planilha?' + qs({ dia: pl.dia }));
+      if (meu !== pl.seq) return;
+      pl.dados = j; pl.erro = ''; pl.ultima = Date.now(); marcarAtualizado();
+      const ids = new Set((j.linhas || []).map((l) => l.id)); for (const id of Array.from(pl.sel)) if (!ids.has(id)) pl.sel.delete(id);
+      for (const n of Array.from(pl.transp)) if (!(j.transportadoras || []).some((g) => g.nome === n)) pl.transp.delete(n);
+    } catch (e) { if (meu !== pl.seq || seSessaoCaiu(e)) return; if (!pl.dados || !silencioso) { pl.erro = e.message; if (!silencioso) pl.dados = null; } else estado.falhouAtualizar = true; }
+    pl.carregando = false; renderPlanilha();
+  }
+  function irParaDia(dia) {
+    if (!ehDia(dia)) return; if (dia > hoje()) { C.toast('Só dá para ver até hoje.', 'erro'); dia = hoje(); }
+    pl.dia = dia; pl.sel.clear(); pl.dados = null; pl.ultimoIdx = -1; carregarPlanilha(false);
+  }
+
+  /* --- cabeçalho: dia, resumo --- */
+  function renderPlanCab() {
+    const d = pl.dados, dia = pl.dia || hoje(), eHoje = dia === hoje();
+    peca('plCab', ui.plCab, { dia, eHoje, t: d && d.totais, c: pl.carregando, ult: pl.ultima && Math.floor(pl.ultima / 60000) }, () => {
+      const navDia = h('div', { class: 'dia-nav', role: 'group', 'aria-label': 'Escolher o dia' },
+        h('button', { type: 'button', class: 'btn icone', 'aria-label': 'Dia anterior', title: 'Dia anterior', onclick: () => irParaDia(somar(dia, -1)) }, ic('esq')),
+        h('div', { class: 'dia-atual' }, h('label', { class: 'sr', for: 'pl-dia', text: 'Escolher o dia' }),
+          h('input', { id: 'pl-dia', class: 'dia-input', type: 'date', value: dia, max: hoje(), onchange: (ev) => { if (ev.target.value) irParaDia(ev.target.value); } }), h('span', { class: 'dia-ext', text: DIA_LONGO[dow(dia)] }), eHoje ? h('span', { class: 'selo-hoje', text: 'hoje' }) : null),
+        h('button', { type: 'button', class: 'btn icone', 'aria-label': 'Próximo dia', title: eHoje ? 'Hoje é o último dia' : 'Próximo dia', disabled: eHoje, onclick: () => irParaDia(somar(dia, 1)) }, ic('dir')),
+        h('button', { type: 'button', class: 'btn peq', disabled: eHoje, onclick: () => irParaDia(hoje()) }, 'Hoje'));
+      const t = d && d.totais;
+      const kpi = (cls, icone, valor, rot) => h('li', { class: 'mini-kpi ' + cls }, ic(icone), h('b', { class: 'num', text: num(valor) }), h('span', { text: rot }));
+      return [h('div', { class: 'plan-cab' }, h('div', { class: 'plan-tit' }, h('h2', { text: 'Planilha de entrega' }), h('p', { class: 'mudo peq', text: 'Tudo que foi bipado em um dia. Escolha as transportadoras, marque os pedidos e imprima a lista de saída.' })), navDia),
+        t ? h('ul', { class: 'mini-kpis', 'aria-label': 'Resumo do dia' }, kpi('azul', 'pacote', t.pedidos, t.pedidos === 1 ? 'pedido' : 'pedidos'), kpi('azul', 'caixaEntrada', t.volumes, t.volumes === 1 ? 'volume' : 'volumes'), kpi(t.aguardandoNota ? 'ambar' : 'verde', t.aguardandoNota ? 'relogio' : 'okCirculo', t.aguardandoNota, 'aguardando nota'), kpi('roxo', 'troca', t.trocadas, t.trocadas === 1 ? 'troca de transportadora' : 'trocas de transportadora'), kpi('verde', 'impressora', t.impressos, t.impressos === 1 ? 'já impresso' : 'já impressos')) : null];
+    });
+  }
+  /* --- filtros: busca e chips de transportadora --- */
+  function renderPlanChips() {
+    const d = pl.dados; if (!ui.plChips) return;
+    peca('plChips', ui.plChips, { t: d && d.transportadoras, s: Array.from(pl.transp) }, () => {
+      const lista = (d && d.transportadoras) || []; if (!lista.length) return null;
+      return [h('div', { class: 'chips-tr', role: 'group', 'aria-label': 'Filtrar por transportadora (pode escolher várias)' },
+        h('button', { type: 'button', class: 'chip-tr todas', 'aria-pressed': String(!pl.transp.size), onclick: () => { pl.transp.clear(); aposFiltro(); } }, 'Todas', h('b', { class: 'num', text: num(lista.reduce((a, g) => a + g.total, 0)) })),
+        lista.map((g) => { const on = pl.transp.has(g.nome); return h('button', { type: 'button', class: 'chip-tr' + (on ? ' on' : ''), 'aria-pressed': String(on), title: nomeTr(g.nome) + ': ' + plural(g.total, 'pedido', 'pedidos') + ', ' + plural(g.volumes, 'volume', 'volumes') + (g.impressos ? ', ' + g.impressos + ' já impressos' : ''), onclick: () => { if (on) pl.transp.delete(g.nome); else pl.transp.add(g.nome); aposFiltro(); } }, on ? ic('ok') : null, nomeTr(g.nome), h('b', { class: 'num', text: num(g.total) })); }),
+        pl.transp.size ? h('button', { type: 'button', class: 'link-botao limpar-f', onclick: () => { pl.transp.clear(); aposFiltro(); } }, 'Limpar') : null)];
+    });
+  }
+  function aposFiltro() { podarSelecao(); renderPlanChips(); renderPlanTabela(); renderPlanBarra(); }
+
+  /* --- tabela --- */
+  function celNotaPlan(l) { return l.nf ? h('b', { class: 'nf num', text: l.nf }) : h('span', { class: 'chip-aguarda', title: 'A nota só aparece depois que o SC9 é carregado de novo.' }, ic('relogio'), 'Aguardando nota'); }
+  function celTranspPlan(l) {
+    return [h('b', { class: 'tr-efetiva', text: nomeTr(l.transportadora) }),
+      l.trocada ? h('span', { class: 'selo-troca', title: 'Era ' + (l.transportadoraOriginal || '—') + ' e saiu como ' + (l.transportadora || '—') + (motivoTroca(l) ? '. Motivo: ' + motivoTroca(l) : '. Toque no lápis da observação para ver o histórico.') }, ic('troca'), 'era ' + (l.transportadoraOriginal || '—') + ' → ' + (l.transportadora || '—')) : null,
+      null];
+  }
+  function celObsPlan(l) {
+    const n = (l.observacoes || []).length;
+    return h('div', { class: 'obs-cel' }, l.observacao ? h('span', { class: 'obs-txt', title: l.observacao, text: l.observacao }) : h('span', { class: 'obs-vazia', 'aria-hidden': 'true' }),
+      h('button', { type: 'button', class: 'btn icone peq obs-botao' + (n ? ' tem' : ''), 'aria-label': (n ? 'Observações do pedido ' + l.pedido + ' (' + n + ')' : 'Escrever observação do pedido ' + l.pedido), title: n ? 'Ver e acrescentar observações (' + n + ')' : 'Escrever observação', onclick: () => abrirObservacao(l) }, ic(n ? 'comentario' : 'lapis'), n > 1 ? h('span', { class: 'obs-n', text: String(n) }) : null));
+  }
+  function celulaPlan(c, l) {
+    const base = { class: c.cls };
+    switch (c.k) {
+      case 'data': return h('td', base, h('span', { class: 'num', text: dm(l.data || pl.dia) }));
+      case 'pedido': return h('th', Object.assign({ scope: 'row' }, base), h('b', { class: 'num', text: l.pedido }));
+      case 'cliente': return h('td', base, h('span', { class: 'cli', text: l.cliente || 'Sem dado do SC9' }));
+      case 'nf': return h('td', base, celNotaPlan(l));
+      case 'transportadora': return h('td', base, celTranspPlan(l));
+      case 'armazem': return h('td', base, h('span', { text: l.armazem || '' }));
+      case 'volumes': return h('td', base, h('span', { class: 'num', text: l.volumes == null ? '' : String(l.volumes) }));
+      case 'obs': return h('td', base, celObsPlan(l));
+      case 'bipadoEm': return h('td', base, h('span', { class: 'num', text: horaDe(l.bipadoEm) }));
+      case 'bipadoPor': return h('td', base, h('span', { text: primeiroNome(l.bipadoPor) }));
+      case 'situacao': return h('td', base, h('span', { text: l.saiuEntrega ? 'Saiu' : 'Na expedição' }), l.impressoEm ? h('span', { class: 'selo-impressa', title: 'Esta linha já saiu numa lista impressa' }, ic('impressora'), 'impressa ' + horaDe(l.impressoEm)) : null);
+      default: return h('td', base, '');
+    }
+  }
+  function linhaPlan(l, i) {
+    const marcada = pl.sel.has(l.id);
+    const caixa = h('input', { type: 'checkbox', class: 'caixa-sel', checked: marcada || null, 'aria-label': 'Marcar o pedido ' + l.pedido, onclick: (ev) => { ev.stopPropagation(); marcarLinha(l, ev.target.checked, ev.shiftKey, i); } });
+    const tr = h('tr', { class: 'linha-plan' + (marcada ? ' marcada' : '') + (l.trocada ? ' trocada' : ''), 'data-id': l.id, 'data-i': i,
+      onclick: (ev) => { if (interativo(ev.target)) return; const novo = !pl.sel.has(l.id); marcarLinha(l, novo, ev.shiftKey, i); } },
+      h('td', { class: 'c-sel' }, h('label', { class: 'caixa-area' }, caixa)),
+      COLUNAS_PLANILHA.map((c) => celulaPlan(c, l)));
+    return tr;
+  }
+  function marcarLinha(l, marcar, intervalo, i) {
+    const vis = linhasFiltradas();
+    if (intervalo && pl.ultimoIdx >= 0 && pl.ultimoIdx < vis.length) { const a = Math.min(pl.ultimoIdx, i), b = Math.max(pl.ultimoIdx, i); for (let k = a; k <= b; k++) { if (marcar) pl.sel.add(vis[k].id); else pl.sel.delete(vis[k].id); } } else if (marcar) pl.sel.add(l.id); else pl.sel.delete(l.id);
+    pl.ultimoIdx = i; sincronizarSelecao();
+  }
+  function marcarTodos(marcar) { const vis = linhasFiltradas(); for (const l of vis) { if (marcar) pl.sel.add(l.id); else pl.sel.delete(l.id); } sincronizarSelecao(); }
+  // atualiza só o que mudou na tela (sem redesenhar a tabela)
+  function sincronizarSelecao() {
+    if (ui.plCorpo) for (const tr of ui.plCorpo.querySelectorAll('tr.linha-plan')) { const on = pl.sel.has(tr.getAttribute('data-id')); tr.classList.toggle('marcada', on); const c = tr.querySelector('.caixa-sel'); if (c) c.checked = on; }
+    const vis = linhasFiltradas(), n = vis.filter((l) => pl.sel.has(l.id)).length;
+    if (ui.plTodos) { ui.plTodos.checked = vis.length > 0 && n === vis.length; ui.plTodos.indeterminate = n > 0 && n < vis.length; }
+    renderPlanBarra();
+  }
+  function renderPlanTabela() {
+    if (!ui.plTabela) return; const d = pl.dados;
+    ui.plTodos = null; ui.plCorpo = null;
+    if (pl.erro && !d) { ui.plTabela.replaceChildren(h('div', { class: 'erro erro-bloco', role: 'alert' }, h('div', { class: 'linha-erro' }, ic('alerta'), pl.erro), botao('Tentar de novo', { class: 'btn peq', onclick: () => carregarPlanilha(false) }, ic('atualizar')))); ui.plResumoFiltro.textContent = ''; return; }
+    if (!d) { ui.plTabela.replaceChildren(h('div', { class: 'esq-tab', role: 'status', 'aria-label': 'Carregando a planilha' }, Array.from({ length: 7 }, () => h('div', { class: 'esqueleto', style: 'height:52px;border-radius:12px' })))); ui.plResumoFiltro.textContent = ''; return; }
+    const vis = linhasFiltradas(), total = linhasDoDia().length, filtrando = Boolean(pl.transp.size || pl.q.trim());
+    ui.plResumoFiltro.textContent = total ? (filtrando ? num(vis.length) + ' de ' + plural(total, 'pedido', 'pedidos') + ' neste dia' : plural(total, 'pedido', 'pedidos') + ' neste dia') : '';
+    if (!vis.length) {
+      ui.plTabela.replaceChildren(C.vazio(filtrando ? 'busca' : 'caixaEntrada', filtrando ? 'Nenhum pedido com esses filtros' : 'Nenhum pedido bipado ' + (pl.dia === hoje() ? 'hoje' : 'neste dia'), filtrando ? 'Tire alguma transportadora ou confira a busca.' : (pl.dia === hoje() ? 'Quando a expedição bipar os pedidos, eles aparecem aqui sozinhos.' : 'Escolha outro dia nas setas ou volte para hoje.')),
+        h('div', { class: 'vazio-acoes' }, filtrando ? botao('Limpar filtros', { class: 'btn', onclick: () => { pl.transp.clear(); pl.q = ''; if (ui.plBusca) ui.plBusca.value = ''; aposFiltro(); } }, ic('fechar')) : null, podeVoltarHoje() ? botao('Ir para hoje', { class: 'btn primario', onclick: () => irParaDia(hoje()) }, ic('calendario')) : null));
+      return;
+    }
+    const nSel = vis.filter((l) => pl.sel.has(l.id)).length;
+    ui.plTodos = h('input', { type: 'checkbox', class: 'caixa-sel', 'aria-label': 'Marcar todos os pedidos do filtro (' + vis.length + ')', checked: (nSel === vis.length) || null, onchange: (ev) => marcarTodos(ev.target.checked) });
+    ui.plTodos.indeterminate = nSel > 0 && nSel < vis.length;
+    ui.plCorpo = h('tbody', null, vis.map(linhaPlan));
+    ui.plTabela.replaceChildren(h('div', { class: 'tabela-rolagem tab-plan-rol', tabindex: '-1' }, h('table', { class: 'tabela tab-plan' }, h('caption', { class: 'sr', text: 'Pedidos bipados em ' + diaLongoTxt(pl.dia) }),
+      h('thead', null, h('tr', null, h('th', { scope: 'col', class: 'c-sel' }, h('label', { class: 'caixa-area', title: 'Marcar todos do filtro' }, ui.plTodos)), COLUNAS_PLANILHA.map((c) => h('th', { scope: 'col', class: c.cls, text: c.nome })))),
+      ui.plCorpo)));
+  }
+  /* --- barra de ações --- */
+  function renderPlanBarra() {
+    if (!ui.plBarra) return;
+    const d = pl.dados, vis = d ? linhasFiltradas() : [], sel = selecionadas();
+    const k = { n: vis.length, s: sel.length, o: pl.ocupado, m: pl.menuAberto, g: new Set((sel.length ? sel : vis).map((l) => l.transportadora)).size, d: Boolean(d) };
+    peca('plBarra', ui.plBarra, k, () => {
+      if (!d || !vis.length) return null;
+      const trs = new Set((sel.length ? sel : vis).map((l) => l.transportadora));
+      const texto = sel.length ? [h('b', { class: 'num', text: num(sel.length) }), sel.length === 1 ? ' selecionado' : ' selecionados', h('span', { class: 'bar-sub', text: trs.size > 1 ? ' · ' + trs.size + ' transportadoras, uma folha para cada' : '' })] : [h('span', { class: 'bar-sem' }, 'Nenhum marcado: as ações valem para os ', h('b', { class: 'num', text: num(vis.length) }), vis.length === 1 ? ' pedido' : ' pedidos', ' do filtro')];
+      const menu = h('div', { class: 'menu-exp' },
+        h('button', { type: 'button', class: 'btn', 'aria-haspopup': 'menu', 'aria-expanded': String(Boolean(pl.menuAberto)), onclick: (ev) => { ev.stopPropagation(); pl.menuAberto = !pl.menuAberto; cache.plBarra = ''; renderPlanBarra(); if (pl.menuAberto) { const p = ui.plBarra.querySelector('[role="menuitem"]'); if (p) p.focus(); } } }, ic('baixar'), 'Exportar', ic('chevron')),
+        pl.menuAberto ? h('div', { class: 'menu-lista', role: 'menu', onkeydown: (ev) => { if (ev.key === 'Escape') { pl.menuAberto = false; cache.plBarra = ''; renderPlanBarra(); const b = ui.plBarra.querySelector('[aria-haspopup]'); if (b) b.focus(); } } },
+          h('button', { type: 'button', role: 'menuitem', class: 'menu-item', onclick: () => exportarPlanilha('xlsx') }, ic('planilha'), 'Baixar Excel'),
+          h('button', { type: 'button', role: 'menuitem', class: 'menu-item', onclick: () => exportarPlanilha('csv') }, ic('baixar'), 'Baixar CSV')) : null);
+      return h('div', { class: 'barra-acoes' + (sel.length ? ' com-sel' : ''), role: 'region', 'aria-label': 'Ações da planilha' },
+        h('div', { class: 'bar-info', role: 'status' }, texto, sel.length ? h('button', { type: 'button', class: 'link-botao', onclick: () => { for (const l of sel) pl.sel.delete(l.id); sincronizarSelecao(); } }, 'Limpar seleção') : null),
+        h('div', { class: 'bar-botoes' },
+          h('button', { type: 'button', class: 'btn primario', disabled: pl.ocupado || null, onclick: abrirImprimir }, ic('impressora'), h('span', { class: 't-l', text: 'Imprimir lista de saída' }), h('span', { class: 't-c', 'aria-hidden': 'true', text: 'Imprimir' })),
+          h('button', { type: 'button', class: 'btn', disabled: !sel.length || null, title: sel.length ? 'Trocar a transportadora dos marcados' : 'Marque os pedidos que vão sair por outra transportadora', onclick: abrirTroca }, ic('troca'), h('span', { class: 't-l', text: 'Trocar transportadora' }), h('span', { class: 't-c', 'aria-hidden': 'true', text: 'Trocar' })),
+          sel.length === 1 ? h('button', { type: 'button', class: 'btn', onclick: () => abrirObservacao(sel[0]), title: 'Escrever ou ver as observações do pedido marcado' }, ic('comentario'), 'Observação') : null,
+          menu));
+    });
+  }
+  // fecha o menu de exportar ao clicar fora
+  doc.addEventListener('click', (ev) => { if (pl.menuAberto && !(ev.target.closest && ev.target.closest('.menu-exp'))) { pl.menuAberto = false; cache.plBarra = ''; renderPlanBarra(); } });
+
+  function renderPlanilha() { if (!ui.plCab) return; renderPlanCab(); renderPlanChips(); renderPlanTabela(); renderPlanBarra(); }
+
+  /* --- exportar (Excel e CSV com as colunas da planilha) --- */
+  function dadosExportar() {
+    const esc = escopoAcao();
+    return esc.linhas.map((l) => ({ data: l.data || pl.dia, pedido: l.pedido, cliente: l.cliente || '', nf: l.nf || '', transportadora: l.transportadora || '', transportadoraOriginal: l.transportadoraOriginal || '', trocada: Boolean(l.trocada), armazem: l.armazem || '', volumes: l.volumes, observacao: (l.observacoes || []).map((o) => o.texto).join(' | ') || l.observacao || '', bipadoEm: l.bipadoEm, bipadoPor: l.bipadoPor || '', impressoEm: l.impressoEm || null, saiuEntrega: l.saiuEntrega || null }));
+  }
+  async function exportarPlanilha(tipo) {
+    pl.menuAberto = false; cache.plBarra = ''; renderPlanBarra();
+    const linhas = dadosExportar(); if (!linhas.length) { C.toast('Não há pedidos para exportar.', 'erro'); return; }
+    const nome = 'planilha-entrega-' + pl.dia + (pl.transp.size ? '-' + Array.from(pl.transp).map((n) => semAcento(n).replace(/[^a-z0-9]+/g, '')).join('-') : '');
+    try {
+      const X = root.SC9ExpedicaoXlsx; if (!X) throw new Error('O módulo de exportação não carregou.');
+      if (tipo === 'xlsx') { C.toast('Montando o Excel…'); await X.baixarExcelPlanilha({ dia: pl.dia, linhas }, { diaTexto: diaLongoTxt(pl.dia) }, nome + '.xlsx'); C.toast('Arquivo ' + nome + '.xlsx baixado.'); }
+      else { X.baixarCsvPlanilha({ dia: pl.dia, linhas }, nome + '.csv'); C.toast('Arquivo ' + nome + '.csv baixado.'); }
+    } catch (e) { C.toast('Não consegui gerar o arquivo. ' + e.message, 'erro'); }
+  }
+
+  /* --- imprimir a lista de saída --- */
+  function abrirImprimir() {
+    const esc = escopoAcao(), linhas = esc.linhas; if (!linhas.length) return;
+    const grupos = new Map(); for (const l of linhas) { const g = grupos.get(l.transportadora) || { nome: l.transportadora || 'Sem transportadora', n: 0, v: 0 }; g.n++; g.v += l.volumes || 0; grupos.set(l.transportadora, g); }
+    const lista = Array.from(grupos.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    const semNota = linhas.filter((l) => !l.nf).length, jaImpr = linhas.filter((l) => l.impressoEm).length, semVol = linhas.filter((l) => l.volumes == null).length;
+    const msg = h('p', { class: 'rast-msg', role: 'status' });
+    let dlg; const bOk = h('button', { type: 'button', class: 'btn primario grande', onclick: async () => {
+      bOk.disabled = true; msgEm(msg, 'Montando a lista…'); pl.ocupado = true;
+      try {
+        const corpo = esc.selecionado || pl.q.trim() ? { dia: pl.dia, ids: linhas.map((l) => l.id) } : { dia: pl.dia, transportadoras: lista.map((g) => g.nome) };
+        const j = await api('/api/expedicao/lista', { method: 'POST', corpo });
+        if (!root.SC9ExpedicaoLista) throw new Error('O módulo de impressão não carregou. Recarregue a página.');
+        dlg.fechar(); C.toast('Lista ' + (j.listaId || '') + ' pronta. Abrindo a impressão…');
+        await root.SC9ExpedicaoLista.imprimir(j);
+      } catch (e) { if (!seSessaoCaiu(e)) { bOk.disabled = false; msgEm(msg, e.message, 'erro'); } }
+      pl.ocupado = false; carregarPlanilha(true);
+    } }, ic('impressora'), 'Imprimir ' + plural(linhas.length, 'pedido', 'pedidos'));
+    const aviso = (tom, icone, texto) => h('li', { class: 'aviso-lista ' + tom }, ic(icone), h('span', { text: texto }));
+    const corpo = h('div', { class: 'imp-corpo' },
+      h('p', { class: 'imp-intro', text: esc.selecionado ? 'Vai imprimir os pedidos que você marcou, uma folha por transportadora, com espaço para a assinatura.' : 'Nenhum pedido marcado: vai imprimir todos os pedidos do filtro atual, uma folha por transportadora.' }),
+      h('ul', { class: 'imp-grupos' }, lista.map((g) => h('li', null, ic('nota'), h('b', { text: g.nome }), h('span', { text: plural(g.n, 'pedido', 'pedidos') + ' · ' + plural(g.v, 'volume', 'volumes') })))),
+      (semNota || jaImpr || semVol) ? h('ul', { class: 'avisos-lista' },
+        semNota ? aviso('ambar', 'relogio', plural(semNota, 'pedido ainda está', 'pedidos ainda estão') + ' aguardando nota. Eles saem na lista escritos "aguardando nota".') : null,
+        jaImpr ? aviso('azul', 'info', plural(jaImpr, 'pedido já foi impresso', 'pedidos já foram impressos') + ' antes. Pode imprimir de novo, a gente guarda o registro.') : null,
+        semVol ? aviso('suave', 'info', plural(semVol, 'pedido está', 'pedidos estão') + ' sem a quantidade de volumes anotada.') : null) : null,
+      msg);
+    dlg = abrirDialogo({ titulo: 'Imprimir lista de saída', sub: diaLongoTxt(pl.dia), corpo, rodape: [h('button', { type: 'button', class: 'btn', onclick: () => dlg.fechar() }, 'Cancelar'), bOk], foco: '.primario' });
+  }
+
+  /* --- trocar a transportadora --- */
+  function abrirTroca() {
+    const sel = selecionadas(); if (!sel.length) return;
+    const nomes = Array.from(new Set(((pl.dados && pl.dados.transportadoras) || []).map((g) => g.nome).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const atuais = new Map(); for (const l of sel) atuais.set(l.transportadora, (atuais.get(l.transportadora) || 0) + 1);
+    const selTr = h('select', { id: 'troca-para', class: 'entrada', 'aria-required': 'true' }, h('option', { value: '', text: 'Escolha a transportadora…' }), ...nomes.map((n) => h('option', { value: n, text: n })), h('option', { value: '__outra', text: 'Outra (digitar o nome)…' }));
+    const campoOutra = h('input', { id: 'troca-outra', class: 'entrada', maxlength: '40', placeholder: 'Nome da transportadora', autocomplete: 'off', hidden: true, 'aria-label': 'Nome da outra transportadora' });
+    selTr.addEventListener('change', () => { campoOutra.hidden = selTr.value !== '__outra'; if (!campoOutra.hidden) campoOutra.focus(); });
+    const motivo = h('textarea', { id: 'troca-motivo', class: 'entrada', maxlength: '200', rows: '3', placeholder: 'Por que vai sair por outra? (obrigatório)', 'aria-required': 'true' });
+    const motivos = ['A transportadora não passou hoje', 'Pedido do cliente', 'Rota cheia', 'Corrigindo o cadastro'];
+    const sugestoes = h('div', { class: 'sugestoes', role: 'group', 'aria-label': 'Motivos comuns' }, motivos.map((m) => h('button', { type: 'button', class: 'chip-sug', onclick: () => { motivo.value = m; motivo.dispatchEvent(new root.Event('input')); motivo.focus(); } }, m)));
+    const msg = h('p', { class: 'rast-msg', role: 'status' });
+    let dlg; const bOk = h('button', { type: 'button', class: 'btn primario grande', onclick: async () => {
+      const para = (selTr.value === '__outra' ? campoOutra.value : selTr.value).trim(), mt = motivo.value.trim();
+      if (!para) { msgEm(msg, 'Escolha para qual transportadora o pedido vai.', 'erro'); (selTr.value === '__outra' ? campoOutra : selTr).focus(); return; }
+      if (mt.length < 3) { msgEm(msg, 'Escreva o motivo da troca (pelo menos 3 letras).', 'erro'); motivo.focus(); return; }
+      bOk.disabled = true; msgEm(msg, 'Trocando…');
+      try {
+        const corpo = sel.length === 1 ? { id: sel[0].id, dia: pl.dia, para, motivo: mt } : { ids: sel.map((l) => ({ id: l.id, dia: pl.dia })), para, motivo: mt };
+        await api('/api/expedicao/transportadora', { method: 'POST', corpo });
+        dlg.fechar(); C.toast(plural(sel.length, 'pedido saiu', 'pedidos saíram') + ' como ' + para + '. A original ficou guardada.'); await carregarPlanilha(true);
+      } catch (e) { if (!seSessaoCaiu(e)) { bOk.disabled = false; msgEm(msg, e.message, 'erro'); } }
+    } }, ic('troca'), 'Trocar ' + plural(sel.length, 'pedido', 'pedidos'));
+    const corpo = h('div', { class: 'troca-corpo' },
+      h('p', { class: 'imp-intro' }, 'Vale para ', h('b', { text: plural(sel.length, 'pedido marcado', 'pedidos marcados') }), ' (hoje em: ', Array.from(atuais.entries()).map(([n, q]) => nomeTr(n) + ' ' + q).join(', '), ').'),
+      h('div', null, h('label', { class: 'rotulo', for: 'troca-para', text: 'Vai sair por qual transportadora?' }), selTr, campoOutra),
+      h('div', null, h('label', { class: 'rotulo', for: 'troca-motivo', text: 'Motivo da troca' }), motivo, h('div', { class: 'motivo-pe' }, sugestoes, contador(motivo, 200, 3))),
+      h('p', { class: 'res-sem', role: 'note' }, ic('info'), 'A transportadora original do pedido continua guardada: nada se perde. Na planilha aparece "era Retira 4 → Brasil".'), msg);
+    dlg = abrirDialogo({ titulo: 'Trocar a transportadora', sub: diaLongoTxt(pl.dia), corpo, rodape: [h('button', { type: 'button', class: 'btn', onclick: () => dlg.fechar() }, 'Cancelar'), bOk], foco: '#troca-para' });
+  }
+
+  /* --- observação --- */
+  function abrirObservacao(l) {
+    const texto = h('textarea', { id: 'obs-texto', class: 'entrada', maxlength: '400', rows: '3', placeholder: 'Escreva o que a próxima pessoa precisa saber', 'aria-label': 'Nova observação' });
+    const msg = h('p', { class: 'rast-msg', role: 'status' });
+    const lista = (l.observacoes || []).slice().reverse();
+    const historico = lista.length ? h('ol', { class: 'obs-hist', 'aria-label': 'Observações anteriores' }, lista.map((o) => h('li', null, h('p', { text: o.texto }), h('small', { text: (o.nome || o.por || '—') + ' · ' + (o.em ? C.curta(o.em) + ' às ' + horaDe(o.em) : '') })))) : h('p', { class: 'mudo peq', text: 'Ainda não há observações neste pedido.' });
+    let dlg; const bOk = h('button', { type: 'button', class: 'btn primario grande', onclick: async () => {
+      const t = texto.value.trim(); if (!t) { msgEm(msg, 'Escreva a observação antes de salvar.', 'erro'); texto.focus(); return; }
+      bOk.disabled = true; msgEm(msg, 'Guardando…');
+      try {
+        const j = await api('/api/expedicao/observacao', { method: 'POST', corpo: { id: l.id, dia: pl.dia, texto: t } });
+        l.observacoes = Array.isArray(j.observacoes) ? j.observacoes : (l.observacoes || []).concat([{ texto: t, por: estado.acesso.usuario, nome: estado.acesso.nome, em: new Date().toISOString() }]);
+        l.observacao = l.observacoes.length ? l.observacoes[l.observacoes.length - 1].texto : t;
+        dlg.fechar(); C.toast('Observação guardada.'); renderPlanTabela(); carregarPlanilha(true);
+      } catch (e) { if (!seSessaoCaiu(e)) { bOk.disabled = false; msgEm(msg, e.message, 'erro'); } }
+    } }, ic('ok'), 'Guardar observação');
+    texto.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); bOk.click(); } });
+    const corpo = h('div', { class: 'obs-corpo' },
+      h('p', { class: 'obs-quem' }, h('b', { class: 'num', text: l.pedido }), ' · ', l.cliente || 'Sem dado do SC9', ' · ', l.transportadora || ''),
+      h('div', null, h('span', { class: 'rotulo', text: 'Histórico' }), historico),
+      h('div', null, h('label', { class: 'rotulo', for: 'obs-texto', text: 'Nova observação' }), texto, h('div', { class: 'motivo-pe' }, h('span', { class: 'mudo peq', text: 'Ela fica guardada e as anteriores não se perdem.' }), contador(texto, 400))), msg);
+    dlg = abrirDialogo({ titulo: 'Observação do pedido', sub: 'Pedido ' + l.pedido, corpo, rodape: [h('button', { type: 'button', class: 'btn', onclick: () => dlg.fechar() }, 'Fechar'), bOk], foco: '#obs-texto' });
+  }
+
+  function montarPlanilha() {
+    ui.plCab = h('div', { class: 'plan-topo' });
+    ui.plBusca = h('input', { id: 'pl-busca', class: 'entrada', type: 'search', placeholder: 'Pedido, cliente ou nota', autocomplete: 'off', enterkeyhint: 'search', 'aria-label': 'Buscar por pedido, cliente ou nota', value: pl.q, oninput: (ev) => { root.clearTimeout(pl.timer); const v = ev.target.value; pl.timer = root.setTimeout(() => { pl.q = v; aposFiltro(); }, 160); } });
+    ui.plChips = h('div', { class: 'chips-tr-caixa' });
+    ui.plResumoFiltro = h('span', { class: 'mudo peq resumo-filtro', role: 'status' });
+    ui.plTabela = h('div', { class: 'tab-plan-caixa', 'aria-live': 'polite' });
+    ui.plBarra = h('div', { class: 'barra-fixa' });
+    const filtros = h('div', { class: 'filtros-plan' }, h('div', { class: 'campo-busca' }, ic('busca'), ui.plBusca), ui.plChips, ui.plResumoFiltro,
+      h('button', { type: 'button', class: 'btn peq fantasma atualizar-plan', title: 'Atualizar agora', onclick: () => carregarPlanilha(false) }, ic('atualizar'), 'Atualizar'));
+    const card = h('section', { class: 'card plan-card', 'aria-label': 'Pedidos do dia' }, filtros, ui.plTabela);
+    renderPlanilha();
+    return [ui.plCab, card, ui.plBarra];
+  }
+
+  /* ====================================================================================================================
+   * ABA ENTREGAS (POD, prova de entrega): quem confere se o pedido chegou de verdade. O sistema guarda o link da transportadora
+   * e o resultado da conferência; a foto/comprovante é conferida pela pessoa (o app não olha a foto sozinho).
+   * ==================================================================================================================== */
+  const pd = estado.pod;
+  const POD = {
+    pendente: { t: 'Pendente', curto: 'Ainda não conferi', tom: 'azul', i: 'relogio', ajuda: 'Ainda não conferi esta entrega.' },
+    entregue: { t: 'Entregue', curto: 'Entregue', tom: 'verde', i: 'okCirculo', ajuda: 'A foto ou o comprovante mostra que chegou certo.' },
+    divergente: { t: 'Divergente', curto: 'Divergente', tom: 'laranja', i: 'alerta', ajuda: 'Chegou, mas tem algo errado (nota diferente, foto que não bate, falta de item).' },
+    nao_entregue: { t: 'Não entregue', curto: 'Não entregue', tom: 'vermelho', i: 'fechar', ajuda: 'A transportadora não entregou ou devolveu o pedido.' }
+  };
+  const FOTO = { sim: ['Sim, confere', 'ok'], nao: ['Não confere', 'fechar'], nao_vi: ['Não vi a foto', 'info'] };
+  const statusPod = (l) => (l.pod && POD[l.pod.status] ? l.pod.status : 'pendente');
+  const seloPod = (s) => { const d = POD[s] || POD.pendente; return h('span', { class: 'sit ' + d.tom }, ic(d.i), d.t); };
+  const linkValido = (t) => /^https:\/\/\S+$/i.test(String(t || '').trim());
+  function periodoPod() { const hj = hoje(); return { de: pd.de || somar(hj, -14), ate: pd.ate || hj }; }
+
+  async function carregarEntregas(silencioso) {
+    if (!estado.acesso || !estado.acesso.abas.pod) return;
+    const meu = ++pd.seq, p = periodoPod();
+    if (!silencioso) { pd.carregando = true; pd.erro = ''; renderEntregas(); }
+    try {
+      const j = await api('/api/expedicao/entregas?' + qs({ de: p.de, ate: p.ate, transportadora: pd.transportadora, status: pd.status, q: pd.q.trim(), pagina: pd.pagina, limite: LIMITE_POD }));
+      if (meu !== pd.seq) return;
+      pd.dados = j; pd.erro = ''; marcarAtualizado();
+      for (const n of (Array.isArray(j.transportadoras) ? j.transportadoras.map((x) => (typeof x === 'string' ? x : x && x.nome)) : (j.linhas || []).map((l) => l.transportadora))) if (n) pd.nomes.add(n);
+    } catch (e) { if (meu !== pd.seq || seSessaoCaiu(e)) return; if (!pd.dados || !silencioso) { pd.erro = e.message; if (!silencioso) pd.dados = null; } }
+    pd.carregando = false; renderEntregas();
+  }
+  function filtrarEntregas(mud) { Object.assign(pd, mud, { pagina: 1 }); if (ui.pdBusca && 'q' in mud) ui.pdBusca.value = pd.q; carregarEntregas(false); }
+  function definirPeriodoPod(dias) { const hj = hoje(); pd.preset = String(dias); pd.de = somar(hj, -(dias - 1)); pd.ate = hj; pd.pagina = 1; carregarEntregas(false); }
+
+  function renderPodAjuda() {
+    if (!ui.pdAjuda) return;
+    if (PREF.ler('podAjudaFechada', Boolean(root.matchMedia && root.matchMedia('(max-width: 640px)').matches)) && !pd.ajudaAberta) { ui.pdAjuda.replaceChildren(h('button', { type: 'button', class: 'link-botao ajuda-reabrir', onclick: () => { pd.ajudaAberta = true; renderPodAjuda(); } }, ic('info'), 'Como conferir uma entrega?')); return; }
+    const passo = (n, t, x) => h('li', null, h('span', { class: 'passo-n', 'aria-hidden': 'true', text: String(n) }), h('div', null, h('b', { text: t }), h('span', { text: x })));
+    ui.pdAjuda.replaceChildren(h('section', { class: 'card pod-ajuda', 'aria-labelledby': 'pod-aj-t' },
+      h('div', { class: 'card-titulo' }, h('div', null, h('h2', { id: 'pod-aj-t', text: 'Como conferir uma entrega' }), h('p', { class: 'mudo peq', text: 'POD quer dizer "prova de entrega": a foto ou o comprovante que a transportadora guarda quando entrega.' })),
+        h('button', { type: 'button', class: 'btn peq fantasma', onclick: () => { PREF.gravar('podAjudaFechada', true); pd.ajudaAberta = false; renderPodAjuda(); } }, ic('fechar'), 'Entendi, esconder')),
+      h('ol', { class: 'passos-pod' }, passo(1, 'Abra o link da transportadora', 'Toque em "Conferir" e depois em "Abrir link". A foto abre em outra aba.'), passo(2, 'Compare a foto com a nota', 'O nome, o endereço e a assinatura batem com a nota fiscal do pedido?'), passo(3, 'Marque o resultado', 'Entregue, divergente ou não entregue. Pode escrever uma observação.')),
+      h('p', { class: 'res-sem', role: 'note' }, ic('info'), 'O sistema guarda o link e o resultado da sua conferência. A foto é conferida por você, o sistema não olha a foto sozinho.')));
+  }
+  function renderPodFiltros() {
+    if (!ui.pdFiltros) return; const d = pd.dados, p = periodoPod();
+    peca('pdFiltros', ui.pdFiltros, { p, preset: pd.preset, s: pd.status, t: pd.transportadora, n: Array.from(pd.nomes), r: d && d.resumo }, () => {
+      const r = (d && d.resumo) || { pendente: 0, entregue: 0, divergente: 0, nao_entregue: 0 };
+      const kpis = h('div', { class: 'pod-kpis', role: 'group', 'aria-label': 'Filtrar por resultado' }, ['pendente', 'entregue', 'divergente', 'nao_entregue'].map((k) => {
+        const m = POD[k], on = pd.status === k;
+        return h('button', { type: 'button', class: 'pod-kpi tom-' + m.tom + (on ? ' on' : ''), 'aria-pressed': String(on), title: on ? 'Mostrar todos' : 'Mostrar só: ' + m.t, onclick: () => filtrarEntregas({ status: on ? '' : k }) },
+          h('span', { class: 'kpi-ic' }, ic(m.i)), h('b', { class: 'kpi-num num', text: num(r[k]) }), h('span', { class: 'kpi-nome', text: k === 'pendente' ? 'Pendentes' : k === 'entregue' ? 'Entregues' : k === 'divergente' ? 'Divergentes' : 'Não entregues' }), h('span', { class: 'kpi-sub', text: k === 'pendente' ? 'ainda sem conferência' : on ? 'filtrando, toque para tirar' : 'toque para filtrar' }));
+      }));
+      const presets = [[7, '7 dias'], [15, '15 dias'], [30, '30 dias'], [62, '62 dias']];
+      const nomes = Array.from(pd.nomes).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      if (pd.transportadora && !nomes.includes(pd.transportadora)) nomes.push(pd.transportadora);
+      return [kpis, h('div', { class: 'filtros-pod' },
+        h('div', { class: 'abas-pequenas', role: 'group', 'aria-label': 'Período' }, presets.map(([n, t]) => h('button', { type: 'button', 'aria-pressed': String(pd.preset === String(n)), onclick: () => definirPeriodoPod(n) }, t))),
+        h('div', { class: 'datas aberto' },
+          h('label', { class: 'sr', for: 'pd-de', text: 'De' }), h('input', { id: 'pd-de', class: 'entrada', type: 'date', value: p.de, max: hoje(), 'aria-label': 'Data inicial', onchange: (ev) => { if (!ehDia(ev.target.value)) return; pd.de = ev.target.value; if (pd.ate < pd.de) pd.ate = pd.de; if (dif(pd.de, pd.ate) > 61) { pd.ate = somar(pd.de, 61); C.toast('A conferência mostra até 62 dias de uma vez. Ajustei a data final.'); } pd.preset = ''; pd.pagina = 1; carregarEntregas(false); } }),
+          h('span', { class: 'mudo', text: 'até' }),
+          h('label', { class: 'sr', for: 'pd-ate', text: 'Até' }), h('input', { id: 'pd-ate', class: 'entrada', type: 'date', value: p.ate, max: hoje(), 'aria-label': 'Data final', onchange: (ev) => { if (!ehDia(ev.target.value)) return; pd.ate = ev.target.value; if (!pd.de || pd.de > pd.ate) pd.de = pd.ate; if (dif(pd.de, pd.ate) > 61) { pd.de = somar(pd.ate, -61); C.toast('A conferência mostra até 62 dias de uma vez. Ajustei a data inicial.'); } pd.preset = ''; pd.pagina = 1; carregarEntregas(false); } })),
+        h('select', { class: 'entrada sel-tr', 'aria-label': 'Transportadora', onchange: (ev) => filtrarEntregas({ transportadora: ev.target.value }) }, h('option', { value: '', text: 'Todas as transportadoras' }), ...nomes.map((n) => h('option', { value: n, text: n, selected: n === pd.transportadora }))))];
+    });
+  }
+  function celLinkPod(l) {
+    const link = (l.pod && l.pod.link) || (l.rastreio && l.rastreio.link) || '', cod = (l.pod && l.pod.codigo) || (l.rastreio && l.rastreio.codigo) || '';
+    if (!link && !cod) return h('span', { class: 'mudo peq', text: 'Sem link ainda' });
+    return h('span', { class: 'rast-ok' }, h('span', { class: 'rast-cod', text: cod || 'Link guardado' }), linkValido(link) ? h('a', { class: 'rast-abrir', href: link, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Abrir o link da transportadora do pedido ' + l.pedido + ' (abre em outra aba)', title: 'Abrir o link da transportadora' }, ic('externo')) : null);
+  }
+  function celConferencia(l) {
+    const p = l.pod; if (!p || !p.verificadoEm) return h('span', { class: 'mudo peq', text: 'Ninguém conferiu ainda' });
+    const f = FOTO[p.fotoConfere];
+    return [f ? h('span', { class: 'foto-tag ' + p.fotoConfere }, ic(f[1]), f[0]) : null, h('span', { class: 'sub', text: (primeiroNome(p.verificadoNome) || p.verificadoPor || '') + ' · ' + C.curta(p.verificadoEm) + ' ' + horaDe(p.verificadoEm) })];
+  }
+  function linhaPod(l, i) {
+    const s = statusPod(l), m = POD[s];
+    return h('tr', { class: 'linha-pod tom-' + m.tom, 'data-id': l.id },
+      h('th', { scope: 'row', class: 'c-ped', 'data-label': 'Pedido' }, h('b', { class: 'num', text: l.pedido }), h('span', { class: 'sub num', text: l.nf ? 'NF ' + l.nf : 'aguardando nota' })),
+      h('td', { class: 'c-cli', 'data-label': 'Cliente' }, h('span', { class: 'cli', text: l.cliente || 'Sem dado do SC9' }), l.observacao ? h('span', { class: 'sub', text: l.observacao }) : null),
+      h('td', { class: 'c-tr', 'data-label': 'Transportadora' }, h('b', { text: l.transportadora || '—' }), h('span', { class: 'sub', text: (l.volumes == null ? 'volumes não informados' : plural(l.volumes, 'volume', 'volumes')) })),
+      h('td', { class: 'c-saida', 'data-label': 'Saiu em' }, h('span', { class: 'num', text: l.dataSaida ? dataCurta(l.dataSaida) : dm(l.dia) })),
+      h('td', { class: 'c-link', 'data-label': 'Link da transportadora' }, celLinkPod(l)),
+      h('td', { class: 'c-res', 'data-label': 'Resultado' }, seloPod(s)),
+      h('td', { class: 'c-conf', 'data-label': 'Conferência' }, celConferencia(l)),
+      h('td', { class: 'c-acao' }, h('button', { type: 'button', class: 'btn peq' + (s === 'pendente' ? ' primario' : ''), 'aria-label': (s === 'pendente' ? 'Conferir' : 'Rever') + ' a entrega do pedido ' + l.pedido, onclick: () => abrirPod(l, i) }, ic(s === 'pendente' ? 'conferencia' : 'lapis'), s === 'pendente' ? 'Conferir' : 'Rever')));
+  }
+  function renderPodTabela() {
+    if (!ui.pdTabela) return; const d = pd.dados;
+    if (pd.erro && !d) { ui.pdTabela.replaceChildren(h('div', { class: 'erro erro-bloco', role: 'alert' }, h('div', { class: 'linha-erro' }, ic('alerta'), pd.erro), botao('Tentar de novo', { class: 'btn peq', onclick: () => carregarEntregas(false) }, ic('atualizar')))); ui.pdResumo.textContent = ''; return; }
+    if (!d) { ui.pdTabela.replaceChildren(h('div', { class: 'esq-tab', role: 'status', 'aria-label': 'Carregando as entregas' }, Array.from({ length: 6 }, () => h('div', { class: 'esqueleto', style: 'height:56px;border-radius:12px' })))); ui.pdResumo.textContent = ''; return; }
+    const filtrando = Boolean(pd.status || pd.transportadora || pd.q.trim());
+    ui.pdResumo.textContent = num(d.total) + (d.total === 1 ? ' pedido' : ' pedidos') + (filtrando ? ' com os filtros' : ' que saíram no período');
+    if (!d.linhas.length) { ui.pdTabela.replaceChildren(C.vazio(filtrando ? 'busca' : 'caixaEntrada', filtrando ? 'Nenhuma entrega com esses filtros' : 'Nenhum pedido saiu neste período', filtrando ? 'Tire algum filtro ou aumente o período.' : 'Quando os pedidos saírem na planilha de Entrega, eles aparecem aqui para conferir.'), filtrando ? h('div', { class: 'vazio-acoes' }, botao('Limpar filtros', { class: 'btn', onclick: () => filtrarEntregas({ status: '', transportadora: '', q: '' }) }, ic('fechar'))) : null); return; }
+    const paginas = Math.max(1, Math.ceil(d.total / LIMITE_POD)), pg = d.pagina || pd.pagina, ini = (pg - 1) * LIMITE_POD + 1, fim = Math.min(d.total, ini + d.linhas.length - 1);
+    ui.pdTabela.replaceChildren(h('div', { class: 'tabela-rolagem tab-pod-rol' + (pd.carregando ? ' atualizando' : '') }, h('table', { class: 'tabela tab-pod' }, h('caption', { class: 'sr', text: 'Pedidos que saíram, para conferir a entrega' }),
+      h('thead', null, h('tr', null, ['Pedido', 'Cliente', 'Transportadora', 'Saiu em', 'Link da transportadora', 'Resultado', 'Conferência', ''].map((x) => h('th', { scope: 'col', text: x })))),
+      h('tbody', null, d.linhas.map(linhaPod)))),
+      h('nav', { class: 'paginacao', 'aria-label': 'Páginas das entregas' }, h('span', { class: 'mudo peq', text: 'Mostrando ' + num(ini) + ' a ' + num(fim) + ' de ' + num(d.total) }),
+        h('div', { class: 'pag-bot' }, botao('Anterior', { class: 'btn peq', disabled: pg <= 1, onclick: () => { pd.pagina = pg - 1; carregarEntregas(false); } }, ic('esq')), h('span', { class: 'pag-n num', text: pg + ' de ' + paginas }), botao('Próxima', { class: 'btn peq', disabled: pg >= paginas, onclick: () => { pd.pagina = pg + 1; carregarEntregas(false); } }, ic('dir')))));
+  }
+  function renderEntregas() { if (!ui.pdFiltros) return; renderPodAjuda(); renderPodFiltros(); renderPodTabela(); }
+
+  /* --- painel lateral de uma entrega --- */
+  function abrirPod(l, i) {
+    const p0 = l.pod || {}, rast = l.rastreio || {};
+    const sug = !p0.link && linkValido(rast.link);
+    const f = { status: p0.status && POD[p0.status] ? p0.status : '', foto: p0.fotoConfere || '', sugerido: false };
+    const campoLink = h('input', { id: 'pod-link', class: 'entrada', value: p0.link || (sug ? rast.link : ''), maxlength: '300', placeholder: 'https://…', inputmode: 'url', autocomplete: 'off', 'aria-describedby': 'pod-link-ajuda' });
+    const campoCod = h('input', { id: 'pod-cod', class: 'entrada', value: p0.codigo || rast.codigo || '', maxlength: '80', placeholder: 'Ex.: VX12345BR', autocomplete: 'off' });
+    const obs = h('textarea', { id: 'pod-obs', class: 'entrada', rows: '3', maxlength: '400', placeholder: 'Se quiser, escreva o que viu (nome de quem assinou, problema, etc.)', value: p0.obs || '' }); obs.value = p0.obs || '';
+    const msg = h('p', { class: 'rast-msg', role: 'status' });
+    const abrirBtn = h('a', { class: 'btn primario abrir-link', target: '_blank', rel: 'noopener noreferrer', role: 'link' }, ic('externo'), 'Abrir link');
+    const atualizaLink = () => { const t = campoLink.value.trim(); if (linkValido(t)) { abrirBtn.setAttribute('href', t); abrirBtn.removeAttribute('aria-disabled'); abrirBtn.classList.remove('desligado'); } else { abrirBtn.removeAttribute('href'); abrirBtn.setAttribute('aria-disabled', 'true'); abrirBtn.classList.add('desligado'); } };
+    campoLink.addEventListener('input', atualizaLink); atualizaLink();
+    abrirBtn.addEventListener('click', (ev) => { if (abrirBtn.getAttribute('aria-disabled') === 'true') { ev.preventDefault(); msgEm(msg, 'Cole primeiro o link da transportadora (começa com https://).', 'erro'); campoLink.focus(); } });
+    campoLink.addEventListener('paste', (ev) => { const t = (ev.clipboardData || root.clipboardData).getData('text') || ''; const m = t.match(/https?:\/\/\S+/i); if (m && t.trim() !== m[0]) { ev.preventDefault(); campoLink.value = m[0].slice(0, 300); atualizaLink(); } });
+    const grupoFoto = h('div', { class: 'opcoes', role: 'radiogroup', 'aria-labelledby': 'pod-foto-t' });
+    const grupoSt = h('div', { class: 'opcoes st', role: 'radiogroup', 'aria-labelledby': 'pod-st-t' });
+    const dica = h('p', { class: 'mudo peq dica-sug', role: 'status' });
+    const marcaOpcao = (grupo, valor) => { for (const b of grupo.querySelectorAll('button')) { const on = b.getAttribute('data-v') === valor; b.setAttribute('aria-checked', String(on)); b.tabIndex = on || (!valor && b === grupo.querySelector('button')) ? 0 : -1; b.classList.toggle('on', on); } };
+    const opcao = (grupo, valor, cls, icone, t, sub, aoEscolher) => h('button', { type: 'button', role: 'radio', 'aria-checked': 'false', 'data-v': valor, class: 'opcao ' + cls, onclick: () => aoEscolher(valor), onkeydown: (ev) => { if (!/^Arrow(Left|Right|Up|Down)$/.test(ev.key)) return; ev.preventDefault(); const bs = Array.from(grupo.querySelectorAll('button')), k = bs.indexOf(ev.currentTarget), n = bs[(k + (/Left|Up/.test(ev.key) ? -1 : 1) + bs.length) % bs.length]; n.focus(); n.click(); } }, h('span', { class: 'op-ic' }, ic(icone)), h('span', { class: 'op-txt' }, h('b', { text: t }), sub ? h('small', { text: sub }) : null));
+    const escolherFoto = (v) => {
+      f.foto = v; marcaOpcao(grupoFoto, v);
+      if (!f.status || f.sugerido) { const s = v === 'sim' ? 'entregue' : v === 'nao' ? 'divergente' : ''; if (s) { f.status = s; f.sugerido = true; marcaOpcao(grupoSt, s); dica.textContent = 'Sugerimos "' + POD[s].t + '". Mude se for outro caso.'; } }
+    };
+    const escolherStatus = (v) => { f.status = v; f.sugerido = false; dica.textContent = ''; marcaOpcao(grupoSt, v); };
+    grupoFoto.append(opcao(grupoFoto, 'sim', 'ok', 'ok', 'Sim, confere', 'A foto bate com a nota', escolherFoto), opcao(grupoFoto, 'nao', 'ruim', 'fechar', 'Não confere', 'Algo está diferente', escolherFoto), opcao(grupoFoto, 'nao_vi', 'neutro', 'info', 'Não vi a foto', 'Sem foto ou não abriu', escolherFoto));
+    for (const k of ['entregue', 'divergente', 'nao_entregue', 'pendente']) { const m = POD[k]; grupoSt.append(opcao(grupoSt, k, 'st-' + m.tom, m.i, m.t, m.ajuda, escolherStatus)); }
+    marcaOpcao(grupoFoto, f.foto); marcaOpcao(grupoSt, f.status);
+    const hist = (p0.historico || l.podHistorico || []).slice().reverse();
+    const proximo = (() => { const ls = (pd.dados && pd.dados.linhas) || []; for (let k = i + 1; k < ls.length; k++) if (statusPod(ls[k]) === 'pendente') return ls[k]; return null; })();
+    let dlg;
+    async function salvar(irProximo, botao) {
+      const link = campoLink.value.trim(), cod = campoCod.value.trim();
+      if (!f.status) { msgEm(msg, 'Escolha o resultado da entrega (passo 3).', 'erro'); grupoSt.querySelector('button').focus(); return; }
+      if (link && !linkValido(link)) { msgEm(msg, 'O link precisa começar com https://', 'erro'); campoLink.focus(); return; }
+      if (f.status === 'entregue' && !f.foto) { msgEm(msg, 'Diga se a foto confere com a nota (passo 2): Sim, Não ou Não vi.', 'erro'); grupoFoto.querySelector('button').focus(); return; }
+      const bs = dlg.el.querySelectorAll('.rodape-pod button'); bs.forEach((b) => { b.disabled = true; }); msgEm(msg, 'Guardando a conferência…');
+      try {
+        const j = await api('/api/expedicao/pod', { method: 'POST', corpo: { id: l.id, dia: l.dia, status: f.status, link, codigo: cod, fotoConfere: f.foto, obs: obs.value.trim() } });
+        l.pod = (j && j.pod) || { status: f.status, link, codigo: cod, fotoConfere: f.foto, obs: obs.value.trim(), verificadoNome: estado.acesso.nome, verificadoPor: estado.acesso.usuario, verificadoEm: new Date().toISOString() };
+        dlg.fechar(); C.toast('Conferência do pedido ' + l.pedido + ' guardada.');
+        if (irProximo && proximo) abrirPod(proximo, (pd.dados.linhas || []).indexOf(proximo));
+        await carregarEntregas(true);
+      } catch (e) { if (!seSessaoCaiu(e)) { bs.forEach((b) => { b.disabled = false; }); msgEm(msg, e.message, 'erro'); } }
+    }
+    const resumoPedido = h('div', { class: 'pod-pedido' }, h('div', null, h('b', { class: 'res-ped num', text: l.pedido }), h('span', { class: 'sub', text: l.nf ? 'Nota fiscal ' + l.nf : 'Aguardando nota' })), h('div', { class: 'pod-pedido-info' }, h('b', { text: l.cliente || 'Sem dado do SC9' }), h('span', { text: [l.transportadora, l.dataSaida ? 'saiu em ' + dataCurta(l.dataSaida) : '', l.volumes != null ? plural(l.volumes, 'volume', 'volumes') : ''].filter(Boolean).join(' · ') }), l.observacao ? h('span', { class: 'sub', text: 'Obs.: ' + l.observacao }) : null), seloPod(statusPod(l)));
+    const corpo = h('div', { class: 'pod-corpo' }, resumoPedido,
+      h('section', { class: 'pod-passo' }, h('h4', null, h('span', { class: 'passo-n', 'aria-hidden': 'true', text: '1' }), 'Abra o link da transportadora'),
+        h('div', { class: 'link-linha' }, h('div', { class: 'link-campo' }, h('label', { class: 'sr', for: 'pod-link', text: 'Link da transportadora' }), campoLink), abrirBtn),
+        h('p', { class: 'mudo peq', id: 'pod-link-ajuda', text: sug ? 'Colocamos o link do rastreio que já estava guardado. Se for outro, cole aqui o link da foto.' : 'Cole aqui o link que a transportadora (Velox) mandou. Ele fica guardado no pedido.' }),
+        h('div', { class: 'cod-linha' }, h('label', { class: 'rotulo', for: 'pod-cod', text: 'Código (opcional)' }), campoCod)),
+      h('section', { class: 'pod-passo' }, h('h4', { id: 'pod-foto-t' }, h('span', { class: 'passo-n', 'aria-hidden': 'true', text: '2' }), 'A foto ou comprovante confere com a nota?'), grupoFoto),
+      h('section', { class: 'pod-passo' }, h('h4', { id: 'pod-st-t' }, h('span', { class: 'passo-n', 'aria-hidden': 'true', text: '3' }), 'Qual é o resultado?'), grupoSt, dica),
+      h('section', { class: 'pod-passo' }, h('h4', null, h('label', { for: 'pod-obs', text: 'Observação (opcional)' })), obs, h('div', { class: 'motivo-pe' }, h('span'), contador(obs, 400))),
+      p0.verificadoEm ? h('p', { class: 'res-sem', role: 'note' }, ic('info'), 'Última conferência: ' + (p0.verificadoNome || p0.verificadoPor || '') + ' em ' + C.curta(p0.verificadoEm) + ' às ' + horaDe(p0.verificadoEm) + '.') : null,
+      hist.length > 0 ? h('details', { class: 'pod-hist' }, h('summary', null, 'Histórico das conferências (' + hist.length + ')'), h('ol', null, hist.map((x) => h('li', null, seloPod(x.status), h('span', { class: 'sub', text: (x.nome || x.por || '') + ' · ' + (x.em ? C.curta(x.em) + ' ' + horaDe(x.em) : '') + (x.obs ? ' · ' + x.obs : '') }))))) : null,
+      h('p', { class: 'mudo peq nota-pod', text: 'O sistema guarda o link e o resultado da sua conferência; a foto é conferida por você.' }), msg);
+    const bSalvar = h('button', { type: 'button', class: 'btn primario grande', onclick: () => salvar(false) }, ic('ok'), 'Guardar conferência');
+    const bProx = proximo ? h('button', { type: 'button', class: 'btn grande', onclick: () => salvar(true) }, 'Guardar e ir para o próximo', ic('dir')) : null;
+    dlg = abrirDialogo({ lado: true, titulo: 'Conferir a entrega', sub: 'Pedido ' + l.pedido, corpo, rodape: h('div', { class: 'rodape-pod' }, bSalvar, bProx), foco: '#pod-link' });
+  }
+  function montarEntregas() {
+    ui.pdAjuda = h('div', { class: 'pod-ajuda-caixa' });
+    ui.pdFiltros = h('div', { class: 'pod-filtros-caixa' });
+    ui.pdBusca = h('input', { id: 'pd-busca', class: 'entrada', type: 'search', placeholder: 'Pedido, cliente ou nota', autocomplete: 'off', enterkeyhint: 'search', 'aria-label': 'Buscar por pedido, cliente ou nota', value: pd.q, oninput: (ev) => { root.clearTimeout(pd.timer); const v = ev.target.value; pd.timer = root.setTimeout(() => { pd.q = v; pd.pagina = 1; carregarEntregas(false); }, 350); } });
+    ui.pdResumo = h('span', { class: 'mudo peq resumo-filtro', role: 'status' });
+    ui.pdTabela = h('div', { class: 'tab-pod-caixa', 'aria-live': 'polite' });
+    const card = h('section', { class: 'card pod-card', 'aria-labelledby': 'pod-t' },
+      h('div', { class: 'card-titulo' }, h('div', null, h('h2', { id: 'pod-t', text: 'Entregas dos pedidos que saíram' }), h('p', { class: 'mudo peq', text: 'Confira se cada pedido chegou de verdade e guarde o resultado.' })), h('button', { type: 'button', class: 'btn peq fantasma', onclick: () => carregarEntregas(false) }, ic('atualizar'), 'Atualizar')),
+      ui.pdFiltros, h('div', { class: 'filtros-ped pod-busca' }, h('div', { class: 'campo-busca' }, ic('busca'), ui.pdBusca), ui.pdResumo), ui.pdTabela);
+    renderEntregas();
+    return [ui.pdAjuda, card];
   }
 
   /* ---------- tempos (médias do período) ---------- */
@@ -863,33 +1472,31 @@
   /* ---------- montar a página ---------- */
   function renderTudo() {
     if (!ui.montada) return;
-    atualizarSelo(); renderCabecalho(); renderErro(); renderImport(); renderBipeLista(); renderFunil(); renderKpis(); renderTempos(); renderGrafico(); renderTransp(); if (TV) pendTv(); else { renderPend(); renderTabela(); }
+    atualizarSelo();
+    if (!ui.geralMontada) return;
+    renderCabecalho(); renderErro(); renderImport(); renderFunil(); renderKpis(); renderTempos(); renderGrafico(); renderTransp(); if (TV) pendTv(); else { renderPend(); renderTabela(); }
   }
+  function marcarAtualizado() { estado.ultima = Date.now(); estado.falhouAtualizar = false; atualizarSelo(); }
   function telaLogin() {
     const l = estado.login, semAcesso = estado.sessao && estado.sessao.authed;
     return h('main', { class: 'pagina estreita' }, h('section', { class: 'card login-caixa' },
-      h('div', { class: 'login-topo' }, C.vazio('caixa', '', null)), h('h2', { text: semAcesso ? 'Falta liberar o seu acesso' : EMBED ? 'Sua sessão expirou' : 'Entrar no Painel da Expedição' }),
-      h('p', { class: 'mudo peq', style: 'margin:4px 0 14px', text: semAcesso ? 'Seu usuário não tem o acesso "Recebimento" nem "Despacho". Peça ao administrador para liberar, ou entre com outro usuário.' : EMBED ? 'Entre de novo no SC9 e volte para esta aba, ou entre aqui mesmo com o usuário e a senha do SC9 (o administrador deixa o usuário vazio).' : 'Use o usuário e a senha do SC9. O administrador deixa o usuário vazio.' }),
+      h('div', { class: 'login-topo' }, C.vazio('caixa', '', null)), h('h2', { text: semAcesso ? 'Falta liberar o seu acesso' : EMBED ? 'Sua sessão expirou' : 'Entrar na Expedição' }),
+      h('p', { class: 'mudo peq', style: 'margin:4px 0 14px', text: semAcesso ? 'Seu usuário ainda não tem acesso à Expedição. Peça ao administrador para liberar (bipar, planilha de entrega ou conferir entregas), ou entre com outro usuário.' : EMBED ? 'Entre de novo no SC9 e volte para esta aba, ou entre aqui mesmo com o usuário e a senha do SC9 (o administrador deixa o usuário vazio).' : 'Use o usuário e a senha do SC9. O administrador deixa o usuário vazio.' }),
       h('form', { class: 'form', onsubmit: (ev) => { ev.preventDefault(); entrar(); } },
         h('div', null, h('label', { class: 'rotulo', for: 'u', text: 'Usuário' }), h('input', { id: 'u', class: 'entrada', value: l.usuario, autocomplete: 'username', oninput: (ev) => { l.usuario = ev.target.value; } })),
         h('div', null, h('label', { class: 'rotulo', for: 's', text: 'Senha' }), h('input', { id: 's', class: 'entrada', type: 'password', value: l.senha, autocomplete: 'current-password', oninput: (ev) => { l.senha = ev.target.value; } })),
         h('button', { class: 'btn primario', type: 'submit', disabled: l.entrando, text: l.entrando ? 'Entrando…' : 'Entrar' }),
         l.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), l.erro) : null)));
   }
-  function desenhar() {
-    const logado = estado.sessao && estado.sessao.pode;
-    if (!estado.sessao) { $raiz.replaceChildren(cabeca(), h('main', { class: 'pagina' }, C.esqueleto(3))); return; }
-    if (!logado) { ui.montada = false; for (const k of Object.keys(cache)) delete cache[k]; $raiz.replaceChildren(cabeca(), telaLogin()); return; }
-    if (ui.montada) return;
-    for (const k of Object.keys(cache)) delete cache[k];
+
+  /* ---------- Visão geral (o Painel de antes) ---------- */
+  function montarGeral() {
     ui.cab = h('div', { class: 'cab-pagina' });
     ui.erro = h('div', { class: 'bloco-erro' });
     ui.import = h('div', { class: 'bloco-import' });
     ui.funil = h('div', { class: 'bloco-funil' });
     ui.kpis = h('div', { class: 'kpis2' });
     ui.tempos = h('div', { class: 'tempos' });
-    ui.bipeLista = null; ui.bipeCampo = null;
-    const bipe = !TV && estado.bipe.pode ? montarBipe() : null;
     ui.graf = h('section', { class: 'card graf', 'aria-label': 'Pedidos por dia' });
     ui.transp = h('section', { class: 'card transp', 'aria-label': 'Por transportadora' });
     ui.pend = h('div', { class: 'pend-corpo' });
@@ -899,18 +1506,85 @@
     ui.tabCabeca = h('div', { class: 'card-titulo' }, h('div', null, h('h2', { id: 'tab-t', text: 'Pedido a pedido' }), ui.resumoFiltro = h('p', { class: 'mudo peq resumo-filtro', role: 'status' })));
     ui.tabSecao = h('section', { class: 'card tab-card', 'aria-labelledby': 'tab-t' }, ui.tabCabeca, montarFiltros(), ui.chips, ui.tabCorpo);
     const meio = h('div', { class: 'duas' }, h('div', { class: 'col-esq' }, ui.graf, ui.tempos), ui.transp);
-    const pagina = h('main', { class: 'pagina exp-pg' }, ui.cab, ui.erro, bipe, ui.import, ui.funil, ui.kpis, meio, ui.pendSecao, TV ? null : ui.tabSecao,
-      !TV && !estado.bipe.pode ? h('div', { class: 'processo compacta so-leitura', role: 'note' }, ic('info'), h('p', { text: 'Você está vendo o painel só para consulta. Para bipar pedidos recebidos, peça ao administrador o acesso "Recebimento".' })) : null,
-      h('p', { class: 'rodape-nota' }, ic('info'), 'A tela se atualiza sozinha a cada minuto enquanto estiver aberta. "Sair" = o pedido aparecer na planilha de Entrega.'));
-    $raiz.replaceChildren(montarTopo(), pagina);
-    ui.montada = true; renderTudo(); if (ui.bipeRes) { renderBipeRes(); focarBipe(); }
+    return [ui.cab, ui.erro, ui.import, ui.funil, ui.kpis, meio, ui.pendSecao, TV ? null : ui.tabSecao,
+      h('p', { class: 'rodape-nota' }, ic('info'), 'A tela se atualiza sozinha a cada minuto enquanto estiver aberta. "Sair" = o pedido aparecer na planilha de Entrega.')];
   }
+
+  /* ---------- abas ---------- */
+  const ABAS = [
+    { k: 'bipar', hash: 'bipar', longo: 'Bipar', curto: 'Bipar', i: 'bipe', dica: 'Bipar os pedidos que chegaram' },
+    { k: 'planilha', hash: 'planilha', longo: 'Planilha de entrega', curto: 'Planilha', i: 'planilha', dica: 'Planilha de entrega do dia, lista de saída' },
+    { k: 'entregas', hash: 'entregas', longo: 'Entregas (POD)', curto: 'Entregas', i: 'conferencia', dica: 'Conferir se os pedidos foram entregues' },
+    { k: 'geral', hash: 'geral', longo: 'Visão geral', curto: 'Geral', i: 'painel', dica: 'Painel do desempenho da expedição' }
+  ];
+  const abaPermitida = (k) => { const a = estado.acesso && estado.acesso.abas; return Boolean(a && (k === 'geral' ? a.visaoGeral : a[k === 'entregas' ? 'pod' : k])); };
+  const abasPermitidas = () => (TV ? ['geral'].filter(abaPermitida) : ABAS.map((a) => a.k).filter(abaPermitida));
+  function abaInicial(lista) {
+    const h0 = (root.location.hash || '').replace('#', '');
+    const porHash = ABAS.find((a) => a.hash === h0); if (porHash && lista.includes(porHash.k)) return porHash.k;
+    const lembrada = PREF.ler('aba', ''); if (lista.includes(lembrada)) return lembrada;
+    return lista[0];
+  }
+  function montarBarraAbas(lista) {
+    const botoes = lista.map((k) => { const a = ABAS.find((x) => x.k === k); return h('button', { type: 'button', role: 'tab', id: 'tab-' + k, class: 'aba-exp', 'aria-selected': 'false', 'aria-controls': 'painel-' + k, tabindex: '-1', title: a.dica, 'data-aba': k, onclick: () => ativarAba(k, true) }, ic(a.i), h('span', { class: 'aba-longo', text: a.longo }), h('span', { class: 'aba-curto', 'aria-hidden': 'true', text: a.curto })); });
+    const lista2 = h('div', { class: 'abas-in', role: 'tablist', 'aria-label': 'Seções da Expedição', onkeydown: (ev) => {
+      if (!/^(ArrowLeft|ArrowRight|Home|End)$/.test(ev.key)) return; ev.preventDefault();
+      const i = botoes.indexOf(doc.activeElement); if (i < 0) return;
+      const n = ev.key === 'Home' ? 0 : ev.key === 'End' ? botoes.length - 1 : (i + (ev.key === 'ArrowLeft' ? -1 : 1) + botoes.length) % botoes.length;
+      botoes[n].focus(); botoes[n].click();
+    } }, botoes);
+    return h('nav', { class: 'abas-exp', 'aria-label': 'Seções da Expedição' }, lista2);
+  }
+  function ativarAba(k, guardar) {
+    if (!ui.paineis || !ui.paineis[k]) return;
+    estado.tab = k;
+    for (const [nome, el] of Object.entries(ui.paineis)) el.hidden = nome !== k;
+    const mainEl = doc.querySelector('main.exp-pg'); if (mainEl) mainEl.classList.toggle('larga', k === 'planilha'); if (ui.abas) ui.abas.classList.toggle('larga', k === 'planilha');
+    if (ui.abas) for (const b of ui.abas.querySelectorAll('[role="tab"]')) { const on = b.getAttribute('data-aba') === k; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+    if (guardar) { PREF.gravar('aba', k); try { root.history.replaceState(null, '', root.location.pathname + root.location.search + '#' + k); } catch (e) { /* sem histórico: segue */ } }
+    const primeira = !ui.abaMontada[k];
+    if (primeira) {
+      ui.abaMontada[k] = true;
+      const el = ui.paineis[k];
+      if (k === 'bipar') el.replaceChildren(...[].concat(montarBipar()));
+      else if (k === 'planilha') el.replaceChildren(...[].concat(montarPlanilha()));
+      else if (k === 'entregas') el.replaceChildren(...[].concat(montarEntregas()));
+      else { el.replaceChildren(...[].concat(montarGeral()).filter(Boolean)); ui.geralMontada = true; }
+    }
+    if (k === 'bipar') { if (primeira || Date.now() - bp.ult > 20000) { bp.ult = Date.now(); carregarHistorico(!primeira); } focarBipe(); }
+    else if (k === 'planilha') { if (primeira || Date.now() - pl.ultima > 20000) carregarPlanilha(!primeira && Boolean(pl.dados)); }
+    else if (k === 'entregas') { if (primeira || Date.now() - pd.ult > 20000) { pd.ult = Date.now(); carregarEntregas(!primeira && Boolean(pd.dados)); } }
+    else if (k === 'geral') { if (primeira) { estado.carregando = true; recarregar(false); } else if (Date.now() - estado.ultima > 20000) recarregar(true); else renderTudo(); }
+  }
+  function desenhar() {
+    const logado = estado.sessao && estado.sessao.pode;
+    if (!estado.sessao) { $raiz.replaceChildren(cabeca(), h('main', { class: 'pagina' }, C.esqueleto(3))); return; }
+    if (!logado) { ui.montada = false; for (const k of Object.keys(cache)) delete cache[k]; $raiz.replaceChildren(cabeca(), telaLogin()); return; }
+    if (ui.montada) return;
+    for (const k of Object.keys(cache)) delete cache[k];
+    const lista = abasPermitidas();
+    if (!lista.length) { ui.montada = false; $raiz.replaceChildren(cabeca(), h('main', { class: 'pagina estreita' }, h('section', { class: 'card login-caixa' }, C.vazio('caixa', 'Esta tela não está liberada para você', 'O modo TV e a Visão geral precisam do acesso à planilha de entrega. Peça ao administrador.')))); return; }
+    ui.abaMontada = {}; ui.geralMontada = false; ui.paineis = {};
+    const unica = lista.length === 1;
+    ui.abas = unica ? null : montarBarraAbas(lista);
+    const paineis = lista.map((k) => (ui.paineis[k] = h('section', { class: 'painel-aba painel-' + k, id: 'painel-' + k, role: unica ? null : 'tabpanel', 'aria-labelledby': unica ? null : 'tab-' + k, hidden: true })));
+    $raiz.replaceChildren(...[montarTopo(), ui.abas, h('main', { class: 'pagina exp-pg' }, paineis)].filter(Boolean));
+    ui.montada = true;
+    ativarAba(abaInicial(lista), false);
+  }
+  root.addEventListener('hashchange', () => { if (!ui.montada || !ui.paineis) return; const a = ABAS.find((x) => x.hash === (root.location.hash || '').replace('#', '')); if (a && ui.paineis[a.k] && estado.tab !== a.k) ativarAba(a.k, false); });
+  // a tela de Bipar sempre devolve o foco ao campo: um clique perdido não pode atrapalhar o leitor
+  doc.addEventListener('click', (ev) => { if (estado.tab === 'bipar' && ui.bipeCampo && !estado.dialogos && !interativo(ev.target) && !root.getSelection().toString()) focarBipe(); });
+  doc.addEventListener('keydown', (ev) => { if (estado.tab === 'bipar' && ui.bipeCampo && !estado.dialogos && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.length === 1 && /[0-9]/.test(ev.key) && !/^(INPUT|TEXTAREA|SELECT)$/.test((doc.activeElement || {}).tagName || '')) focarBipe(); });
 
   /* ---------- atualização automática ---------- */
   function atualizarSeCabe() {
-    if (doc.hidden || !ui.montada || !estado.sessao || !estado.sessao.pode) return;
+    if (doc.hidden || !ui.montada || !estado.sessao || !estado.sessao.pode || estado.dialogos) return;
     if (estado.imp.fase === 'gravando' || estado.exp.aberta) return;
-    recarregar(true);
+    if (estado.tab === 'geral') recarregar(true);
+    else if (estado.tab === 'planilha') carregarPlanilha(true);
+    else if (estado.tab === 'entregas') carregarEntregas(true);
+    else if (estado.tab === 'bipar') carregarHistorico(true);
   }
   root.setInterval(atualizarSeCabe, 60000);
   doc.addEventListener('visibilitychange', () => { if (!doc.hidden && estado.ultima && Date.now() - estado.ultima > 60000) atualizarSeCabe(); });
@@ -919,8 +1593,6 @@
   (async () => {
     iniciarPeriodo();
     await carregarSessao();
-    if (estado.sessao.pode) await carregarPodeReceber();
     desenhar();
-    if (estado.sessao.pode) await recarregar(true);
   })();
 })(window);

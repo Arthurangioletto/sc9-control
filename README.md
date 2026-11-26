@@ -309,6 +309,16 @@ Aba **Ocorrências da expedição** (menu Operação). A expedição registra o 
 - **Compartilhada** pela equipe e guardada no servidor (`ocorrencias-expedicao.json`). Na primeira abertura entram as 3 linhas que a expedição já tinha. Botão **Baixar para Excel** (CSV).
 - Código: `ocorrencias-store.js` (validação), `ocorrencias-lookup.js` (nota → pedido), `ocorrencias.js` (datas e status), `ocorrencias-ui.js` (tela), rota `/api/ocorrencias`.
 
+## Recebimento Expedição em 3 abas (Bipar · Planilha de entrega · Entregas/POD)
+
+Tudo usa a mesma base central (`recebimento-exp-AAAA-MM-DD.json`, uma entrada por pedido bipado). Campos novos das entradas são opcionais e **só se acrescenta**: nada é apagado nem sobrescrito.
+
+- **Perfis** (cadastro de usuário, marcados pelo administrador): `exp_bipar` (só bipa; no `GET /api/recebimento` vê apenas o que ele mesmo bipou hoje, sem planilha, importação nem POD), `exp_planilha` (ver, filtrar, imprimir, observar e trocar transportadora), `exp_pod` (conferir entregas). Os antigos seguem valendo: `recebimento` = bipar + planilha; `despacho` = planilha + importar da Entrega; administrador = tudo. `GET /api/expedicao/acesso` diz quais abas a pessoa tem.
+- **Planilha** (`GET /api/expedicao/planilha?dia=&transportadoras=A,B&q=&situacao=`): um dia por vez (padrão hoje), várias transportadoras no filtro, nota que aparece sozinha depois de um novo `/api/save` ("Aguardando nota" enquanto não existe). `POST /api/expedicao/observacao` acrescenta observações (até 30 por pedido). `POST /api/expedicao/transportadora` troca a transportadora em que o pedido **saiu** (motivo obrigatório; vale para vários ids; a original nunca muda e o histórico fica em `trocas`). A transportadora **efetiva** (a trocada, senão a do pedido) é a usada em tudo: planilha, lista, fechamento do dia e manifesto.
+- **Lista de saída** (`POST /api/expedicao/lista`, `{dia, ids}` ou `{dia, transportadoras}`): só pedidos do dia indicado (outro dia = 400), devolve `listaId` (`L-AAAAMMDD-HHMMSS-xxxx`) e um grupo por transportadora; cada impressão fica registrada em `impressoes` das entradas (reimpressão permitida).
+- **Entregas (POD)** (`GET /api/expedicao/entregas`, `POST /api/expedicao/pod`): pedidos que saíram (Entrega ou lista impressa) com status pendente/entregue/divergente/não entregue, link da transportadora (só `https://`), "a foto confere com a nota?" (sim/não/não vi), quem conferiu e quando, histórico. O app só guarda o link e o resultado; a foto é conferida por uma pessoa.
+- Gravações são serializadas na fila `recebimento` (observações, trocas, POD e impressões simultâneas não se perdem) e têm limite por minuto por pessoa. Testes: `tests/expedicao-3abas-server.test.cjs` e `tests/expedicao-vinculo.test.cjs`.
+
 ## Pedidos fixados (painel inicial)
 
 No **Resumo da operação** (painel inicial) há o quadro **📌 Pedidos fixados**: digite o número do pedido (atrasado ou não) e, se quiser, uma observação, e clique em **Fixar pedido**. A lista é **compartilhada pela equipe** (administrador e perfil `geral`), fica guardada no servidor (`pedidos-fixados.json`) e cada pedido mostra cliente, armazém, transportadora, nota, etapa (separado → conferido → faturado → Saída p/ Expedição → despachado) e a situação em relação ao horário.

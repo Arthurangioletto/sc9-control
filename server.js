@@ -182,7 +182,7 @@ if (!process.env.SESSION_SECRET) {
 const TTL_ADMIN_S = Math.round((Number(process.env.SESSION_TTL_ADMIN_H) || 24 * 30) * 3600); // padrão 30 dias (TV/painel fixo); reduza com SESSION_TTL_ADMIN_H
 const TTL_OPERADOR_S = 60 * 60 * 24 * 7;
 // perfis = quais telas o operador pode usar. Acessos criados antes disso só tinham o controle 02->01.
-const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho", "transferencia", "gaveta", "ocorrencias"];
+const PERFIS = ["geral", "controle0201", "saida", "alteracoes", "cadastro", "recebimento", "despacho", "transferencia", "gaveta", "ocorrencias", "exp_bipar", "exp_planilha", "exp_pod"];
 const perfisDe = (u) => { const p = Array.isArray(u.perfis) ? u.perfis.filter((x) => PERFIS.includes(x)) : []; return p.length ? p : ["controle0201"]; };
 const ADMIN = () => ({ usuario: "admin", nome: "Administrador", role: "admin", perfis: PERFIS });
 
@@ -493,6 +493,7 @@ SERVABLE.add("expedicao.html");
 SERVABLE.add("expedicao-ui.js");
 SERVABLE.add("expedicao.css");
 SERVABLE.add("expedicao-xlsx.js");
+SERVABLE.add("expedicao-lista.js");
 SERVABLE.add("recebimento-expedicao-frame.js");
 SERVABLE.add("historico-atraso.html");
 SERVABLE.add("historico-atraso.js");
@@ -1263,16 +1264,32 @@ async function saidaMapaRecente(hoje, n) {
 const descerResumo = (achado) => (achado
   ? { status: "ok", saidaEm: achado.entry.registradoEm, saidaPor: achado.entry.registradoPorNome || achado.entry.registradoPorUsuario, saidaDia: achado.dia, emAlteracao: Boolean(achado.entry.alteracao && achado.entry.alteracao.status === "pendente") }
   : { status: "sem_saida" });
-async function exigirRecebimento(req, res, { despacho = false, leitura = false } = {}) {
+// Quem pode o quê na expedição (ver expedicao-vinculo.acessoDe): recebimento = bipar + planilha; despacho = planilha + importar da Entrega; exp_bipar / exp_planilha / exp_pod; administrador = tudo.
+// Fica aqui (e não no módulo) porque o módulo é carregado só na primeira vez que alguém usa a expedição.
+function expAcesso(sess) {
+  const admin = sess.role === "admin", p = sess.perfis || [], tem = (x) => p.includes(x);
+  return {
+    admin,
+    bipar: admin || tem("recebimento") || tem("exp_bipar"),
+    planilha: admin || tem("recebimento") || tem("despacho") || tem("exp_planilha"),
+    pod: admin || tem("exp_pod"),
+    importar: admin || tem("despacho"),
+  };
+}
+// Modos: padrão = bipar (escrita do bipe); leitura = bipar|planilha|pod; planilha = ver/escrever a planilha; pod = conferir entregas; despacho = importar da Entrega.
+async function exigirRecebimento(req, res, { despacho = false, leitura = false, planilha = false, pod = false } = {}) {
   const sess = await getSession(req);
   if (!sess) { sendJson(res, 401, { error: "não autenticado" }); return null; }
   if (sess.role !== "admin" && sess.role !== "operador") { sendJson(res, 403, { error: "seu acesso não permite isso" }); return null; }
-  const perfis = sess.perfis || [];
-  const pode = sess.role === "admin"
-    || (despacho ? perfis.includes("despacho") : leitura ? (perfis.includes("recebimento") || perfis.includes("despacho")) : perfis.includes("recebimento"));
+  const a = expAcesso(sess);
+  const pode = a.admin || (despacho ? a.importar : pod ? a.pod : planilha ? a.planilha : leitura ? (a.bipar || a.planilha || a.pod) : a.bipar);
   if (!pode) { sendJson(res, 403, { error: despacho ? "só o usuário de despacho pode confirmar a saída com a planilha de Entrega" : "seu acesso não permite isso" }); return null; }
   return sess;
 }
+// Quem só tem "exp_bipar" não lê a planilha nem o POD: vê só o que ele mesmo bipou e sem os campos internos.
+const expSoBipar = (a) => !a.admin && !a.planilha && !a.pod;
+const EXP_CAMPOS_INTERNOS = ["pod", "podHistorico", "observacoes", "trocas", "transportadoraSaiu", "impressoes", "rastreio", "transportadoraOriginal", "trocada"];
+const expSemInternos = (e) => { if (!e || typeof e !== "object") return e; const r = { ...e }; for (const k of EXP_CAMPOS_INTERNOS) delete r[k]; return r; };
 
 // ---------------------------------------------------------------------------
 // Vínculo Entrega <-> Recebimento <-> Saída (painel da expedição). A lógica de casar/classificar fica em expedicao-vinculo.js (pura);
@@ -1421,6 +1438,33 @@ function expTempos(desceuEm, recebidoEm) {
   return { desceuEm: desceuEm || null, minutosDesceuAteReceber: Number.isFinite(a) && Number.isFinite(b) && b >= a ? Math.round((b - a) / 60000) : null };
 }
 const EXP_CTRL = /[\u0000-\u001f\u007f]/;
+// id + dia de uma entrada do Recebimento (corpo das rotas de escrita): devolve { id, dia } ou { erro }
+function expAlvo(o, hoje) {
+  const id = o && typeof o.id === "string" ? o.id.trim() : "";
+  if (!Exp.idValido(id)) return { erro: "Registro inválido." };
+  const erro = expErroDia(o.dia, hoje); if (erro) return { erro };
+  return { id, dia: o.dia };
+}
+function expErroDia(dia, hoje) {
+  if (typeof dia !== "string" || !Exp.diaValido(dia)) return "Dia inválido: use o formato AAAA-MM-DD.";
+  if (dia > hoje) return "O dia não pode ser no futuro.";
+  if (dia < diaAnterior(hoje, EXP_RASTREIO_DIAS)) return "Dia muito antigo.";
+  return "";
+}
+// busca (q) e transportadora de texto livre, já validadas
+function expTextoBusca(v) {
+  const t = v == null ? "" : String(v);
+  if (t.length > 80 || EXP_CTRL.test(t)) return { erro: "Busca inválida: use até 80 caracteres." };
+  if (t.trim() && !Exp.palavrasDaBusca(t).length) return { erro: "Digite pelo menos 3 números ou uma palavra." };
+  return { q: t.trim() };
+}
+// planilha de UM dia: entradas do Recebimento + o que o SC9 mais novo sabe (nota/cliente/transportadora), com a transportadora EFETIVA
+async function expPlanilhaDoDia(dia, hoje, filtros, entriesDoDia) {
+  const d = entriesDoDia ? { entries: entriesDoDia } : await recebCarregar(dia);
+  let indice = null; try { indice = await expIndice(); } catch { /* sem índice: mostra o que a entrada já tem */ }
+  let snap = null; try { snap = await expSnapshot(); } catch { /* sem SC9 */ }
+  return Exp.planilhaDoDia({ dia, hoje, entries: d.entries, resolver: (p) => expInfoLeve(indice, p), filtros: filtros || {}, geradoEm: new Date().toISOString(), baseEntregaEm: snap ? snap.savedAt || null : null });
+}
 // parâmetros comuns das rotas de leitura: devolve { erro } ou os valores já validados
 function expParametros(q, hoje) {
   const g = (k) => { const v = q.get(k); return v === null ? "" : v; };
@@ -3831,6 +3875,7 @@ async function handleApi(req, res, pathname) {
     const dia = q.get("dia") || hoje;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return sendJson(res, 400, { error: "dia inválido" });
     if (sess.role !== "admin" && dia !== hoje && dia !== diaAnterior(hoje, 1)) return sendJson(res, 403, { error: "seu acesso só mostra hoje e ontem" });
+    if (expSoBipar(expAcesso(sess)) && dia !== hoje) return sendJson(res, 403, { error: "seu acesso só mostra o que você bipou hoje" });
     try {
       res.setHeader("Cache-Control", "no-store");
       const d = await recebCarregar(dia);
@@ -3841,10 +3886,12 @@ async function handleApi(req, res, pathname) {
       let indiceExp = null; try { indiceExp = await expIndice(); } catch { /* sem índice: mostra o que a entrada já tem */ }
       const ver = [dia, d.versao || 0, ...versoes, log.uploads.length, ultima ? ultima.em : "", cfg.alertaHoras, indiceExp ? indiceExp.savedAt || "" : ""].join("|");
       if (q.get("v") !== null && q.get("v") === ver) return sendJson(res, 200, { igual: true, versao: ver, hoje });
-      const entries = d.entries.map((e) => ({ ...Exp.visaoEntrada(e, expInfoLeve(indiceExp, e.pedido)), desceu: descerResumo(mapa.get(e.pedido)) })); // a nota (e cliente/transportadora) vem do SC9 mais novo, nunca fica congelada
+      const acesso = expAcesso(sess), soBipar = expSoBipar(acesso);
+      let entries = d.entries.map((e) => ({ ...Exp.visaoEntrada(e, expInfoLeve(indiceExp, e.pedido)), desceu: descerResumo(mapa.get(e.pedido)) })); // a nota (e cliente/transportadora) vem do SC9 mais novo, nunca fica congelada
+      if (soBipar) entries = entries.filter((e) => e.recebidoPorUsuario === sess.usuario).map(expSemInternos); // só o que ELE bipou hoje
       // "desceu" (Saída) nos últimos 2 dias que ainda NÃO foi recebido (em nenhum dos últimos dias)
       let faltando = [];
-      if (dia === hoje) {
+      if (dia === hoje && !soBipar) {
         const recebidos = new Set();
         for (const dd of recebDiasJanela(hoje, RECEB_DIAS_DUP)) for (const e of (await recebCarregar(dd)).entries) recebidos.add(e.pedido);
         for (const [ped, a] of mapa) {
@@ -3857,8 +3904,8 @@ async function handleApi(req, res, pathname) {
       const perfis = sess.perfis || [];
       return sendJson(res, 200, {
         dia, hoje, versao: ver, entries, faltando, motivos: RECEB_MOTIVOS,
-        podeReceber: sess.role === "admin" || perfis.includes("recebimento"), podeDespacho: sess.role === "admin" || perfis.includes("despacho"),
-        ultimaEntrega: ultima, usuario: sess.usuario, alertaHoras: cfg.alertaHoras,
+        podeReceber: acesso.bipar, podeDespacho: sess.role === "admin" || perfis.includes("despacho"),
+        ultimaEntrega: soBipar ? null : ultima, usuario: sess.usuario, alertaHoras: cfg.alertaHoras, acesso,
       });
     } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao carregar o recebimento")); }
   }
@@ -3867,7 +3914,7 @@ async function handleApi(req, res, pathname) {
   // Aceita pedido (parte do número), NF, cliente, transportadora ou quem bipou — várias palavras juntas (todas precisam bater).
   // Fechamento do dia da expedição, por transportadora (quem lê o Recebimento: perfil "recebimento", "despacho" ou administrador)
   if (pathname === "/api/recebimento/fechamento" && method === "GET") {
-    const sess = await exigirRecebimento(req, res, { leitura: true }); if (!sess) return;
+    const sess = await exigirRecebimento(req, res, { planilha: true }); if (!sess) return;
     const hoje = diaSP();
     const dia = new URL(req.url, "http://localhost").searchParams.get("dia") || hoje;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) return sendJson(res, 400, { error: "dia inválido" });
@@ -3883,7 +3930,7 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/recebimento/pesquisar" && method === "GET") {
-    const sess = await exigirRecebimento(req, res, { leitura: true }); if (!sess) return;
+    const sess = await exigirRecebimento(req, res, { planilha: true }); if (!sess) return;
     const q = new URL(req.url, "http://localhost").searchParams;
     const hoje = diaSP();
     const diaValido = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? v : null);
@@ -3998,17 +4045,18 @@ async function handleApi(req, res, pathname) {
         await recebGravar(hoje, novo);
         return { entry: { ...entry, desceu }, total: novo.entries.length, desceu, larga, base: entry };
       });
+      const limpa = expSoBipar(expAcesso(sess)) ? expSemInternos : (x) => x;
       if (r.entregaAnterior) {
         const [a, m, d] = String(r.dataEntrega).split("-");
-        return sendJson(res, 409, { error: "duplicado", mensagem: `Esse pedido já consta como saído na planilha de Entrega em ${d}/${m}. Não precisa receber de novo.`, duplicado: r.entregaAnterior, info, saiuEntrega: r.entregaAnterior.saiuEntrega || null });
+        return sendJson(res, 409, { error: "duplicado", mensagem: `Esse pedido já consta como saído na planilha de Entrega em ${d}/${m}. Não precisa receber de novo.`, duplicado: limpa(r.entregaAnterior), info, saiuEntrega: r.entregaAnterior.saiuEntrega || null });
       }
       if (r.duplicado) {
         let desceuDup = { status: "sem_saida" }, largaDup = null;
         try { desceuDup = descerResumo((await saidaMapaRecente(hoje, RECEB_DIAS_DUP)).mapa.get(ped)); if (desceuDup.status !== "ok") largaDup = (await saidaMapaRecente(hoje, 10)).mapa.get(ped); } catch { /* o aviso de duplicado sai mesmo assim */ }
-        return sendJson(res, 409, { error: "duplicado", duplicado: r.duplicado, info, resumo: expResumoBipe(ped, Exp.mesclarInfo(r.duplicado.info, resumoInfo(info)).info, r.duplicado, desceuDup, largaDup) });
+        return sendJson(res, 409, { error: "duplicado", duplicado: limpa(r.duplicado), info, resumo: expResumoBipe(ped, Exp.mesclarInfo(r.duplicado.info, resumoInfo(info)).info, r.duplicado, desceuDup, largaDup) });
       }
       const resumo = expResumoBipe(ped, Exp.mesclarInfo(r.base.info, resumoInfo(info)).info, r.base, r.desceu, r.larga);
-      return sendJson(res, 200, { ok: true, entry: r.entry, desceu: r.desceu, info, totalHoje: r.total, ...(r.promovido ? { promovido: true } : {}), resumo, tempos: resumo.tempos });
+      return sendJson(res, 200, { ok: true, entry: limpa(r.entry), desceu: r.desceu, info, totalHoje: r.total, ...(r.promovido ? { promovido: true } : {}), resumo, tempos: resumo.tempos });
     } catch (e) {
       console.error("Erro ao receber na expedição:", e);
       return sendJson(res, 500, erroPublico(e, "erro ao registrar o recebimento"));
@@ -4042,6 +4090,7 @@ async function handleApi(req, res, pathname) {
     const temVol = body && Object.prototype.hasOwnProperty.call(body, "volumes");
     const temMot = body && Object.prototype.hasOwnProperty.call(body, "naoSaiHoje");
     if (!temVol && !temMot) return sendJson(res, 400, { error: "nada pra atualizar" });
+    if (temMot && body.naoSaiHoje && expSoBipar(expAcesso(sess))) return sendJson(res, 403, { error: "Quem só bipa não marca que o pedido não sai hoje. Fale com quem cuida da planilha." });
     let volumes = null;
     if (temVol && body.volumes !== null && body.volumes !== "") {
       volumes = Number(body.volumes);
@@ -4063,6 +4112,7 @@ async function handleApi(req, res, pathname) {
           const atual = await recebCarregar(dia);
           const e = atual.entries.find((x) => x.id === id);
           if (!e) continue;
+          if (expSoBipar(expAcesso(sess)) && e.recebidoPorUsuario !== sess.usuario) return { erro: 403, msg: "Só quem bipou consegue mexer no próprio bipe." };
           if (e.saiuEntrega && temMot && mot) return { erro: 409, msg: "Esse pedido já saiu para entrega — não dá mais pra marcar que não sai hoje." };
           const agora = new Date().toISOString();
           const novo = { ...atual, entries: atual.entries.map((x) => {
@@ -4100,8 +4150,10 @@ async function handleApi(req, res, pathname) {
             if (e.recebidoPorUsuario !== sess.usuario) return { erro: 403, msg: "Só quem bipou consegue desfazer o próprio bipe." };
             if (Date.now() - new Date(e.recebidoEm).getTime() > DESFAZER_MS) return { erro: 403, msg: "O prazo pra desfazer acabou. Fale com o administrador." };
           }
+          const temDadosNovos = (e.observacoes && e.observacoes.length) || (e.trocas && e.trocas.length) || (e.impressoes && e.impressoes.length) || e.pod || (e.podHistorico && e.podHistorico.length);
+          if (temDadosNovos && sess.role !== "admin") return { erro: 409, msg: "Esse pedido já tem observação, troca de transportadora, lista impressa ou entrega registrada. Fale com o administrador." }; // nunca apaga o que foi registrado depois do bipe
           if (e.saiuEntrega && !(sess.role === "admin" && e.origem === "entrega")) return { erro: 409, msg: "Esse pedido já foi confirmado como saído para entrega." }; // o administrador pode tirar uma entrada que veio da planilha (ela não volta sozinha)
-          const novo = { ...atual, entries: atual.entries.filter((x) => x.id !== id), removidos: [...atual.removidos, { id: e.id, pedido: e.pedido, origem: e.origem || "bipe", removidoPorUsuario: sess.usuario, removidoPorNome: sess.nome, removidoEm: new Date().toISOString(), recebidoPorUsuario: e.recebidoPorUsuario, recebidoEm: e.recebidoEm }] };
+          const novo = { ...atual, entries: atual.entries.filter((x) => x.id !== id), removidos: [...atual.removidos, { id: e.id, pedido: e.pedido, origem: e.origem || "bipe", removidoPorUsuario: sess.usuario, removidoPorNome: sess.nome, removidoEm: new Date().toISOString(), recebidoPorUsuario: e.recebidoPorUsuario, recebidoEm: e.recebidoEm, ...(temDadosNovos ? { entradaCompleta: e } : {}) }] };
           await recebGravar(dia, novo);
           return { ok: true };
         }
@@ -4171,14 +4223,60 @@ async function handleApi(req, res, pathname) {
   // ---- Vínculo Entrega <-> Recebimento <-> Saída: painel, lista, importação, rastreio e exportação (leitura: admin/recebimento/despacho) ----
   if (pathname.startsWith("/api/expedicao/")) {
     const rota = pathname.slice("/api/expedicao/".length);
-    const dono = { "painel": ["GET", false], "pedidos": ["GET", false], "exportar": ["GET", false], "importar-entrega": ["POST", true], "rastreio": ["POST", false] }[rota];
+    // [método, quem pode]: "planilha" (recebimento, despacho, exp_planilha), "pod" (exp_pod), "despacho" (importar), "login" (qualquer pessoa logada); o administrador pode tudo
+    const dono = {
+      "painel": ["GET", "planilha"], "pedidos": ["GET", "planilha"], "exportar": ["GET", "planilha"], "importar-entrega": ["POST", "despacho"], "rastreio": ["POST", "planilha"],
+      "acesso": ["GET", "login"], "planilha": ["GET", "planilha"], "observacao": ["POST", "planilha"], "transportadora": ["POST", "planilha"], "lista": ["POST", "planilha"],
+      "entregas": ["GET", "pod"], "pod": ["POST", "pod"],
+    }[rota];
     if (!dono || dono[0] !== method) return sendJson(res, dono ? 405 : 404, { error: dono ? "método não permitido" : "não encontrado" });
-    const sess = await exigirRecebimento(req, res, dono[1] ? { despacho: true } : { leitura: true }); if (!sess) return;
-    const LIMITE_POR_MIN = { "painel": 60, "pedidos": 60, "exportar": 20, "importar-entrega": 10, "rastreio": 60 };
+    let sess;
+    if (dono[1] === "login") {
+      sess = await getSession(req);
+      if (!sess) return sendJson(res, 401, { error: "não autenticado" });
+    } else {
+      sess = await exigirRecebimento(req, res, dono[1] === "despacho" ? { despacho: true } : dono[1] === "pod" ? { pod: true } : { planilha: true }); if (!sess) return;
+    }
+    const LIMITE_POR_MIN = { "painel": 60, "pedidos": 60, "exportar": 20, "importar-entrega": 10, "rastreio": 60, "acesso": 120, "planilha": 90, "observacao": 60, "transportadora": 40, "lista": 60, "entregas": 60, "pod": 120 };
     if (limiteVendedoras("exp|" + rota + "|" + sess.usuario, LIMITE_POR_MIN[rota], 60000)) return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
     res.setHeader("Cache-Control", "no-store");
     const hoje = diaSP();
-    const podeImportar = sess.role === "admin" || (sess.perfis || []).includes("despacho");
+    const acessoExp = expAcesso(sess);
+    const podeImportar = acessoExp.importar;
+
+    if (rota === "acesso") {
+      return sendJson(res, 200, { admin: acessoExp.admin, abas: { bipar: acessoExp.bipar, planilha: acessoExp.planilha, pod: acessoExp.pod, visaoGeral: acessoExp.planilha || acessoExp.admin }, usuario: sess.usuario, nome: sess.nome });
+    }
+
+    if (rota === "planilha") {
+      const q = new URL(req.url, "http://localhost").searchParams;
+      const dia = q.get("dia") || hoje;
+      const erroDia = expErroDia(dia, hoje); if (erroDia) return sendJson(res, 400, { error: erroDia });
+      const nomes = q.getAll("transportadoras").join(",").split(",").map((x) => x.trim()).filter(Boolean);
+      if (nomes.length > 30 || nomes.some((n) => n.length > 60 || EXP_CTRL.test(n))) return sendJson(res, 400, { error: "Transportadoras inválidas." });
+      const b = expTextoBusca(q.get("q")); if (b.erro) return sendJson(res, 400, { error: b.erro });
+      const situacao = q.get("situacao") || "";
+      if (situacao && !Exp.SITUACOES_PLANILHA.includes(situacao)) return sendJson(res, 400, { error: "Situação inválida." });
+      try { return sendJson(res, 200, await expPlanilhaDoDia(dia, hoje, { transportadoras: nomes, q: b.q, situacao })); }
+      catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao montar a planilha de entrega")); }
+    }
+
+    if (rota === "entregas") {
+      const q = new URL(req.url, "http://localhost").searchParams, g = (k) => (q.get(k) === null ? "" : q.get(k));
+      const iv = Exp.intervaloEntregas(g("de"), g("ate"), hoje); if (iv.erro) return sendJson(res, 400, { error: iv.erro });
+      const transportadora = g("transportadora").trim(), status = g("status");
+      if (transportadora.length > 60 || EXP_CTRL.test(transportadora)) return sendJson(res, 400, { error: "Transportadora inválida." });
+      if (status && !Exp.POD_STATUS.includes(status)) return sendJson(res, 400, { error: "Status inválido." });
+      const b = expTextoBusca(g("q")); if (b.erro) return sendJson(res, 400, { error: b.erro });
+      const pg = g("pagina") || "1", lim = g("limite") || "100";
+      if (!/^\d{1,6}$/.test(pg) || Number(pg) < 1) return sendJson(res, 400, { error: "Página inválida." });
+      if (!/^\d{1,4}$/.test(lim) || Number(lim) < 1 || Number(lim) > 500) return sendJson(res, 400, { error: "Limite inválido: use de 1 a 500." });
+      try {
+        const receb = await expRecebDias(iv.de, iv.ate);
+        let indice = null; try { indice = await expIndice(); } catch { /* sem índice */ }
+        return sendJson(res, 200, Exp.entregasPod({ de: iv.de, ate: iv.ate, recebPorDia: receb.porDia, resolver: (p) => expInfoLeve(indice, p), filtros: { transportadora, status, q: b.q }, pagina: Number(pg), limite: Number(lim) }));
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao listar as entregas")); }
+    }
 
     if (rota === "painel" || rota === "pedidos" || rota === "exportar") {
       const p = expParametros(new URL(req.url, "http://localhost").searchParams, hoje);
@@ -4235,6 +4333,107 @@ async function handleApi(req, res, pathname) {
           ...(r.gravados ? { gravados: r.gravados } : {}),
         });
       } catch (e) { console.error("Erro ao importar a Entrega:", e); return sendJson(res, 500, erroPublico(e, "erro ao trazer a planilha de Entrega")); }
+    }
+
+    if (rota === "observacao") {
+      const alvo = expAlvo(body, hoje); if (alvo.erro) return sendJson(res, 400, { error: alvo.erro });
+      const v = Exp.validarObservacao(body.texto); if (v.erro) return sendJson(res, 400, { error: v.erro });
+      try {
+        const r = await comFila("recebimento", async () => {
+          const atual = await recebCarregar(alvo.dia);
+          const e = atual.entries.find((x) => x.id === alvo.id);
+          if (!e) return { erro: 404, msg: "Registro não encontrado." };
+          const ap = Exp.aplicarObservacao(e, v.texto, sess.usuario, sess.nome || sess.usuario, new Date().toISOString());
+          if (ap.erro) return { erro: 400, msg: ap.erro };
+          if (!ap.semMudanca) await recebGravar(alvo.dia, { ...atual, entries: atual.entries.map((x) => (x.id === alvo.id ? ap.entry : x)) });
+          const lista = ap.entry.observacoes || [];
+          return { ok: true, id: alvo.id, dia: alvo.dia, observacao: lista.length ? lista[lista.length - 1].texto : "", observacoes: lista, ...(ap.semMudanca ? { semMudanca: true } : {}) };
+        });
+        if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+        return sendJson(res, 200, r);
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao guardar a observação")); }
+    }
+
+    if (rota === "transportadora") {
+      const lote = body.ids !== undefined;
+      if (lote && (body.id !== undefined || body.dia !== undefined)) return sendJson(res, 400, { error: "Informe um pedido (id e dia) OU vários (ids), não os dois." });
+      let alvos;
+      if (lote) {
+        if (!Array.isArray(body.ids) || !body.ids.length) return sendJson(res, 400, { error: "Marque pelo menos um pedido." });
+        if (body.ids.length > Exp.MAX_TROCA_LOTE) return sendJson(res, 400, { error: "Pedidos demais de uma vez (máximo " + Exp.MAX_TROCA_LOTE + ")." });
+        alvos = [];
+        const vistos = new Set();
+        for (const it of body.ids) {
+          const a = it && typeof it === "object" && !Array.isArray(it) ? expAlvo(it, hoje) : { erro: "Registro inválido." };
+          if (a.erro) return sendJson(res, 400, { error: a.erro });
+          if (!vistos.has(a.dia + "|" + a.id)) { vistos.add(a.dia + "|" + a.id); alvos.push(a); }
+        }
+      } else {
+        const a = expAlvo(body, hoje); if (a.erro) return sendJson(res, 400, { error: a.erro });
+        alvos = [a];
+      }
+      const v = Exp.validarTroca(body.para, body.motivo); if (v.erro) return sendJson(res, 400, { error: v.erro });
+      let indice = null; try { indice = await expIndice(); } catch { /* sem índice */ }
+      try {
+        const r = await comFila("recebimento", async () => {
+          const dias = [...new Set(alvos.map((a) => a.dia))].sort();
+          const porDia = new Map();
+          for (const dia of dias) porDia.set(dia, await recebCarregar(dia));
+          const faltam = alvos.filter((a) => !porDia.get(a.dia).entries.some((x) => x.id === a.id));
+          if (faltam.length) return { erro: 404, msg: "Registro não encontrado.", naoEncontrados: faltam };
+          const agora = new Date().toISOString();
+          const novos = new Map(); // dia -> Map(id -> entrada nova)
+          const itens = []; let alterados = 0, semMudanca = 0;
+          for (const a of alvos) {
+            const e = porDia.get(a.dia).entries.find((x) => x.id === a.id);
+            const antes = Exp.visaoEntrada(e, expInfoLeve(indice, e.pedido));
+            const ap = Exp.aplicarTroca(e, antes.info && antes.info.transportadora, v, sess.usuario, sess.nome || sess.usuario, agora);
+            if (ap.semMudanca) semMudanca++; else { alterados++; if (!novos.has(a.dia)) novos.set(a.dia, new Map()); novos.get(a.dia).set(a.id, ap.entry); }
+            const dep = Exp.visaoEntrada(ap.entry, expInfoLeve(indice, e.pedido));
+            itens.push({ id: a.id, dia: a.dia, pedido: e.pedido, transportadora: dep.info && dep.info.transportadora || "", transportadoraOriginal: dep.trocada ? dep.transportadoraOriginal : (dep.info && dep.info.transportadora) || "", troca: ap.entry.transportadoraSaiu || null, ...(ap.semMudanca ? { semMudanca: true } : {}) });
+          }
+          for (const [dia, mapa] of novos) { const atual = porDia.get(dia); await recebGravar(dia, { ...atual, entries: atual.entries.map((x) => mapa.get(x.id) || x) }); }
+          return { ok: true, alterados, semMudanca, itens, ...(lote ? {} : { id: itens[0].id, dia: itens[0].dia, transportadora: itens[0].transportadora, transportadoraOriginal: itens[0].transportadoraOriginal, troca: itens[0].troca }) };
+        });
+        if (r.erro) return sendJson(res, r.erro, { error: r.msg, ...(r.naoEncontrados ? { naoEncontrados: r.naoEncontrados } : {}) });
+        return sendJson(res, 200, r);
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao trocar a transportadora")); }
+    }
+
+    if (rota === "lista") {
+      const erroDia = expErroDia(body.dia, hoje); if (erroDia) return sendJson(res, 400, { error: erroDia });
+      try {
+        const r = await comFila("recebimento", async () => {
+          const atual = await recebCarregar(body.dia);
+          const planilha = await expPlanilhaDoDia(body.dia, hoje, {}, atual.entries);
+          const agora = new Date();
+          const m = Exp.montarLista({ dia: body.dia, linhas: planilha.linhas, ids: body.ids, transportadoras: body.transportadoras, agora, geradoPor: sess.nome || sess.usuario, sufixo: crypto.randomBytes(2).toString("hex") });
+          if (m.erro) return { erro: 400, msg: m.erro };
+          const porId = new Map(m.selecionadas.map((x) => [x.id, x]));
+          const em = agora.toISOString();
+          await recebGravar(body.dia, { ...atual, entries: atual.entries.map((x) => (porId.has(x.id) ? Exp.aplicarImpressao(x, { listaId: m.lista.listaId, em, por: sess.usuario, nome: sess.nome || sess.usuario, transportadora: porId.get(x.id).transportadora }) : x)) });
+          return m.lista;
+        });
+        if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+        return sendJson(res, 200, r);
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao montar a lista de saída")); }
+    }
+
+    if (rota === "pod") {
+      const alvo = expAlvo(body, hoje); if (alvo.erro) return sendJson(res, 400, { error: alvo.erro });
+      const v = Exp.validarPod(body); if (v.erro) return sendJson(res, 400, { error: v.erro });
+      try {
+        const r = await comFila("recebimento", async () => {
+          const atual = await recebCarregar(alvo.dia);
+          const e = atual.entries.find((x) => x.id === alvo.id);
+          if (!e) return { erro: 404, msg: "Registro não encontrado." };
+          const ap = Exp.aplicarPod(e, v, sess.usuario, sess.nome || sess.usuario, new Date().toISOString());
+          if (!ap.semMudanca) await recebGravar(alvo.dia, { ...atual, entries: atual.entries.map((x) => (x.id === alvo.id ? ap.entry : x)) });
+          return { ok: true, id: alvo.id, dia: alvo.dia, pod: ap.entry.pod, podHistorico: ap.entry.podHistorico || [], ...(ap.semMudanca ? { semMudanca: true } : {}) };
+        });
+        if (r.erro) return sendJson(res, r.erro, { error: r.msg });
+        return sendJson(res, 200, r);
+      } catch (e) { return sendJson(res, 500, erroPublico(e, "erro ao guardar a conferência da entrega")); }
     }
 
     // rastreio: código e/ou link que a transportadora devolve para acompanhar a entrega

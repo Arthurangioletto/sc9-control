@@ -522,3 +522,144 @@ test('servidor: administrador desfaz entrada importada e ela não volta; bipe de
     assert.equal(ultimo, 429);
   } finally { server.close(); }
 });
+
+// ---------------------------------------------------------------- Expedição em 3 abas (funções puras)
+test('3 abas: perfis (acessoDe) e transportadora efetiva na visão da entrada, sem tocar na original', () => {
+  const a = (role, perfis) => V.acessoDe(role, perfis);
+  assert.deepEqual(a('admin', []), { admin: true, bipar: true, planilha: true, pod: true, importar: true });
+  assert.deepEqual(a('operador', ['exp_bipar']), { admin: false, bipar: true, planilha: false, pod: false, importar: false });
+  assert.deepEqual(a('operador', ['exp_planilha']), { admin: false, bipar: false, planilha: true, pod: false, importar: false });
+  assert.deepEqual(a('operador', ['exp_pod']), { admin: false, bipar: false, planilha: false, pod: true, importar: false });
+  assert.deepEqual(a('operador', ['recebimento']), { admin: false, bipar: true, planilha: true, pod: false, importar: false });
+  assert.deepEqual(a('operador', ['despacho']), { admin: false, bipar: false, planilha: true, pod: false, importar: true });
+  assert.deepEqual(a('operador', ['saida', 'geral']), { admin: false, bipar: false, planilha: false, pod: false, importar: false });
+  assert.deepEqual(a('operador', undefined), { admin: false, bipar: false, planilha: false, pod: false, importar: false });
+
+  const e = { id: 'x', pedido: '100001', info: { transportadora: 'Retira 04', nf: '' }, transportadoraSaiu: { de: 'Retira 04', para: ' Brasil ', motivo: 'cliente pediu' } };
+  const v = V.visaoEntrada(e, null);
+  assert.equal(v.info.transportadora, 'Brasil'); assert.equal(v.transportadoraOriginal, 'Retira 04'); assert.equal(v.trocada, true); assert.equal(v.aguardandoNota, true);
+  assert.equal(e.info.transportadora, 'Retira 04', 'a entrada original não muda');
+  const sem = V.visaoEntrada({ id: 'y', pedido: '100002', info: { transportadora: 'TCE' } }, null);
+  assert.equal(sem.trocada, undefined); assert.equal(sem.transportadoraOriginal, undefined, 'sem troca, a visão não ganha campos novos');
+  // o registro do painel (v1) agrupa pela efetiva e compara a da Entrega com ela
+  const m = V.montarRegistros({ de: '2026-11-24', ate: '2026-11-24', hoje: HOJE, agora: AGORA, recebPorDia: { '2026-11-24': [{ ...e, recebidoEm: '2026-11-24T14:00:00.000Z', saiuEntrega: { dataEntrega: '2026-11-24', transportadora: 'Brasil' } }] }, saidaPorDia: {}, entrega: new Map(), resolver: () => null });
+  assert.equal(m.registros[0].transportadora, 'Brasil'); assert.equal(m.registros[0].transportadoraDiferente, false, 'saiu como Brasil e a efetiva é Brasil: não há divergência');
+});
+
+test('3 abas: validações de observação, troca e POD', () => {
+  assert.deepEqual(V.validarObservacao('  oi   tudo\n bem '), { texto: 'oi tudo bem' });
+  for (const t of ['', '  ', 'x'.repeat(401), null, undefined, 3, {}]) assert.ok(V.validarObservacao(t).erro, String(t));
+  assert.equal(V.validarObservacao('x'.repeat(400)).texto.length, 400);
+  assert.deepEqual(V.validarTroca(' Brasil ', 'Cliente pediu'), { para: 'Brasil', motivo: 'Cliente pediu' });
+  for (const [p, m] of [['Brasil', ''], ['Brasil', 'ab'], ['Brasil', 'x'.repeat(201)], ['', 'motivo'], ['T'.repeat(41), 'motivo'], ['<b>', 'motivo'], [5, 'motivo'], ['Brasil', 9], ['Br\u0000asil', 'motivo']]) assert.ok(V.validarTroca(p, m).erro, p + '/' + m);
+  assert.equal(V.validarTroca('T'.repeat(40), 'abc').para.length, 40);
+  const ok = V.validarPod({ status: 'entregue', link: 'https://velox.exemplo.com/a?b=1', codigo: ' AB 1 ', fotoConfere: 'nao_vi', obs: ' ok ' });
+  assert.deepEqual(ok, { status: 'entregue', link: 'https://velox.exemplo.com/a?b=1', codigo: 'AB 1', fotoConfere: 'nao_vi', obs: 'ok' });
+  assert.deepEqual(V.validarPod({ status: 'pendente' }), { status: 'pendente', link: '', codigo: '', fotoConfere: '', obs: '' });
+  for (const c of [null, {}, { status: 'x' }, { status: 'entregue', link: 'http://a.com' }, { status: 'entregue', link: 'javascript:alert(1)' }, { status: 'entregue', link: 'https://a.com/ b' }, { status: 'entregue', fotoConfere: 'sei la' }, { status: 'entregue', obs: 'x'.repeat(401) }, { status: 'entregue', link: 5 }, { status: 'entregue', codigo: '<a>' }]) assert.ok(V.validarPod(c).erro, JSON.stringify(c));
+});
+
+test('3 abas: observação, troca, impressão e POD só acrescentam (limites e duplo clique)', () => {
+  const base = { id: 'e1', pedido: '100001', info: { transportadora: 'Retira 02' } };
+  let r = V.aplicarObservacao(base, 'primeira', 'ana', 'Ana', '2026-11-25T15:00:00.000Z');
+  assert.equal(r.entry.observacoes.length, 1); assert.equal(base.observacoes, undefined, 'não muda o original');
+  assert.equal(V.aplicarObservacao(r.entry, 'primeira', 'ana', 'Ana', '2026-11-25T15:00:10.000Z').semMudanca, true, 'duplo clique');
+  assert.equal(V.aplicarObservacao(r.entry, 'primeira', 'beto', 'Beto', '2026-11-25T15:00:10.000Z').entry.observacoes.length, 2, 'outra pessoa pode escrever igual');
+  assert.equal(V.aplicarObservacao(r.entry, 'primeira', 'ana', 'Ana', '2026-11-25T15:05:00.000Z').entry.observacoes.length, 2, 'depois de um tempo é outra observação');
+  let e = base;
+  for (let i = 0; i < V.MAX_OBSERVACOES; i++) e = V.aplicarObservacao(e, 'o' + i, 'ana', 'Ana', '2026-11-25T15:0' + (i % 10) + ':00.000Z').entry;
+  assert.equal(e.observacoes.length, 30); assert.ok(V.aplicarObservacao(e, 'a 31', 'ana', 'Ana', '2026-11-25T18:00:00.000Z').erro);
+
+  const v = V.validarTroca('Brasil', 'Retira lotou');
+  let t = V.aplicarTroca(base, 'Retira 02', v, 'ana', 'Ana', 'T1');
+  assert.deepEqual(t.entry.transportadoraSaiu, { de: 'Retira 02', para: 'Brasil', motivo: 'Retira lotou', por: 'ana', nome: 'Ana', em: 'T1' }); assert.equal(t.entry.info.transportadora, 'Retira 02');
+  assert.equal(V.aplicarTroca(t.entry, 'Brasil', v, 'ana', 'Ana', 'T2').semMudanca, true);
+  let u = t.entry;
+  for (let i = 0; i < 25; i++) u = V.aplicarTroca(u, V.trocaAtual(u).para, V.validarTroca('Transp ' + i, 'motivo ' + i), 'ana', 'Ana', 'T' + i).entry;
+  assert.equal(u.trocas.length, V.MAX_TROCAS); assert.equal(u.trocas[u.trocas.length - 1].para, 'Transp 24'); assert.equal(u.transportadoraSaiu.para, 'Transp 24'); assert.equal(u.info.transportadora, 'Retira 02');
+
+  let imp = base;
+  for (let i = 0; i < 12; i++) imp = V.aplicarImpressao(imp, { listaId: 'L' + i, em: 'T' + i, por: 'ana', nome: 'Ana', transportadora: 'Brasil' });
+  assert.equal(imp.impressoes.length, 10); assert.equal(imp.impressoes[0].listaId, 'L2'); assert.equal(imp.impressoes[9].listaId, 'L11');
+
+  const p1 = V.aplicarPod(base, { status: 'entregue', link: 'https://a.com/1', codigo: 'C1', fotoConfere: 'sim', obs: '' }, 'bia', 'Bia', 'T1').entry;
+  assert.equal(p1.pod.verificadoPor, 'bia'); assert.equal(p1.pod.verificadoEm, 'T1'); assert.equal(p1.podHistorico.length, 1);
+  const p2 = V.aplicarPod(p1, { status: 'divergente', link: '', codigo: '', fotoConfere: 'nao', obs: 'outra foto' }, 'bia', 'Bia', 'T2').entry;
+  assert.equal(p2.pod.link, 'https://a.com/1', 'vazio não apaga o link'); assert.equal(p2.pod.codigo, 'C1'); assert.equal(p2.podHistorico.length, 2);
+  assert.equal(V.aplicarPod(p2, { status: 'divergente', link: '', codigo: '', fotoConfere: 'nao', obs: 'outra foto' }, 'bia', 'Bia', 'T3').semMudanca, true);
+  let q = p2;
+  for (let i = 0; i < 25; i++) q = V.aplicarPod(q, { status: i % 2 ? 'entregue' : 'pendente', link: '', codigo: '', fotoConfere: '', obs: 'n' + i }, 'bia', 'Bia', 'T' + i).entry;
+  assert.equal(q.podHistorico.length, V.MAX_POD_HISTORICO);
+});
+
+test('3 abas: planilhaDoDia filtra várias transportadoras, usa a efetiva e conta tudo certo', () => {
+  const entries = [
+    entrada('a', '200001', { recebidoEm: '2026-11-25T12:00:00.000Z', volumes: 2, info: { cliente: 'ANA', transportadora: 'Retira 04', nf: '10' }, observacoes: [{ texto: 'a1', por: 'x', nome: 'X', em: 'T' }, { texto: 'a2', por: 'x', nome: 'X', em: 'T' }], transportadoraSaiu: { de: 'Retira 04', para: 'Brasil', motivo: 'm', por: 'x', nome: 'X', em: 'T' }, impressoes: [{ listaId: 'L1', em: 'IMP', por: 'x', nome: 'X', transportadora: 'Brasil' }], pod: { status: 'entregue' } }),
+    entrada('b', '200002', { recebidoEm: '2026-11-25T11:00:00.000Z', info: { cliente: 'BETO', transportadora: 'TCE', nf: '' }, saiuEntrega: { dataEntrega: '2026-11-25', transportadora: 'TCE' } }),
+    entrada('c', '200003', { recebidoEm: '2026-11-25T13:00:00.000Z', info: { cliente: 'CIDA', transportadora: '' }, naoSaiHoje: { motivo: 'Falta nota' } }),
+  ];
+  const resolver = (p) => (p === '200003' ? { transportadora: 'Retira 02', nf: '33' } : null);
+  const t = (filtros) => V.planilhaDoDia({ dia: '2026-11-25', hoje: '2026-11-25', entries, resolver, filtros, geradoEm: 'G', baseEntregaEm: 'B' });
+  let r = t({});
+  assert.deepEqual(r.linhas.map((l) => l.pedido), ['200002', '200001', '200003'], 'ordem do bipe');
+  assert.deepEqual([r.dia, r.geradoEm, r.baseEntregaEm, r.truncado], ['2026-11-25', 'G', 'B', false]);
+  const a = r.linhas[1];
+  assert.deepEqual([a.transportadora, a.transportadoraOriginal, a.trocada, a.observacao, a.observacoes.length, a.impressoEm, a.podStatus, a.volumes], ['Brasil', 'Retira 04', true, 'a2', 2, 'IMP', 'entregue', 2]);
+  assert.equal(r.linhas[0].aguardandoNota, true); assert.equal(r.linhas[0].situacao, 'saiu'); assert.equal(r.linhas[2].nf, '33', 'a nota vem do SC9 mais novo'); assert.equal(r.linhas[2].transportadora, 'Retira 02'); assert.equal(r.linhas[2].situacao, 'nao_sai_hoje');
+  assert.deepEqual(r.totais, { pedidos: 3, volumes: 2, aguardandoNota: 1, trocadas: 1, impressos: 1 });
+  assert.deepEqual(r.transportadoras.map((x) => [x.nome, x.total, x.impressos]).sort(), [['Brasil', 1, 1], ['Retira 02', 1, 0], ['TCE', 1, 0]]);
+  r = t({ transportadoras: ['brasil', 'TCE'] });
+  assert.deepEqual(r.linhas.map((l) => l.pedido), ['200002', '200001']); assert.equal(r.transportadoras.length, 3, 'os chips mostram todas'); assert.equal(r.totais.pedidos, 2);
+  assert.equal(t({ transportadoras: ['Retira 04'] }).linhas.length, 0, 'filtra pela efetiva, não pela original');
+  assert.equal(t({ q: 'cida' }).linhas.length, 1); assert.equal(t({ q: '200001 ana' }).linhas.length, 1); assert.equal(t({ situacao: 'saiu' }).linhas.length, 1);
+  assert.equal(t({ transportadoras: ['Sem transportadora'] }).linhas.length, 0);
+  assert.equal(V.planilhaDoDia({ dia: '2026-11-25', entries: [{ id: 'z', pedido: '200009', info: null }], filtros: { transportadoras: ['sem transportadora'] } }).linhas.length, 1);
+  const muitas = Array.from({ length: 2005 }, (_, i) => ({ id: 'm' + i, pedido: String(300000 + i), recebidoEm: '2026-11-25T10:00:00.000Z', info: { transportadora: 'T' } }));
+  const g = V.planilhaDoDia({ dia: '2026-11-25', entries: muitas, filtros: {} });
+  assert.equal(g.linhas.length, 2000); assert.equal(g.truncado, true);
+});
+
+test('3 abas: montarLista (ids do dia OU transportadoras), um grupo por transportadora e listaId', () => {
+  const linhas = [
+    { id: 'a', pedido: '1', nf: '10', aguardandoNota: false, cliente: 'A', volumes: 2, observacao: 'o', transportadora: 'Brasil' },
+    { id: 'b', pedido: '2', nf: '', aguardandoNota: true, cliente: 'B', volumes: null, observacao: '', transportadora: 'TCE' },
+    { id: 'c', pedido: '3', nf: '12', aguardandoNota: false, cliente: 'C', volumes: 1, observacao: '', transportadora: 'brasil' },
+    { id: 'd', pedido: '4', nf: '', aguardandoNota: true, cliente: 'D', volumes: 4, observacao: '', transportadora: '' },
+  ];
+  const agora = new Date('2026-11-25T18:03:09.000Z'); // 15:03:09 em São Paulo
+  assert.equal(V.gerarListaId(agora, 'AB12'), 'L-20261125-150309-ab12');
+  assert.match(V.gerarListaId(agora), /^L-20261125-150309-[a-z0-9]{4}$/);
+  const r = V.montarLista({ dia: '2026-11-25', linhas, ids: ['c', 'a', 'd', 'a'], agora, geradoPor: 'Ana', sufixo: 'zz99' });
+  assert.equal(r.lista.listaId, 'L-20261125-150309-zz99'); assert.equal(r.lista.geradoPor, 'Ana'); assert.equal(r.lista.geradoEm, agora.toISOString());
+  assert.deepEqual(r.lista.grupos.map((g) => [g.transportadora, g.totalPedidos, g.totalVolumes]), [['Brasil', 2, 3], ['Sem transportadora', 1, 4]]);
+  assert.deepEqual(r.lista.grupos[0].linhas.map((l) => l.pedido), ['1', '3'], 'ordem da planilha');
+  assert.deepEqual(r.selecionadas.map((x) => x.id), ['a', 'c', 'd']);
+  assert.equal(V.montarLista({ dia: 'D', linhas, transportadoras: ['TCE'], agora }).lista.grupos[0].linhas[0].aguardandoNota, true);
+  assert.equal(V.montarLista({ dia: 'D', linhas, transportadoras: ['BRASIL', 'tce'], agora }).lista.grupos.length, 2);
+  for (const o of [{ ids: ['zzz'] }, { ids: ['a', 'zzz'] }, { ids: [] }, { ids: 'a' }, { ids: [3] }, { ids: ['../x'] }, { transportadoras: [] }, { transportadoras: ['Nenhuma'] }, { transportadoras: [5] }, {}, { ids: ['a'], transportadoras: ['TCE'] }]) assert.ok(V.montarLista({ dia: 'D', linhas, agora, ...o }).erro, JSON.stringify(o));
+});
+
+test('3 abas: entregasPod lista só quem saiu, resume por status e filtra/pagina', () => {
+  const recebPorDia = {
+    '2026-11-24': [
+      entrada('a', '400001', { info: { cliente: 'ANA', transportadora: 'Brasil', nf: '1' }, saiuEntrega: { dataEntrega: '2026-11-24', transportadora: 'Brasil' }, rastreio: { codigo: 'RA1', link: 'https://t.com/RA1' } }),
+      entrada('b', '400002', { info: { cliente: 'BETO', transportadora: 'TCE', nf: '' }, impressoes: [{ listaId: 'L', em: '2026-11-24T20:00:00.000Z', por: 'x', nome: 'X', transportadora: 'TCE' }], pod: { status: 'entregue', link: 'https://t.com/2', fotoConfere: 'sim' }, podHistorico: [{ status: 'entregue' }] }),
+      entrada('c', '400003', { info: { cliente: 'CIDA', transportadora: 'Retira 02', nf: '3' } }), // não saiu
+    ],
+    '2026-11-25': [entrada('d', '400004', { info: { cliente: 'DUDA', transportadora: 'Retira 02', nf: '4' }, transportadoraSaiu: { de: 'Retira 02', para: 'Brasil', motivo: 'm' }, impressoes: [{ listaId: 'L2', em: '2026-11-25T15:00:00.000Z' }], pod: { status: 'divergente' } })],
+  };
+  const t = (filtros, extra) => V.entregasPod({ de: '2026-11-20', ate: '2026-11-25', recebPorDia, resolver: () => null, filtros, ...extra });
+  let r = t({});
+  assert.deepEqual(r.linhas.map((l) => l.pedido), ['400004', '400001', '400002'], 'mais recentes primeiro; quem não saiu fica de fora');
+  assert.deepEqual(r.resumo, { pendente: 1, entregue: 1, divergente: 1, nao_entregue: 0 }); assert.equal(r.total, 3);
+  const l1 = r.linhas.find((l) => l.pedido === '400001'), l2 = r.linhas.find((l) => l.pedido === '400002');
+  assert.equal(l1.pod, null); assert.deepEqual(l1.rastreio, { codigo: 'RA1', link: 'https://t.com/RA1' }); assert.equal(l1.dataSaida, '2026-11-24'); assert.equal(l2.pod.status, 'entregue'); assert.equal(l2.dataSaida, '2026-11-24'); assert.equal(l2.aguardandoNota, true);
+  assert.equal(r.linhas[0].transportadora, 'Brasil', 'efetiva');
+  assert.deepEqual(t({ status: 'entregue' }).linhas.map((l) => l.pedido), ['400002']); assert.equal(t({ status: 'entregue' }).resumo.pendente, 1);
+  assert.deepEqual(t({ transportadora: 'brasil' }).linhas.map((l) => l.pedido), ['400004', '400001']);
+  assert.deepEqual(t({ q: 'ra1' }).linhas.map((l) => l.pedido), ['400001']);
+  r = t({}, { limite: 2, pagina: 2 }); assert.equal(r.linhas.length, 1); assert.equal(r.paginas, 2); assert.equal(r.total, 3);
+  assert.deepEqual(V.intervaloEntregas('', '', '2026-11-25'), { de: '2026-11-11', ate: '2026-11-25' }, 'padrão: 15 dias');
+  assert.deepEqual(V.intervaloEntregas('', '2026-11-20', '2026-11-25'), { de: '2026-11-06', ate: '2026-11-20' });
+  assert.ok(V.intervaloEntregas('2026-09-01', '2026-11-25', '2026-11-25').erro, 'mais de 62 dias');
+});

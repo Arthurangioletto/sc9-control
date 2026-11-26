@@ -101,12 +101,21 @@ function mesclarInfo(info, base) {
   return { info: novo || info, campos };
 }
 // Visão de LEITURA de uma entrada: completa com o pedido mais recente do SC9; sem transportadora, usa a da Entrega (só na visão).
+// Troca de transportadora ("era Retira 4, saiu como Brasil"): a EFETIVA é transportadoraSaiu.para; a original (SC9/Entrega) nunca é alterada.
+const trocaAtual = (entry) => (entry && entry.transportadoraSaiu && texto(entry.transportadoraSaiu.para, 60) ? entry.transportadoraSaiu : null);
 function visaoEntrada(entry, base) {
   const m = mesclarInfo(entry.info, base);
   let info = m.info;
   if (entry.saiuEntrega && entry.saiuEntrega.transportadora && !(info && info.transportadora)) info = { ...(info || {}), transportadora: entry.saiuEntrega.transportadora };
   const semDado = entry.semDadoSC9 && !base ? true : (base ? false : Boolean(entry.semDadoSC9));
-  return { ...entry, info, semDadoSC9: semDado, aguardandoNota: vazio(info && info.nf) };
+  const troca = trocaAtual(entry);
+  const extra = {};
+  if (troca) {
+    const original = info && info.transportadora ? info.transportadora : '';
+    info = { ...(info || {}), transportadora: texto(troca.para, 60) };
+    extra.transportadoraOriginal = original; extra.trocada = chaveTransp(troca.para) !== chaveTransp(original); // a leitura mostra a efetiva em info.transportadora
+  }
+  return { ...entry, info, semDadoSC9: semDado, aguardandoNota: vazio(info && info.nf), ...extra };
 }
 // Reconciliação para GRAVAR: completa info das entradas com o SC9 atual. Devolve { entries, mudou, preenchidos }.
 function reconciliarInfo(entries, resolver, agoraIso) {
@@ -187,7 +196,7 @@ function montarRegistros(o) {
         dataEntrega: dataEntrega || null, situacao, motivo: e.naoSaiHoje ? texto(e.naoSaiHoje.motivo, 80) || null : null,
         rastreio: e.rastreio && (e.rastreio.codigo || e.rastreio.link) ? { codigo: texto(e.rastreio.codigo, 60), link: texto(e.rastreio.link, 500) } : null,
         aguardandoNota: v.aguardandoNota,
-        transportadoraDiferente: Boolean(e.saiuEntrega) && transportadoraDiferente(e.info && e.info.transportadora ? e.info.transportadora : (resolver(e.pedido) || {}).transportadora, transpEntrega),
+        transportadoraDiferente: Boolean(e.saiuEntrega) && transportadoraDiferente(trocaAtual(e) ? trocaAtual(e).para : (e.info && e.info.transportadora ? e.info.transportadora : (resolver(e.pedido) || {}).transportadora), transpEntrega),
         transportadoraEntrega: texto(transpEntrega, 60) || null,
         horasParado: situacao === 'saiu' ? null : horasEntre(e.recebidoEm, agoraMs),
         minutosDesceuAteReceber: horaReal && d && d.em && e.recebidoEm ? minutosEntre(d.em, e.recebidoEm) : null,
@@ -450,9 +459,269 @@ function aplicarRastreio(entry, v, quem, agoraIso) {
   return { ...entry, rastreio: { codigo: v.codigo || ant.codigo || '', link: v.link || ant.link || '', por: quem, em: agoraIso } };
 }
 
+// =====================================================================================================================
+// Expedição em 3 abas (Bipar · Planilha de entrega · Entregas/POD). Tudo PURO. Campos novos das entradas (todos opcionais, só se acrescenta):
+//   observacoes[{texto,por,nome,em}] (máx. 30) · transportadoraSaiu{de,para,motivo,por,nome,em} + trocas[] (todas as trocas, máx. 20)
+//   impressoes[{listaId,em,por,nome,transportadora}] (máx. 10) · pod{status,link,codigo,fotoConfere,obs,verificadoPor,verificadoNome,verificadoEm} + podHistorico[] (máx. 20)
+// =====================================================================================================================
+const MAX_OBSERVACOES = 30, MAX_TROCAS = 20, MAX_IMPRESSOES = 10, MAX_POD_HISTORICO = 20;
+const MAX_PLANILHA = 2000, MAX_TROCA_LOTE = 200, MAX_TEXTO_OBS = 400;
+const POD_STATUS = ['pendente', 'entregue', 'divergente', 'nao_entregue'];
+const POD_FOTO = ['', 'sim', 'nao', 'nao_vi'];
+const SITUACOES_PLANILHA = ['recebido', 'saiu', 'nao_sai_hoje'];
+const ID_RE = /^[A-Za-z0-9_.-]{1,80}$/;
+const ANTI_REPETIR_MS = 30000; // o mesmo texto, da mesma pessoa, em menos de 30 s é duplo clique: não duplica
+const CONTROLE_RE = /[\u0000-\u001f\u007f]/;
+const idValido = (id) => typeof id === 'string' && ID_RE.test(id);
+
+// quais perfis dão acesso a quê. recebimento = bipar + planilha; despacho = planilha + importar da Entrega; administrador = tudo.
+function acessoDe(role, perfis) {
+  const admin = role === 'admin', p = Array.isArray(perfis) ? perfis : [], tem = (x) => p.includes(x);
+  return {
+    admin,
+    bipar: admin || tem('recebimento') || tem('exp_bipar'),
+    planilha: admin || tem('recebimento') || tem('despacho') || tem('exp_planilha'),
+    pod: admin || tem('exp_pod'),
+    importar: admin || tem('despacho')
+  };
+}
+
+// ---------- validações de entrada ----------
+function textoLivre(v, min, max, rotulo) {
+  if (typeof v !== 'string') return { erro: rotulo + ': escreva um texto.' };
+  const t = v.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (t.length < min) return { erro: min <= 1 ? rotulo + ': escreva alguma coisa.' : rotulo + ': escreva pelo menos ' + min + ' letras.' };
+  if (t.length > max) return { erro: rotulo + ': no máximo ' + max + ' caracteres.' };
+  return { texto: t };
+}
+function validarObservacao(v) {
+  const r = textoLivre(v, 1, MAX_TEXTO_OBS, 'Observação');
+  return r.erro ? r : { texto: r.texto };
+}
+function validarTroca(paraIn, motivoIn) {
+  if (typeof paraIn !== 'string') return { erro: 'Informe a transportadora em que o pedido saiu.' };
+  if (CONTROLE_RE.test(paraIn)) return { erro: 'A transportadora tem caracteres que não são permitidos.' };
+  const para = texto(paraIn, 200);
+  if (!para) return { erro: 'Informe a transportadora em que o pedido saiu.' };
+  if (para.length > 40) return { erro: 'O nome da transportadora pode ter no máximo 40 caracteres.' };
+  if (/[<>]/.test(para)) return { erro: 'A transportadora tem caracteres que não são permitidos.' };
+  const m = textoLivre(motivoIn, 3, 200, 'Motivo da troca');
+  if (m.erro) return { erro: 'O motivo da troca é obrigatório (de 3 a 200 letras).' };
+  return { para, motivo: m.texto };
+}
+function validarLinkHttps(link) {
+  if (link.length > 500) return 'O link pode ter no máximo 500 caracteres.';
+  if (/[\s\u0000-\u001f\u007f<>"'\\]/.test(link)) return 'O link tem caracteres que não são permitidos.';
+  let u; try { u = new URL(link); } catch { return 'O link não é válido: cole o endereço completo, começando com https://.'; }
+  if (u.protocol !== 'https:' || !u.hostname || u.username || u.password) return 'O link precisa começar com https:// e não pode ter usuário ou senha.';
+  return '';
+}
+// POD: status obrigatório; link só https; código/obs limitados. Devolve { status, link, codigo, fotoConfere, obs } ou { erro }.
+function validarPod(b) {
+  const o = b && typeof b === 'object' ? b : {};
+  if (typeof o.status !== 'string' || !POD_STATUS.includes(o.status)) return { erro: 'Status inválido: use pendente, entregue, divergente ou não entregue.' };
+  for (const k of ['link', 'codigo', 'fotoConfere', 'obs']) if (o[k] != null && typeof o[k] !== 'string') return { erro: 'O campo "' + k + '" precisa ser texto.' };
+  const link = String(o.link == null ? '' : o.link).trim(), codigo = String(o.codigo == null ? '' : o.codigo).trim();
+  const fotoConfere = String(o.fotoConfere == null ? '' : o.fotoConfere).trim();
+  if (!POD_FOTO.includes(fotoConfere)) return { erro: 'A conferência da foto deve ser sim, não ou não vi.' };
+  if (link) { const e = validarLinkHttps(link); if (e) return { erro: e }; }
+  if (CONTROLE_RE.test(codigo) || /[<>]/.test(codigo)) return { erro: 'O código tem caracteres que não são permitidos.' };
+  if (codigo.length > 60) return { erro: 'O código pode ter no máximo 60 caracteres.' };
+  let obs = '';
+  if (o.obs != null && String(o.obs).trim() !== '') { const r = textoLivre(o.obs, 1, MAX_TEXTO_OBS, 'Observação'); if (r.erro) return { erro: r.erro }; obs = r.texto; }
+  return { status: o.status, link, codigo: codigo.replace(/\s+/g, ' '), fotoConfere, obs };
+}
+
+// ---------- gravação (puras: devolvem a entrada nova; nunca mexem na original) ----------
+const ultimos = (lista, max) => (lista.length > max ? lista.slice(lista.length - max) : lista);
+// acrescenta uma observação. Devolve { entry } | { entry, semMudanca:true } (duplo clique) | { erro }.
+function aplicarObservacao(entry, texto_, por, nome, agoraIso) {
+  const lista = Array.isArray(entry.observacoes) ? entry.observacoes : [];
+  const ult = lista[lista.length - 1];
+  if (ult && ult.por === por && ult.texto === texto_ && Math.abs(new Date(agoraIso).getTime() - new Date(ult.em).getTime()) < ANTI_REPETIR_MS) return { entry, semMudanca: true };
+  if (lista.length >= MAX_OBSERVACOES) return { erro: 'Esse pedido já tem ' + MAX_OBSERVACOES + ' observações. Não dá para acrescentar mais.' };
+  return { entry: { ...entry, observacoes: [...lista, { texto: texto_, por, nome, em: agoraIso }] } };
+}
+// troca a transportadora em que o pedido SAIU. `efetivaAntes` = a que valia (visão). Devolve { entry } | { entry, semMudanca:true } | { erro }.
+function aplicarTroca(entry, efetivaAntes, v, por, nome, agoraIso) {
+  const atual = trocaAtual(entry);
+  const de = texto(efetivaAntes, 60);
+  if (chaveTransp(de) === chaveTransp(v.para)) return { entry, semMudanca: true }; // já está nessa transportadora (duplo clique)
+  const reg = { de, para: v.para, motivo: v.motivo, por, nome, em: agoraIso };
+  const hist = Array.isArray(entry.trocas) ? entry.trocas : [];
+  // entrada que já tinha troca gravada sem histórico (não deveria): preserva a atual antes de empilhar a nova
+  const base = atual && !hist.length ? [atual] : hist;
+  return { entry: { ...entry, transportadoraSaiu: reg, trocas: ultimos([...base, reg], MAX_TROCAS) } };
+}
+function aplicarImpressao(entry, reg) {
+  const hist = Array.isArray(entry.impressoes) ? entry.impressoes : [];
+  return { ...entry, impressoes: ultimos([...hist, reg], MAX_IMPRESSOES) };
+}
+// grava o POD e acrescenta ao histórico. Link/código vazios NÃO apagam o que já estava guardado. Devolve { entry } | { entry, semMudanca:true }.
+function aplicarPod(entry, v, por, nome, agoraIso) {
+  const ant = entry.pod || null;
+  const novo = {
+    status: v.status, link: v.link || (ant && ant.link) || '', codigo: v.codigo || (ant && ant.codigo) || '', fotoConfere: v.fotoConfere, obs: v.obs,
+    verificadoPor: por, verificadoNome: nome, verificadoEm: agoraIso
+  };
+  if (ant && ant.status === novo.status && ant.link === novo.link && ant.codigo === novo.codigo && ant.fotoConfere === novo.fotoConfere && ant.obs === novo.obs) return { entry, semMudanca: true };
+  const hist = Array.isArray(entry.podHistorico) ? entry.podHistorico : [];
+  const h = { status: v.status, por, nome, em: agoraIso, obs: v.obs, fotoConfere: v.fotoConfere, link: novo.link, codigo: novo.codigo };
+  return { entry: { ...entry, pod: novo, podHistorico: ultimos([...hist, h], MAX_POD_HISTORICO) } };
+}
+
+// ---------- Planilha de entrega (um dia) ----------
+const volumeDe = (e) => (e.volumes !== null && e.volumes !== '' && e.volumes !== undefined && Number.isFinite(Number(e.volumes)) ? Number(e.volumes) : null);
+const ultimaObs = (e) => { const l = Array.isArray(e.observacoes) ? e.observacoes : []; return l.length ? texto(l[l.length - 1].texto, MAX_TEXTO_OBS) : ''; };
+const podStatusDe = (e) => (e.pod && POD_STATUS.includes(e.pod.status) ? e.pod.status : 'pendente');
+function linhaPlanilha(e, base, dia) {
+  const v = visaoEntrada(e, base);
+  const info = v.info || {};
+  const imp = Array.isArray(e.impressoes) && e.impressoes.length ? e.impressoes[e.impressoes.length - 1] : null;
+  const troca = trocaAtual(e);
+  const tr = texto(info.transportadora, 60);
+  return {
+    id: e.id || '', pedido: e.pedido, data: dia, nf: texto(info.nf, 20), aguardandoNota: v.aguardandoNota, cliente: texto(info.cliente, 80), armazem: texto(info.armazem, 40),
+    transportadora: tr, transportadoraOriginal: troca ? texto(v.transportadoraOriginal, 60) : tr, trocada: Boolean(troca && v.trocada),
+    troca: troca ? { de: texto(troca.de, 60), para: texto(troca.para, 60), motivo: texto(troca.motivo, 200), por: troca.por || '', nome: troca.nome || '', em: troca.em || '' } : null,
+    trocas: Array.isArray(e.trocas) ? e.trocas : (troca ? [troca] : []),
+    volumes: volumeDe(e), observacao: ultimaObs(e), observacoes: Array.isArray(e.observacoes) ? e.observacoes : [],
+    bipadoEm: e.recebidoEm || null, bipadoPor: texto(e.recebidoPorNome || e.recebidoPorUsuario, 60), origem: e.origem === 'entrega' ? 'entrega' : 'bipe', horaEstimada: e.horaEstimada === true,
+    situacao: e.saiuEntrega ? 'saiu' : e.naoSaiHoje ? 'nao_sai_hoje' : 'recebido',
+    saiuEntrega: e.saiuEntrega ? { em: e.saiuEntrega.em || null, dataEntrega: diaDeValor(e.saiuEntrega.dataEntrega) || null, transportadora: texto(e.saiuEntrega.transportadora, 60) || null } : null,
+    impressoEm: imp ? imp.em || null : null, podStatus: podStatusDe(e)
+  };
+}
+const nomeTransp = (n) => texto(n, 40) || 'Sem transportadora';
+const casaTransp = (nome, chaves) => { const k = chaveTransp(nome); return chaves.some((c) => (c === '' ? k === '' : c === k)); };
+// chaves de filtro a partir dos nomes pedidos ("Sem transportadora" casa com vazio)
+const chavesDeNomes = (lista) => (Array.isArray(lista) ? lista : []).map((n) => (/^sem transportadora$/i.test(texto(n, 60)) ? '' : chaveTransp(n)));
+function planilhaDoDia(o) {
+  const { dia } = o, f = o.filtros || {};
+  const resolver = typeof o.resolver === 'function' ? o.resolver : () => null;
+  const todas = (o.entries || []).filter((e) => e && e.pedido).map((e) => linhaPlanilha(e, resolver(e.pedido), dia));
+  todas.sort((a, b) => String(a.bipadoEm || '').localeCompare(String(b.bipadoEm || '')) || a.pedido.localeCompare(b.pedido) || String(a.id).localeCompare(String(b.id)));
+  const palavras = f.q ? palavrasDaBusca(f.q) : [];
+  const chaves = f.transportadoras && f.transportadoras.length ? chavesDeNomes(f.transportadoras) : null;
+  const semTransp = todas.filter((r) => {
+    if (f.situacao && r.situacao !== f.situacao) return false;
+    if (palavras.length) { const p = semAcento([r.pedido, r.nf, r.cliente, r.transportadora, r.transportadoraOriginal, r.armazem, r.bipadoPor, r.observacao].filter(Boolean).join(' ')); if (!palavras.every((w) => p.includes(w))) return false; }
+    return true;
+  });
+  const filtradas = chaves ? semTransp.filter((r) => casaTransp(r.transportadora, chaves)) : semTransp;
+  const grupos = new Map(); // os chips mostram todas as transportadoras do dia (já filtrado por busca/situação), mesmo as não marcadas
+  for (const r of semTransp) {
+    const k = chaveTransp(r.transportadora);
+    if (!grupos.has(k)) grupos.set(k, { nome: nomeTransp(r.transportadora), total: 0, volumes: 0, impressos: 0 });
+    const g = grupos.get(k); g.total++; g.volumes += r.volumes || 0; if (r.impressoEm) g.impressos++;
+  }
+  const transportadoras = [...grupos.values()].map((g) => ({ ...g, volumes: Math.round(g.volumes * 100) / 100 })).sort((a, b) => b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'));
+  const truncado = filtradas.length > MAX_PLANILHA;
+  const linhas = truncado ? filtradas.slice(0, MAX_PLANILHA) : filtradas;
+  const totais = {
+    pedidos: linhas.length, volumes: Math.round(linhas.reduce((s, r) => s + (r.volumes || 0), 0) * 100) / 100, aguardandoNota: linhas.filter((r) => r.aguardandoNota).length,
+    trocadas: linhas.filter((r) => r.trocada).length, impressos: linhas.filter((r) => r.impressoEm).length
+  };
+  return { dia, hoje: o.hoje || null, geradoEm: o.geradoEm || null, baseEntregaEm: o.baseEntregaEm || null, linhas, transportadoras, totais, truncado };
+}
+
+// ---------- Lista de saída (para a transportadora assinar) ----------
+const FMT_HORA_SP = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+// L-AAAAMMDD-HHMMSS-xxxx (data/hora de São Paulo de quando a lista foi gerada; xxxx = 4 letras/números sorteados pelo servidor)
+function gerarListaId(agora, sufixo) {
+  const d = FMT_HORA_SP.format(agora).replace(/\D/g, '');
+  return 'L-' + d.slice(0, 8) + '-' + d.slice(8, 14) + '-' + String(sufixo || '0000').toLowerCase().replace(/[^a-z0-9]/g, '').padEnd(4, '0').slice(0, 4);
+}
+// linhas = linhas da planilha do dia (SEM filtro). Seleção: ids (todos precisam ser do dia) OU transportadoras. Devolve { lista, selecionadas:[{id,transportadora}] } ou { erro }.
+function montarLista(o) {
+  const { dia, linhas, ids, transportadoras } = o;
+  const agora = o.agora instanceof Date ? o.agora : new Date();
+  const temIds = ids !== undefined && ids !== null, temT = transportadoras !== undefined && transportadoras !== null;
+  if (temIds === temT) return { erro: 'Informe os pedidos (ids) OU as transportadoras da lista.' };
+  let sel;
+  if (temIds) {
+    if (!Array.isArray(ids) || !ids.length) return { erro: 'Marque pelo menos um pedido.' };
+    if (ids.length > MAX_PLANILHA) return { erro: 'Pedidos demais de uma vez (máximo ' + MAX_PLANILHA + ').' };
+    if (!ids.every(idValido)) return { erro: 'Há um pedido com identificador inválido.' };
+    const unicos = [...new Set(ids)];
+    const mapa = new Map(linhas.map((l) => [l.id, l]));
+    if (!unicos.every((id) => mapa.has(id))) return { erro: 'Há pedido(s) que não são do dia ' + dia + '. Atualize a planilha e tente de novo.' };
+    const quer = new Set(unicos);
+    sel = linhas.filter((l) => quer.has(l.id)); // na ordem da planilha (hora do bipe), não na ordem em que foram marcados
+  } else {
+    if (!Array.isArray(transportadoras) || !transportadoras.length || transportadoras.length > 30) return { erro: 'Escolha de 1 a 30 transportadoras.' };
+    if (!transportadoras.every((t) => typeof t === 'string' && t.length <= 60 && !CONTROLE_RE.test(t))) return { erro: 'Transportadora inválida.' };
+    const chaves = chavesDeNomes(transportadoras);
+    sel = linhas.filter((l) => casaTransp(l.transportadora, chaves));
+    if (!sel.length) return { erro: 'Não há pedidos dessas transportadoras no dia ' + dia + '.' };
+  }
+  const grupos = new Map();
+  for (const l of sel) {
+    const k = chaveTransp(l.transportadora);
+    if (!grupos.has(k)) grupos.set(k, { transportadora: nomeTransp(l.transportadora), totalPedidos: 0, totalVolumes: 0, linhas: [] });
+    const g = grupos.get(k);
+    g.totalPedidos++; g.totalVolumes += l.volumes || 0;
+    g.linhas.push({ id: l.id, pedido: l.pedido, nf: l.nf, aguardandoNota: l.aguardandoNota, cliente: l.cliente, volumes: l.volumes, observacao: l.observacao });
+  }
+  const lista = [...grupos.values()].sort((a, b) => a.transportadora.localeCompare(b.transportadora, 'pt-BR'));
+  for (const g of lista) g.totalVolumes = Math.round(g.totalVolumes * 100) / 100;
+  const listaId = o.listaId || gerarListaId(agora, o.sufixo);
+  return {
+    lista: { listaId, geradoEm: agora.toISOString(), geradoPor: o.geradoPor || '', dia, totalPedidos: sel.length, totalVolumes: Math.round(lista.reduce((s, g) => s + g.totalVolumes, 0) * 100) / 100, grupos: lista },
+    selecionadas: sel.map((l) => ({ id: l.id, transportadora: nomeTransp(l.transportadora) }))
+  };
+}
+
+// ---------- Entregas (POD) ----------
+const PADRAO_DIAS_ENTREGAS = 15;
+function intervaloEntregas(deIn, ateIn, hoje) {
+  const ateOk = ateIn != null && ateIn !== '' && diaValido(ateIn) ? (ateIn > hoje ? hoje : ateIn) : hoje;
+  return intervalo(deIn == null || deIn === '' ? addDias(ateOk, -(PADRAO_DIAS_ENTREGAS - 1)) : deIn, ateIn, hoje);
+}
+const diaSaida = (e, dia) => {
+  const d = e.saiuEntrega ? diaDeValor(e.saiuEntrega.dataEntrega) : '';
+  if (d) return d;
+  const imp = Array.isArray(e.impressoes) && e.impressoes.length ? e.impressoes[e.impressoes.length - 1] : null;
+  return (imp && diaDeValor(imp.em)) || dia;
+};
+function saiu(e) { return Boolean(e.saiuEntrega) || (Array.isArray(e.impressoes) && e.impressoes.length > 0) || Boolean(e.pod); }
+function entregasPod(o) {
+  const { de, ate } = o, f = o.filtros || {};
+  const recebPorDia = o.recebPorDia || {}, resolver = typeof o.resolver === 'function' ? o.resolver : () => null;
+  const kT = f.transportadora ? (/^sem transportadora$/i.test(texto(f.transportadora, 60)) ? '' : chaveTransp(f.transportadora)) : null;
+  const palavras = f.q ? palavrasDaBusca(f.q) : [];
+  const resumo = { pendente: 0, entregue: 0, divergente: 0, nao_entregue: 0 };
+  const todas = [];
+  for (const dia of diasEntre(de, ate)) {
+    for (const e of recebPorDia[dia] || []) {
+      if (!e || !e.pedido || !saiu(e)) continue;
+      const v = visaoEntrada(e, resolver(e.pedido)), info = v.info || {};
+      const tr = texto(info.transportadora, 60);
+      if (kT !== null && chaveTransp(tr) !== kT) continue;
+      const rast = e.rastreio && (e.rastreio.codigo || e.rastreio.link) ? { codigo: texto(e.rastreio.codigo, 60), link: texto(e.rastreio.link, 500) } : null;
+      const pod = e.pod ? { ...e.pod, status: podStatusDe(e) } : null;
+      const l = {
+        id: e.id || '', dia, pedido: e.pedido, nf: texto(info.nf, 20), aguardandoNota: v.aguardandoNota, cliente: texto(info.cliente, 80), transportadora: tr, volumes: volumeDe(e),
+        dataSaida: diaSaida(e, dia), rastreio: rast, pod, podStatus: podStatusDe(e), podHistorico: Array.isArray(e.podHistorico) ? e.podHistorico : [], observacao: ultimaObs(e), recebidoEm: e.recebidoEm || null
+      };
+      if (palavras.length) { const p = semAcento([l.pedido, l.nf, l.cliente, l.transportadora, rast && rast.codigo, pod && pod.codigo].filter(Boolean).join(' ')); if (!palavras.every((w) => p.includes(w))) continue; }
+      resumo[l.podStatus]++;
+      todas.push(l);
+    }
+  }
+  const filtradas = f.status ? todas.filter((l) => l.podStatus === f.status) : todas;
+  filtradas.sort((a, b) => b.dataSaida.localeCompare(a.dataSaida) || b.dia.localeCompare(a.dia) || String(b.recebidoEm || '').localeCompare(String(a.recebidoEm || '')) || a.pedido.localeCompare(b.pedido));
+  const lim = Math.min(Math.max(1, o.limite || 100), 500), pg = Math.max(1, o.pagina || 1);
+  return { de, ate, total: filtradas.length, pagina: pg, limite: lim, paginas: Math.max(1, Math.ceil(filtradas.length / lim)), resumo, linhas: filtradas.slice((pg - 1) * lim, pg * lim).map(({ recebidoEm, ...l }) => l) };
+}
+
 module.exports = {
   DIAS_DUP, DIAS_ENTREGA, MAX_DIAS, MAX_LISTA, MAX_EXPORTAR, SITUACOES, PENDENTES, CAMPOS_INFO, ORIGEM_IMPORTACAO,
   texto, semAcento, normalizarPedido, diaValido, diaDeValor, addDias, difDias, diasEntre, meioDiaSP, intervalo, normalizarEntrega,
   resumoDe, mesclarInfo, visaoEntrada, reconciliarInfo, transportadoraDiferente, indexarSaidas, desceuDe,
-  montarRegistros, montarPainel, filtrar, paginar, linhasExportacao, palavrasDaBusca, planejarImportacao, aplicarAlteracao, validarRastreio, aplicarRastreio, publico
+  montarRegistros, montarPainel, filtrar, paginar, linhasExportacao, palavrasDaBusca, planejarImportacao, aplicarAlteracao, validarRastreio, aplicarRastreio, publico,
+  // 3 abas
+  MAX_OBSERVACOES, MAX_TROCAS, MAX_IMPRESSOES, MAX_POD_HISTORICO, MAX_PLANILHA, MAX_TROCA_LOTE, POD_STATUS, POD_FOTO, SITUACOES_PLANILHA, chaveTransp, trocaAtual, idValido,
+  acessoDe, validarObservacao, validarTroca, validarPod, aplicarObservacao, aplicarTroca, aplicarImpressao, aplicarPod,
+  planilhaDoDia, gerarListaId, montarLista, intervaloEntregas, entregasPod
 };
