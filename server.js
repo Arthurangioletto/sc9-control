@@ -2666,6 +2666,29 @@ async function handleApi(req, res, pathname) {
 
   // Histórico de atraso do Relatório Geral: uma foto por dia, guardada por mês (arquivos atraso-historico-AAAA-MM.json).
   // Gravar um dia troca só aquele dia. GET devolve os últimos N meses (padrão 6) para o Excel montar uma aba por mês.
+  // Geral lançado × feito (Histórico de Atraso): pedidos e peças lançados no SC9 num período contra o que foi feito (Enviado). Só leitura.
+  if (pathname === "/api/atraso-geral" && method === "GET") {
+    if (!(await linkAtrasoValido(req)) && !(await exigir(req, res, ["admin", "operador"], "geral"))) return;
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      const q = new URL(req.url, "http://x").searchParams;
+      const op = { de: String(q.get("de") || "").slice(0, 10), ate: String(q.get("ate") || "").slice(0, 10), arm: String(q.get("arm") || "").slice(0, 20), tr: String(q.get("tr") || "").slice(0, 40) };
+      const snap = await loadSnapshot();
+      const versao = snap && snap.savedAt ? String(snap.savedAt) : "";
+      const chave = [versao, op.de, op.ate, op.arm, op.tr].join("|");
+      if (!global.__atrasoGeralCache) global.__atrasoGeralCache = new Map();
+      const cache = global.__atrasoGeralCache;
+      let r = versao ? cache.get(chave) : null;
+      if (!r) {
+        r = require("./atraso-geral.js").montarGeral(snap, op);
+        if (versao) { if (cache.size >= 30) cache.delete(cache.keys().next().value); cache.set(chave, r); }
+      }
+      return sendJson(res, 200, Object.assign({ baseEm: versao ? new Date(versao).toISOString() : null }, r));
+    } catch (e) {
+      console.error("Erro no geral lançado x feito:", e);
+      return sendJson(res, 500, erroPublico(e, "erro ao montar o geral"));
+    }
+  }
   if (pathname === "/api/atraso-historico" && (method === "GET" || method === "POST")) {
     // gravar a foto do dia: só o administrador. Ler (a página /historico-atraso.html): administrador, perfil "geral" ou quem tem o
     // link com código (?k=...), que só consegue LER (nada de gravar).
