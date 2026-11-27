@@ -89,7 +89,7 @@ test('armazéns: só a equipe edita; lista inválida é recusada; a vendedora en
     assert.equal((await call('/api/armazens-vendedoras', null, { cookie: semPerfil })).status, 403);
     const logi = await equipe('logi', ['ocorrencias']);
     const g = (await call('/api/armazens-vendedoras', null, { cookie: logi })).data;
-    assert.equal(g.provisoria, true, 'lista inicial é provisória');
+    assert.equal(g.provisoria, false, 'lista inicial confirmada em 27/11/2026: sem aviso de provisória'); assert.equal(g.padrao, true);
     assert.deepEqual(g.armazens.filter((x) => !x.vendavel).map((x) => x.codigo).sort(), ['26', '59']);
     assert.ok(g.naoClassificados.every((x) => x.filial && x.codigo));
     const lista = g.armazens.map((x) => ({ filial: x.filial, codigo: x.codigo, rotulo: x.rotulo, origem: x.origem, destino: x.destino, vendavel: x.vendavel, nota: x.nota }));
@@ -107,7 +107,7 @@ test('armazéns: só a equipe edita; lista inválida é recusada; a vendedora en
     assert.equal((await call(U('solicitacao'), { tipo: 'transferencia_peca', pedidoPor: 'Ana', dados: transf({ origem: { filial: 'Cambuci', armazem: '01' }, destino: { filial: 'Cambuci', armazem: 'ZZ2' } }) }, { token: ana })).status, 200, 'destino liberado agora vale');
     assert.equal((await call(U('solicitacao'), { tipo: 'transferencia_peca', pedidoPor: 'Ana', dados: transf({ origem: { filial: 'Cambuci', armazem: 'ZZ2' }, destino: { filial: 'Cambuci', armazem: '01' } }) }, { token: ana })).status, 400, 'mas não como origem');
     const r = await call('/api/armazens-vendedoras', { acao: 'restaurar' }, { cookie: admin });
-    assert.equal(r.status, 200); assert.equal(r.data.provisoria, true); assert.equal(r.data.historico.length, 2);
+    assert.equal(r.status, 200); assert.equal(r.data.provisoria, false); assert.equal(r.data.padrao, true); assert.equal(r.data.historico.length, 2);
   } finally { await fechar(); }
 });
 
