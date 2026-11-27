@@ -14,9 +14,9 @@
   let cfg = null; // { api, conta, redesenhar }, entregue por vendedoras.js
   let seqItem = 0;
   const novoItem = () => ({ k: ++seqItem, produto: null, lote: '', qt: '', busca: '', aberto: false, lista: null, estado: 'idle', erro: '', ativo: -1, seq: 0, timer: 0, ctl: null });
-  const novoLocal = () => ({ filial: '', armazem: '01', outro: false });
+  const novoLocal = () => ({ filial: '', armazem: '' });
   const novaTransf = () => ({ origem: novoLocal(), destino: novoLocal(), itens: [novoItem()], prazo: '', motivo: '', rev: false, erro: '', atualizando: false });
-  const e = { sub: 'transf', pedidoTipo: 'cancelar_pedido', nome: lerLS(LS_NOME, ''), t: novaTransf(), f: {}, consulta: novoItem(), enviado: null, enviando: false, erro: '', lista: null, listaErro: '', aberta: null, gavAnim: null, carregando: false };
+  const e = { arm: { dados: null, erro: '', carregando: false }, pq: {}, pedInfo: {}, sub: 'transf', pedidoTipo: 'cancelar_pedido', nome: lerLS(LS_NOME, ''), t: novaTransf(), f: {}, consulta: novoItem(), enviado: null, enviando: false, erro: '', lista: null, listaErro: '', aberta: null, gavAnim: null, carregando: false };
   const redesenhar = () => { if (cfg) cfg.redesenhar(); };
   const conta = () => (cfg && cfg.conta && cfg.conta()) || null;
   const hoje = () => C.diaSP(new Date().toISOString());
@@ -24,6 +24,8 @@
   const foco = (id) => root.setTimeout(() => { const x = root.document.getElementById(id); if (x && x.focus) x.focus(); }, 30);
   const apenasDigitos = (ev, max) => { const v = ev.target.value.replace(/\D/g, '').slice(0, max); if (ev.target.value !== v) ev.target.value = v; return v; };
   const formDe = (tipo) => e.f[tipo] || (e.f[tipo] = { pedido: '', dados: {} });
+  const pqPrevia = (chave) => { const c = S.corpoParaQuando(pqDe(chave)); return c ? { tipo: c.tipo, data: c.data || '' } : null; };
+  const pqDe = (chave) => e.pq[chave] || (e.pq[chave] = { tipo: '', data: '' });
 
   /* ---------- lista da vendedora ---------- */
   async function carregar(silencioso) {
@@ -35,6 +37,46 @@
     } catch (x) { e.listaErro = x.message; }
     e.carregando = false;
     if (!silencioso || root.document.getElementById('sol-vend-raiz')) redesenhar();
+  }
+  // Armazéns que ela pode escolher, por filial (lista mantida pela logística). Carrega uma vez; o servidor confere de novo ao enviar.
+  async function carregarArmazens() {
+    if (!cfg || e.arm.carregando) return;
+    e.arm.carregando = true;
+    try { const j = await cfg.api('/api/vendedoras/armazens'); e.arm.dados = Array.isArray(j.filiais) ? j.filiais : []; e.arm.erro = ''; }
+    catch (x) { e.arm.erro = x.message; }
+    e.arm.carregando = false; redesenhar();
+  }
+  // Armazéns de uma filial para o papel 'origem' ou 'destino' (só o que a logística liberou). Sem lista carregada: reserva 01/02.
+  const armazensDe = (filial, papel) => {
+    if (!e.arm.dados) return S.ARMAZENS.map((a) => ({ codigo: a, rotulo: 'Armazém ' + a, comSaldo: true, nota: '' }));
+    const f = e.arm.dados.find((x) => x.filial === filial);
+    return f ? f.armazens.filter((a) => a[papel]) : [];
+  };
+  const filiaisDe = (papel) => (e.arm.dados ? e.arm.dados.filter((f) => f.armazens.some((a) => a[papel])).map((f) => f.filial) : S.FILIAIS);
+  // Consulta o pedido ANTES de enviar: etapa e aviso ("ainda dá tempo" / "já foi separado"). Guardado por número, atualizado a cada consulta.
+  async function consultarPedido(numero) {
+    const p = S.pedidoValido(numero); if (!p || !cfg) return null;
+    const i = e.pedInfo[p] || (e.pedInfo[p] = { estado: 'idle' });
+    if (i.estado === 'carregando') return i;
+    i.estado = 'carregando'; i.erro = ''; redesenhar();
+    try { const r = await cfg.api('/api/vendedoras/pedido?pedido=' + p); i.estado = 'ok'; i.r = r; i.em = Date.now(); }
+    catch (x) { i.estado = 'erro'; i.erro = x.message; }
+    redesenhar(); return i;
+  }
+  // Caixa "situação do pedido agora" (etapa + aviso), para quem vai cancelar/segurar/alterar.
+  function caixaPedido(numero, tipo) {
+    const p = S.pedidoValido(numero); if (!p) return null;
+    const i = e.pedInfo[p];
+    if (!i || i.estado === 'idle') return h('button', { class: 'btn peq', type: 'button', onclick: () => consultarPedido(p) }, ic('busca'), 'Conferir o pedido agora');
+    if (i.estado === 'carregando') return h('p', { class: 'dica', role: 'status', text: 'Consultando o pedido ' + p + '…' });
+    if (i.estado === 'erro') return h('div', { class: 'aviso', role: 'status' }, ic('alerta'), h('div', null, 'Não consegui consultar o pedido agora (' + i.erro + '). Você pode enviar assim mesmo.'));
+    const r = i.r, etapa = r.etapa || '', tom = !r.achado ? 'info' : etapa === 'nao_separado' ? 'ok' : 'tarde';
+    const det = r.detalhes || {};
+    return h('div', { class: 'sol-etapa ' + (r.achado ? tom : 'info'), role: 'status' }, ic(!r.achado ? 'info' : tom === 'ok' ? 'okCirculo' : 'alerta'),
+      h('div', null, h('b', { text: !r.achado ? 'O pedido ' + p + ' ainda não está no SC9' : (S.ETAPA[etapa] || 'Situação do pedido') + (det.cliente ? ' · ' + det.cliente : '') }),
+        r.achado && r.resumo ? h('span', { class: 'sol-etapa-nome', text: r.resumo.texto }) : null,
+        h('p', { text: !r.achado ? 'Confira o número. Se estiver certo, você pode enviar: a equipe é avisada para recarregar o SC9.' : (r.avisoEtapa || '') }),
+        h('button', { class: 'btn peq fantasma', type: 'button', onclick: () => consultarPedido(p) }, ic('atualizar'), 'Conferir de novo')));
   }
   const ativas = () => (e.lista && e.lista.ativas) || [];
   const recentes = () => (e.lista && e.lista.recentes) || [];
@@ -68,7 +110,8 @@
     if (!p.saldoDisponivel) return h('span', { class: 'sol-saldo nd' }, 'Saldo indisponível');
     const s = saldoOrigem(p, o), partes = [];
     if (o && o.filial) partes.push(s == null ? h('span', { class: 'sol-saldo nd' }, 'Saldo na origem indisponível') : s > 0 ? h('span', { class: 'sol-saldo ok' }, 'Saldo em ' + (o.armazem ? S.localCurto(o) : S.nomeFilial(o.filial)) + ': ', h('b', { text: qtTxt(s) })) : h('span', { class: 'sol-saldo zero' }, 'Sem saldo em ' + (o.armazem ? S.localCurto(o) : S.nomeFilial(o.filial))));
-    if (p.saldoTotal != null) partes.push(h('span', { class: 'sol-saldo tot' }, 'Total em todas as filiais: ', h('b', { text: qtTxt(p.saldoTotal) })));
+    if (p.saldoTotal != null) partes.push(h('span', { class: 'sol-saldo tot', title: 'Soma só dos armazéns de venda' }, 'Total em todas as filiais (só armazéns de venda): ', h('b', { text: qtTxt(p.saldoTotal) })));
+    if (p.saldoSeparadoTotal > 0) partes.push(h('span', { class: 'sol-saldo sep', title: 'Não entra no total: não é estoque de venda' }, 'Saldo separado (não é de venda): ', h('b', { text: qtTxt(p.saldoSeparadoTotal) }), ' · ' + (p.saldoSeparado || []).map((x) => S.nomeFilial(x.filial) + ' ' + x.armazem + ': ' + qtTxt(x.saldo)).join(', ')));
     return partes;
   }
   function filhosSug(item, getO) {
@@ -124,14 +167,21 @@
     }
     t.atualizando = false; redesenhar();
   }
-  function localCampo(rot, id, loc, aoMudar) {
-    const arm = loc.outro ? 'outro' : loc.armazem;
+  // Filial + armazém por lista (sem campo livre): o armazém só aparece se a logística liberou para este papel (origem ou destino).
+  function localCampo(rot, id, loc, aoMudar, papel) {
+    const filiais = filiaisDe(papel), arms = loc.filial ? armazensDe(loc.filial, papel) : [];
+    const escolheFilial = (ev) => { loc.filial = ev.target.value; const l = armazensDe(loc.filial, papel); loc.armazem = l.some((a) => a.codigo === '01') ? '01' : l.length === 1 ? l[0].codigo : ''; aoMudar(); };
+    const atual = arms.find((a) => a.codigo === loc.armazem);
     return h('fieldset', { class: 'sol-local' }, h('legend', { text: rot }),
       h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: id + '-f', text: 'Filial' }),
-        h('select', { id: id + '-f', class: 'entrada', onchange: (ev) => { loc.filial = ev.target.value; aoMudar(); } }, h('option', { value: '', text: 'Escolha a filial', selected: !loc.filial }), S.FILIAIS.map((k) => h('option', { value: k, text: S.FILIAIS_ROTULO[k], selected: loc.filial === k })))),
+        h('select', { id: id + '-f', class: 'entrada', onchange: escolheFilial }, h('option', { value: '', text: 'Escolha a filial', selected: !loc.filial }), filiais.map((k) => h('option', { value: k, text: S.FILIAIS_ROTULO[k] || k, selected: loc.filial === k })))),
       h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: id + '-a', text: 'Armazém' }),
-        h('select', { id: id + '-a', class: 'entrada', onchange: (ev) => { if (ev.target.value === 'outro') { loc.outro = true; loc.armazem = ''; } else { loc.outro = false; loc.armazem = ev.target.value; } aoMudar(); if (loc.outro) foco(id + '-o'); } }, S.ARMAZENS.map((a) => h('option', { value: a, text: 'Armazém ' + a, selected: arm === a })), h('option', { value: 'outro', text: 'Outro armazém…', selected: arm === 'outro' }))),
-      loc.outro ? h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: id + '-o', text: 'Sigla do armazém (até 6 letras ou números)' }), h('input', { id: id + '-o', class: 'entrada', type: 'text', maxlength: '6', autocomplete: 'off', autocapitalize: 'characters', placeholder: 'Ex.: ZZ2', value: loc.armazem, oninput: (ev) => { const v = ev.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); if (ev.target.value !== v) ev.target.value = v; loc.armazem = v; if (loc === e.t.origem) agendarRefresh(); }, onchange: () => redesenhar() })) : null);
+        h('select', { id: id + '-a', class: 'entrada', disabled: !loc.filial || !arms.length, onchange: (ev) => { loc.armazem = ev.target.value; aoMudar(); } },
+          h('option', { value: '', text: !loc.filial ? 'Escolha a filial primeiro' : arms.length ? 'Escolha o armazém' : 'Nenhum armazém liberado', selected: !loc.armazem }),
+          arms.map((a) => h('option', { value: a.codigo, text: a.rotulo + (papel === 'origem' && a.comSaldo === false ? ' (sem saldo no momento)' : ''), selected: loc.armazem === a.codigo })))),
+      loc.filial && !arms.length ? h('p', { class: 'dica', text: 'A logística não liberou nenhum armazém desta filial para ' + (papel === 'origem' ? 'sair' : 'receber') + ' transferência.' }) : null,
+      atual && atual.nota ? h('p', { class: 'dica', text: atual.nota }) : null,
+      e.arm.erro && !e.arm.dados ? h('p', { class: 'dica', role: 'status' }, 'Não consegui carregar a lista de armazéns (' + e.arm.erro + '). Mostrando só 01 e 02; o servidor confere ao enviar. ', h('button', { class: 'btn peq fantasma', type: 'button', onclick: carregarArmazens }, 'Tentar de novo')) : null);
   }
   const itemParaComum = (i) => ({ produto: i.produto, lote: i.lote, qt: i.qt });
   function textoAviso(i, o) {
@@ -185,19 +235,19 @@
       return h('section', { class: 'card sol-passo' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Confira antes de enviar' })),
         h('p', { class: 'sol-frase', text: S.textoRevisao(t) }), S.rotaTransf(d), S.tabelaItens(d, { saldo: true }),
         acima ? h('div', { class: 'aviso', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Algum produto passa do saldo. ' }), 'Você pode enviar assim mesmo: a logística confere e responde.')) : null,
-        h('div', { class: 'resumo-lista' }, [['Prazo', t.prazo ? S.dataCurtaISO(t.prazo) : 'Sem prazo'], ['Motivo', t.motivo.trim() || '—'], ['Pedido feito por', c ? c.nome : e.nome.trim()]].map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))),
+        h('div', { class: 'resumo-lista' }, [['Para quando', S.paraQuandoTxt(pqPrevia('transferencia_peca')) || 'Não informado'], ['Prazo', t.prazo ? S.dataCurtaISO(t.prazo) : 'Sem prazo'], ['Motivo', t.motivo.trim() || '—'], ['Pedido feito por', c ? c.nome : e.nome.trim()]].map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))),
         e.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), e.erro) : null,
         h('div', { class: 'acoes' }, h('button', { class: 'btn primario sol-enviar', type: 'button', disabled: e.enviando, onclick: () => enviar('transferencia_peca') }, ic('enviar'), e.enviando ? 'Enviando…' : 'Confirmar e enviar'), h('button', { class: 'btn', type: 'button', disabled: e.enviando, onclick: () => { t.rev = false; e.erro = ''; redesenhar(); } }, ic('voltar'), 'Voltar e corrigir')),
         h('p', { class: 'sol-tipo-prazo' }, ic('relogio'), prazoTxt(tipo)));
     }
     const mesmo = origemOk(t) && S.mesmoLocal(t.origem, t.destino);
     return [
-      passo(1, 'De onde para onde?', h('div', { class: 'sol-locais' }, localCampo('Sai de (origem)', 'sv-o', t.origem, aoMudarOrigem), h('span', { class: 'sol-locais-seta', 'aria-hidden': 'true' }, ic('seta')), localCampo('Vai para (destino)', 'sv-d', t.destino, () => redesenhar())),
+      passo(1, 'De onde para onde?', h('div', { class: 'sol-locais' }, localCampo('Sai de (origem)', 'sv-o', t.origem, aoMudarOrigem, 'origem'), h('span', { class: 'sol-locais-seta', 'aria-hidden': 'true' }, ic('seta')), localCampo('Vai para (destino)', 'sv-d', t.destino, () => redesenhar(), 'destino')),
         mesmo ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'A origem e o destino precisam ser diferentes.') : origemOk(t) && t.destino.filial && t.destino.armazem ? S.rotaTransf({ origem: t.origem, destino: t.destino }) : null),
       passo(2, 'Quais produtos?', h('div', { class: 'sol-itens' }, t.itens.map((i, n) => cartaoItem(i, n + 1, t))),
         t.atualizando ? h('p', { class: 'dica', role: 'status', text: 'Atualizando os saldos da nova origem…' }) : null,
         t.itens.length < 30 ? h('button', { class: 'btn', type: 'button', onclick: () => { const novo = novoItem(); t.itens.push(novo); redesenhar(); foco('sv-busca-' + novo.k); } }, ic('lista'), 'Adicionar outro produto') : h('p', { class: 'dica', text: 'Limite de 30 produtos por pedido.' })),
-      passo(3, 'Prazo e motivo', h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: 'sv-prazo', text: 'Precisa chegar até quando? (opcional)' }), h('input', { id: 'sv-prazo', class: 'entrada', type: 'date', min: hoje(), value: t.prazo, onchange: (ev) => { t.prazo = ev.target.value; } })),
+      passo(3, 'Prazo e motivo', S.campoParaQuando(pqDe('transferencia_peca'), redesenhar, 'sv-pq-transf', hoje(), { semData: true }), h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: 'sv-prazo', text: 'Precisa chegar até quando? (opcional)' }), h('input', { id: 'sv-prazo', class: 'entrada', type: 'date', min: hoje(), value: t.prazo, onchange: (ev) => { t.prazo = ev.target.value; } })),
         h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: 'sv-motivo', text: 'Motivo (opcional)' }), h('textarea', { id: 'sv-motivo', class: 'entrada', maxlength: '300', rows: '3', placeholder: 'Ex.: reposição para a campanha do fim do mês.', oninput: (ev) => { t.motivo = ev.target.value; } }, t.motivo)),
         c ? h('div', { class: 'sol-quem' }, ic('usuarioCheck'), h('span', null, 'Pedido feito por ', h('b', { text: c.nome }))) : campoNome(),
         t.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), t.erro) : null,
@@ -218,14 +268,27 @@
       if (c.tipo === 'data' && v < hoje()) return 'A data de "' + c.rotulo.replace(/ \(opcional\)/, '') + '" não pode ser no passado.';
       if (c.tipo === 'texto' || c.tipo === 'area') { if (v.length < 3) return 'Escreva um pouco mais em "' + c.rotulo.replace(/\?$/, '') + '".'; if (c.max && v.length > c.max) return '"' + c.rotulo + '" aceita até ' + c.max + ' letras.'; }
     }
+    const pe = S.erroParaQuando(pqDe(tipo), hoje()); if (pe) return pe;
     if (!conta() && e.nome.trim().length < 2) return 'Diga seu nome para a logística saber quem pediu.';
     return '';
   }
-  async function enviar(tipo) {
+  async function enviar(tipo, confirmado) {
     const t = S.TIPOS[tipo], c = conta();
     if (tipo === 'transferencia_peca') { const er = S.validarTransf(e.t, hoje()); if (er) { e.t.rev = false; e.t.erro = er; return redesenhar(); } }
     else { e.erro = validar(tipo); if (e.erro) return redesenhar(); }
+    if (tipo === 'transferencia_peca') { const pe = S.erroParaQuando(pqDe(tipo), hoje()); if (pe) { e.t.rev = false; e.t.erro = pe; return redesenhar(); } }
+    // Cancelar, segurar, alterar e nota: confere o pedido ANTES de enviar. Se já andou, mostra o aviso e pede um segundo toque para enviar mesmo assim.
+    const pedidoNum = t.pedido ? S.pedidoValido(formDe(tipo).pedido) : '';
+    if (pedidoNum) {
+      const i = e.pedInfo[pedidoNum], velho = !i || i.estado !== 'ok' || Date.now() - i.em > 120000;
+      e.enviando = true; e.erro = ''; redesenhar();
+      const ni = velho ? await consultarPedido(pedidoNum) : i;
+      e.enviando = false;
+      const r = ni && ni.estado === 'ok' ? ni.r : null, tarde = r && r.achado && r.etapa && r.etapa !== 'nao_separado' && ['cancelar_pedido', 'segurar_pedido'].includes(tipo);
+      if (tarde && e.confirmouTarde !== pedidoNum + '|' + tipo) { e.confirmouTarde = pedidoNum + '|' + tipo; e.erro = ''; redesenhar(); return root.setTimeout(() => { const b = root.document.getElementById('sv-enviar'); if (b) b.focus(); }, 30); }
+    }
     const corpo = { tipo, pedidoPor: c ? c.nome : e.nome.trim() };
+    const pqc = S.corpoParaQuando(pqDe(tipo)); if (pqc) corpo.paraQuando = pqc;
     if (tipo === 'transferencia_peca') corpo.dados = S.corpoTransf(e.t);
     else {
       const f = formDe(tipo), dados = {};
@@ -240,6 +303,7 @@
       gravarLS(LS_IDS, [j.linha.id].concat(lerLS(LS_IDS, []).filter((x) => x !== j.linha.id)).slice(0, 80));
       e.enviado = Object.assign({}, j.linha, { etapa: j.linha.etapa || j.etapa || '', aviso: j.linha.aviso || j.aviso || '' });
       if (tipo === 'transferencia_peca') e.t = novaTransf(); else delete e.f[tipo];
+      delete e.pq[tipo]; e.confirmouTarde = '';
       if (tipo === 'consulta_estoque') e.consulta = novoItem();
       C.toast('Solicitação enviada para a logística.'); carregar(true);
     } catch (x) { e.erro = x.message; if (tipo === 'transferencia_peca') e.t.rev = false; }
@@ -268,11 +332,14 @@
     return h('section', { class: 'card sol-form-card' }, escolhaPedido,
       h('div', { class: 'sol-form-cab' }, orbe(t, 'grande'), h('div', null, h('h2', { text: t.completo }), h('p', { class: 'mudo', text: t.frase }), h('p', { class: 'sol-tipo-prazo', style: 'margin-top:6px' }, ic('relogio'), prazoTxt(t)))),
       h('form', { class: 'form', novalidate: true, onsubmit: (ev) => { ev.preventDefault(); enviar(tipo); } },
-        h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: 'sv-pedido', text: t.pedido ? 'Número do pedido' : 'Número do pedido (se tiver)' }), h('input', { id: 'sv-pedido', class: 'entrada num', type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '14', placeholder: 'Ex.: 123456', value: f.pedido, oninput: (ev) => { f.pedido = ev.target.value; } })),
+        h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: 'sv-pedido', text: t.pedido ? 'Número do pedido' : 'Número do pedido (se tiver)' }), h('input', { id: 'sv-pedido', class: 'entrada num', type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '14', placeholder: 'Ex.: 123456', value: f.pedido, oninput: (ev) => { f.pedido = ev.target.value; e.confirmouTarde = ''; }, onchange: () => { if (t.pedido && S.pedidoValido(f.pedido)) consultarPedido(f.pedido); } })),
+        t.pedido ? caixaPedido(f.pedido, tipo) : null,
         t.campos.map((x) => campo(tipo, x)),
+        tipo === 'consulta_estoque' || tipo === 'cancelar_pedido' ? null : S.campoParaQuando(pqDe(tipo), redesenhar, 'sv-pq-' + tipo, hoje()),
         c ? h('div', { class: 'sol-quem' }, ic('usuarioCheck'), h('span', null, 'Pedido feito por ', h('b', { text: c.nome }))) : campoNome(),
         e.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), e.erro) : null,
-        h('button', { class: 'btn primario sol-enviar', type: 'submit', disabled: e.enviando }, ic('enviar'), e.enviando ? 'Enviando…' : 'Enviar para a logística')));
+        e.confirmouTarde === S.pedidoValido(f.pedido) + '|' + tipo ? h('div', { class: 'aviso', role: 'alert' }, ic('alerta'), h('div', null, h('b', { text: 'O pedido já andou. ' }), 'Veja a situação acima: pode não dar tempo de parar. Toque em "Enviar mesmo assim" para a logística tentar.')) : null,
+        h('button', { class: 'btn primario sol-enviar', id: 'sv-enviar', type: 'submit', disabled: e.enviando }, ic('enviar'), e.enviando ? 'Enviando…' : e.confirmouTarde === S.pedidoValido(f.pedido) + '|' + tipo ? 'Enviar mesmo assim' : 'Enviar para a logística')));
   }
 
   /* ---------- protocolo ---------- */
@@ -283,7 +350,7 @@
       pedidoDoTipo && (l.etapa || l.aviso) ? h('div', { class: 'sol-etapa ' + tom, role: 'status' }, ic(tom === 'ok' ? 'okCirculo' : tom === 'info' ? 'info' : 'alerta'),
         h('div', null, h('b', { text: tom === 'ok' ? 'Ainda dá tempo' : tom === 'info' ? 'Pedido não encontrado no SC9' : 'A logística vai avaliar' }), l.etapa ? h('span', { class: 'sol-etapa-nome', text: 'Situação do pedido agora: ' + (S.ETAPA[l.etapa] || l.etapa) }) : null, l.aviso ? h('p', { text: l.aviso }) : null)) : null,
       l.tipo === 'transferencia_peca' && d.itens ? h('div', { class: 'sol-enviado-transf' }, S.rotaTransf(d), S.tabelaItens(d, { saldo: true }), d.acimaDoSaldo ? h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'Algum produto passa do saldo. ' }), 'A logística vai conferir e avisar se não der para atender tudo.')) : null) : null,
-      h('div', { class: 'resumo-lista' }, [['Assunto', t.rotulo], l.pedido ? ['Pedido', l.pedido] : null, ['Enviada em', C.dataHora(l.criadoEm)], ['Status', S.STATUS[l.status] || l.status]].filter(Boolean).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))),
+      h('div', { class: 'resumo-lista' }, [['Assunto', t.rotulo], l.pedido ? ['Pedido', l.pedido] : null, l.paraQuando ? ['Para quando', S.paraQuandoTxt(l.paraQuando)] : null, ['Enviada em', C.dataHora(l.criadoEm)], ['Status', S.STATUS[l.status] || l.status]].filter(Boolean).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))),
       h('div', { class: 'processo compacta forte', role: 'status' }, ic('relogio'), h('p', null, h('b', { text: 'Agora é só aguardar. ' }), prazoTxt(t) + '. A resposta aparece em "Minhas solicitações".')),
       l.foraDoSc9 ? h('div', { class: 'aviso', style: 'width:100%' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe também foi avisada. Se o número estava errado, fale com a logística.')) : null,
       h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn primario', type: 'button', onclick: () => { e.sub = 'minhas'; e.enviado = null; redesenhar(); root.scrollTo(0, 0); } }, ic('lista'), 'Ver minhas solicitações'), h('button', { class: 'btn', type: 'button', onclick: () => { e.enviado = null; redesenhar(); } }, 'Fazer outra solicitação'))));
@@ -311,7 +378,7 @@
           pedidoDoTipo && (l.etapa || l.aviso) ? h('div', { class: 'sol-etapa ' + tom }, ic(tom === 'ok' ? 'okCirculo' : tom === 'info' ? 'info' : 'alerta'), h('div', null, l.etapa ? h('b', { text: 'Pedido: ' + (S.ETAPA[l.etapa] || l.etapa) }) : null, l.aviso ? h('p', { text: l.aviso }) : null)) : null,
           l.foraDoSc9 ? h('div', { class: 'aviso' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar.')) : null,
           l.tipo === 'transferencia_peca' && d.itens ? [S.rotaTransf(d), S.tabelaItens(d, { saldo: true }), d.prazo || d.motivo ? h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [d.prazo ? ['Prazo', S.dataCurtaISO(d.prazo)] : null, d.motivo ? ['Motivo', d.motivo] : null].filter(Boolean).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))) : null] : null,
-          dados.length ? h('div', { class: 'resumo-lista', style: 'margin-top:0' }, dados.map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))) : null,
+          dados.length || l.paraQuando ? h('div', { class: 'resumo-lista', style: 'margin-top:0' }, (l.paraQuando ? [['Para quando', S.paraQuandoTxt(l.paraQuando)]] : []).concat(dados).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))) : null,
           l.resposta ? h('div', { class: 'ok sol-resposta' }, ic('comentario'), h('div', null, h('b', { style: 'display:block', text: 'Resposta da logística' }), l.resposta)) : null,
           h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Enviada em', C.dataHora(l.criadoEm)], ['Última atualização', C.dataHora(l.atualizadoEm)]].map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v || '—' })))),
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico da solicitação' }, (l.historico || []).filter((x) => x.acao !== 'interno').slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? S.STATUS[x.status] || x.status : S.ACAO[x.acao] || '' }), x.texto ? ' · ' + x.texto : ''))))))];
@@ -340,17 +407,21 @@
   }
   function tela() {
     if (!e.lista && !e.carregando && !e.listaErro) { e.carregando = true; carregar(true); }
+    if (!e.arm.dados && !e.arm.erro && !e.arm.carregando) carregarArmazens();
     let corpo;
     if (e.enviado) corpo = telaEnviado();
     else if (e.sub === 'minhas') corpo = telaMinhas();
     else if (e.sub === 'transf') corpo = telaTransf();
     else if (e.sub === 'pedido') corpo = telaSimples(e.pedidoTipo);
     else corpo = telaSimples(SUB_TIPO[e.sub]);
-    const cab = [C.cabecalho('enviar', 'Solicitar à logística', 'Peça uma transferência, cancele ou segure um pedido, consulte estoque. A logística responde e você acompanha por aqui.'), e.enviado ? null : subAbas()];
+    const cab = [C.cabecalho('enviar', 'Solicitar à logística', 'Peça uma transferência, cancele ou segure um pedido, consulte estoque. A logística responde e você acompanha por aqui.'), cfg && cfg.faixa ? cfg.faixa('solicitar') : null, e.enviado ? null : subAbas()];
     return [h('div', { class: 'sol-vend', id: 'sol-vend-raiz' }, cab, corpo)];
   }
   function ligar(opcoes) { cfg = opcoes; }
   root.setInterval(() => { if (!root.document.hidden && root.document.getElementById('sol-vend-raiz') && e.sub === 'minhas' && !e.enviando) carregar(true); }, 60000);
   root.document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && e.aberta) { e.aberta = null; e.gavAnim = null; redesenhar(); } });
-  root.SolicitacoesVend = { ligar, tela, carregar, idsGuardados: () => lerLS(LS_IDS, []) };
+  // Para a aba "Minhas" de vendedoras.js, que mostra tudo numa lista só: cartão, painel da solicitação aberta e a lista inteira (ativas + recentes).
+  const todasMinhas = () => ativas().concat(recentes());
+  const gavetaAberta = () => { const l = e.aberta && todasMinhas().find((x) => x.id === e.aberta); return l ? gaveta(l) : []; };
+  root.SolicitacoesVend = { ligar, tela, carregar, idsGuardados: () => lerLS(LS_IDS, []), cartao: cartaoMinha, gavetaAberta, fechar: () => { e.aberta = null; e.gavAnim = null; }, todas: todasMinhas, carregada: () => Boolean(e.lista), erro: () => e.listaErro };
 })(window);

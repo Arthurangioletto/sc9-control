@@ -416,6 +416,21 @@ Pedido de ajuda das vendedoras à logística, no mesmo link delas (aba **Solicit
 - **Vendedora:** `POST /api/vendedoras/solicitacao` e `GET /api/vendedoras/solicitacoes`; com acesso (login) vê as dela, sem login só as que guardou neste aparelho; nunca vê nomes da equipe nem comentários internos. Quem cria o acesso depois leva as solicitações do aparelho (`idsSolic`).
 - Testes em `tests/solicitacoes-store.test.cjs` e `tests/solicitacoes-server.test.cjs`.
 
+### Vendedoras · onda 1 (armazéns por filial, "Para quando", Minhas numa lista só)
+
+- **ZZ2 não é armazém.** É a tabela de endereços das gavetas; deixou de aparecer como exemplo, placeholder ou texto de armazém na área das vendedoras.
+- **Lista de armazéns por filial (PROVISÓRIA: a logística deve conferir).** `armazens-vendedoras.json` (no mesmo armazenamento dos outros JSONs) guarda `{filial, codigo, rotulo, origem, destino, vendavel, nota}`. Sem arquivo, vale um padrão conservador: Cambuci 01 e 02 (origem, destino e venda); Tamboré 01; BH, CE, DF e RJ com o armazém da própria filial; 59 (TDC) e 26 (Retem) existem na lista, mas `vendavel:false` e sem origem/destino. A tela da equipe mostra o aviso "lista provisória" até alguém salvar.
+  - Vendedora: `GET /api/vendedoras/armazens` (mesmo link com código) devolve só o que ela pode escolher, por filial, cruzado com o que tem saldo no índice de produtos. O formulário de transferência usa um select de filial e um de armazém, **sem campo livre**.
+  - Equipe (administrador ou perfil "Ocorr.", aba **Armazéns** do painel da logística): `GET/POST /api/armazens-vendedoras` (`salvar` com a lista inteira ou `restaurar` o padrão). Cada gravação fica no histórico (quem, quando, o que mudou). Lista inválida (filial desconhecida, repetida, sem nenhuma origem ou destino, mais de 100) é recusada.
+  - O servidor RECUSA armazém fora da lista ao criar a transferência ("O armazém ZZ2 não existe na lista de armazéns de Cambuci…"; "…não está liberado como origem de transferência pela logística"). Se a lista não puder ser lida, vale o padrão conservador. A lista fica em cache de 60 s e é limpa na gravação.
+- **"Total em todas as filiais" soma só armazém vendável.** 59 e 26 (e o que ainda não foi classificado) aparecem à parte, como "saldo separado" (`saldoSeparado`, `saldoSeparadoTotal` em `/api/vendedoras/produtos`).
+- **"Como funciona" recolhido** (`<details>`) em Acompanhar, Prioridade, Avisar e Solicitar; lembra se foi aberto.
+- **Minhas = uma lista só** (prioridades + avisos à expedição + solicitações da Central), com filtro Abertas / Concluídas / Acompanho e por tipo; o formato antigo (abas separadas) continua em "Abrir no formato antigo". **Exportar** ganhou "Minhas solicitações à logística".
+- **"Para quando"** (opcional): hoje antes da coleta, hoje até 16h, amanhã ou uma data. O servidor valida (só essas opções; data não passada e até 1 ano), grava `{tipo, data}` com o dia já resolvido em São Paulo, mostra na lista da logística e põe uma coluna no CSV. Vale na Prioridade e em Solicitar (quem pede para sair hoje sobe a prioridade inicial).
+- **Prioridade sem "Normal" pré-selecionado:** nenhum nível vem marcado; é preciso escolher.
+- **Consultar antes de enviar:** em cancelar, segurar, alterar e nota fiscal a tela consulta o pedido (`etapa` e `avisoEtapa` ficaram acrescentados em `/api/vendedoras/pedido` e `/pedidos`) e mostra "ainda dá tempo" ou "já foi separado"; se já andou, pede um segundo toque ("Enviar mesmo assim").
+- Testes: `tests/vendedoras-onda1.test.cjs` (servidor) e `tests/vendedoras-onda1-ui.test.cjs` (front).
+
 ## Revisão do Histórico de Atraso e do link das meninas
 
 Revisão feita por agentes (back-end, front-end, design, dados e Power BI). Só acrescentou; nada que já existia foi removido.

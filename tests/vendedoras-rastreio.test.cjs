@@ -147,7 +147,7 @@ test('prioridades: protocolo, motivo, 4 níveis, não duplica, assume, comenta, 
 
 test('servidor: link das vendedoras, rastreio sem vazar dados, pedido de prioridade com limites e painel da equipe', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-vend-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'para-quando.js', 'solicitacoes-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   const data = path.join(dir, 'data'); fs.mkdirSync(data);
   const hoje = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
   fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify(snap([

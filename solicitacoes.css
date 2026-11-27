@@ -174,3 +174,32 @@
 .sol-filtros .sol-check { align-self: end; }
 @media (max-width: 640px) { .sol-bloco .tabela-rolagem { margin: 0 -16px; padding: 0 16px; } }
 .sol-dupla > * { min-width: 0; }
+
+/* ---------- Onda 1: "Como funciona" recolhido, "Para quando", saldo separado, lista única em Minhas, consulta do pedido ---------- */
+.processo.como-recolhido { display: block; padding: 4px 14px; border-radius: var(--raio-md); background: linear-gradient(180deg, #f3f7ff, var(--azul-claro)); box-shadow: var(--anel); font-size: 13.5px; }
+.processo.como-recolhido > summary { list-style: none; display: flex; align-items: center; gap: 10px; cursor: pointer; min-height: 44px; padding: 4px 0; }
+.processo.como-recolhido > summary::-webkit-details-marker { display: none; }
+.processo.como-recolhido > summary > .ic { width: 28px; height: 28px; padding: 5px; flex: 0 0 auto; color: var(--azul); background: #fff; border-radius: 50%; box-shadow: 0 2px 6px -1px rgba(29, 78, 216, .3); }
+.processo.como-recolhido > summary::after { content: ""; margin-left: auto; flex: 0 0 auto; width: 9px; height: 9px; border-right: 2px solid var(--azul); border-bottom: 2px solid var(--azul); transform: rotate(45deg); transition: transform .15s; }
+.processo.como-recolhido[open] > summary::after { transform: rotate(-135deg); }
+.processo.como-recolhido > summary:focus-visible { outline: 3px solid #93b2ff; outline-offset: 2px; border-radius: 10px; }
+.processo.como-recolhido .como-resumo { min-width: 0; line-height: 1.35; } .processo.como-recolhido .como-resumo .mudo { color: var(--tinta-2); }
+.processo.como-recolhido .como-lista { margin: 4px 0 12px; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.45; }
+.processo.como-recolhido.velha .como-resumo .mudo { color: #8a3a05; font-weight: 700; }
+.sol-pq { display: flex; flex-direction: column; gap: 8px; }
+.sol-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.sol-chips .chip, .sol-tipos-minhas .chip { min-height: 44px; padding: 8px 16px; font-size: 14px; }
+.chip[aria-pressed="true"] { background: var(--azul); border-color: var(--azul); color: #fff; box-shadow: 0 6px 14px -6px rgba(29, 78, 216, .7); }
+.chip:focus-visible { outline: 3px solid #93b2ff; outline-offset: 2px; }
+.sol-tipos-minhas { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
+.sol-saldo.sep { background: #f3eefb; color: #4a2aa0; font-weight: 600; white-space: normal; }
+.sol-etapa .btn { margin-top: 8px; }
+/* aba Armazéns (equipe) */
+.arm-filial .arm-linha { display: grid; grid-template-columns: 90px minmax(160px, 1.2fr) auto minmax(160px, 1.4fr) auto; gap: 10px 14px; align-items: end; padding: 12px 0; border-top: 1px solid var(--linha); }
+.arm-filial .arm-linha.separado { background: linear-gradient(90deg, #f7f3fd, transparent 40%); }
+.arm-cod { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; } .arm-cod b { font-size: 20px; }
+.arm-marcas { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.arm-marcas .sol-check { min-height: 44px; }
+.arm-novo { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-top: 10px; padding-top: 12px; border-top: 1px dashed var(--linha); } .arm-novo .sol-campo { flex: 0 1 220px; }
+@media (max-width: 900px) { .arm-filial .arm-linha { grid-template-columns: 1fr; } }
+.sol-pq-tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; background: var(--laranja-claro); color: #8a4207; font-weight: 700; font-size: 12px; } .sol-pq-tag .ic { width: 13px; height: 13px; }

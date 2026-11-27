@@ -11,11 +11,11 @@
   const LIMITE_BASE_VELHA_H = 10; // carga do SC9 mais velha que isso fica em destaque
 
   const estado = {
-    tela: 'rastrear', digitado: '', consulta: null, varios: null, carregando: false, erro: '', atualizadoEm: null,
-    f: { pedido: '', nivel: 'normal', motivo: '', observacao: '', nome: lerLS(LS.nome, ''), etapa: 'form', previa: null, buscando: false, enviando: false, erro: '', enviada: null },
+    tela: 'rastrear', comoAberto: {}, filtroMinhas: 'abertas', tipoMinhas: '', digitado: '', consulta: null, varios: null, carregando: false, erro: '', atualizadoEm: null,
+    f: { pedido: '', nivel: '', pq: { tipo: '', data: '' }, motivo: '', observacao: '', nome: lerLS(LS.nome, ''), etapa: 'form', previa: null, buscando: false, enviando: false, erro: '', enviada: null },
     prio: null, prioErro: '', visao: 'minhas', aberta: null,
     a: { pedido: '', tipo: '', texto: '', nome: lerLS(LS.nome, ''), previa: null, buscando: false, enviando: false, erro: '', enviado: null },
-    avisos: null, avisosErro: '', sub: 'prioridades', abertoAviso: null,
+    avisos: null, avisosErro: '', sub: 'todas', abertoAviso: null,
     seguindo: lerLS(LS.seguindo, []), seguindoEstado: {}, seguindoCarregando: false, // pedidos que ela acompanha NESTE aparelho: [{ pedido, cliente, visto }]
     conta: lerLS(LS.sessao, null), // { token, nome, login } quando ela entrou com o acesso opcional
     cf: { modo: 'criar', nome: '', email: '', login: '', codigo: '', codigo2: '', erro: '', enviando: false, atual: '', novo: '', erroTroca: '', okTroca: '', trocando: false }
@@ -30,6 +30,7 @@
     if (!r.ok) { const e = new Error(j.error || 'Não consegui falar com o servidor. Tente de novo em instantes.'); e.status = r.status; throw e; }
     return j;
   };
+  const hojeISO = () => C.diaSP(new Date().toISOString());
   const soNumeros = (t) => String(t || '').replace(/\D/g, '').replace(/^0+/, '');
   const idadeBaseH = () => (estado.atualizadoEm ? (Date.now() - new Date(estado.atualizadoEm).getTime()) / 36e5 : 0);
 
@@ -191,9 +192,12 @@
     if (modo === 'avisar') itens.push(h('li', null, h('b', { text: 'O aviso vai para a equipe da expedição, que trata e responde: não é na hora. ' }), 'Acompanhe em "Minhas solicitações" → "Avisos à expedição". Não precisa mandar de novo nem cobrar por mensagem.'));
     if (modo === 'prioridade' || modo === 'minhas') itens.push(h('li', null, h('b', { text: 'A análise é feita pela equipe do SC9, não é na hora. ' }), 'Depois de enviar, aguarde a resposta aqui em "Minhas solicitações". Não precisa mandar de novo nem cobrar por mensagem.'));
     if (compacta) return h('div', { class: 'processo compacta', role: 'note' }, ic('info'), h('p', null, h('b', { text: modo === 'rastrear' ? 'Andamento do SC9. ' : 'Aguarde a análise do SC9. ' }), base));
-    if (modo === 'rastrear') return h('section', { class: 'processo compacta', role: 'note', 'aria-label': 'Como funciona o acompanhamento', style: 'flex-wrap:wrap' }, ic('info'), h('p', { style: 'flex:1 1 220px' }, h('b', { text: 'Atualizado às ' + (estado.atualizadoEm ? C.horaBR(estado.atualizadoEm) : '—') + '. ' }), 'Pedido novo pode levar algumas horas para aparecer.'),
-      h('details', { style: 'flex:1 0 100%' }, h('summary', { class: 'resumo-como', text: 'Como funciona' }), h('ul', { style: 'margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.45' }, itens)));
-    return h('section', { class: 'processo', role: 'note', 'aria-label': 'Como funciona o acompanhamento' }, h('div', { class: 'bola' }, ic('info')), h('div', null, h('h2', { text: modo === 'rastrear' ? 'Como funciona o acompanhamento' : 'Antes de pedir: como funciona a análise' }), h('ul', null, itens)));
+    if (modo === 'solicitar') itens.push(h('li', null, h('b', { text: 'A logística responde dentro do prazo de cada assunto. ' }), 'O prazo aparece em cada formulário. A resposta fica em "Minhas solicitações": não precisa mandar de novo nem cobrar por mensagem.'));
+    const resumoTxt = modo === 'rastrear' ? 'Atualizado às ' + (estado.atualizadoEm ? C.horaBR(estado.atualizadoEm) : '—') + '. Pedido novo pode levar algumas horas para aparecer.' : base;
+    // recolhida por padrão (as vendedoras já sabem como funciona); abre e fecha sem perder o estado nos redesenhos
+    return h('details', { class: 'processo como-recolhido' + (velha ? ' velha' : ''), open: Boolean(estado.comoAberto[modo]), 'aria-label': 'Como funciona', ontoggle: (ev) => { estado.comoAberto[modo] = ev.target.open; } },
+      h('summary', { class: 'resumo-como' }, ic('info'), h('span', { class: 'como-resumo' }, h('b', { text: 'Como funciona' }), h('span', { class: 'mudo peq', text: ' · ' + resumoTxt }))),
+      h('ul', { class: 'como-lista' }, itens));
   }
 
   /* ---------- acesso opcional (login + código) ---------- */
@@ -262,6 +266,8 @@
       ((estado.prio && estado.prio.meus) || []).map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.MOTIVO[l.motivo] || '', C.STATUS[l.status], C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.observacao, l.resposta, ['recebida', 'em_analise', 'aprovada', 'em_atendimento'].includes(l.status) ? (l.foraDoSc9 ? 'Não' : 'Sim') : '', historicoTexto(l)])),
     avisos: () => C.baixarCsv(C.nomeArquivo('meus-avisos-a-expedicao'), ['Protocolo', 'Pedido', 'Tipo', 'O que informei', 'Status', 'Resposta da expedição', 'Enviado em', 'Atualizado em', 'No SC9 agora?', 'Histórico'],
       ((estado.avisos && estado.avisos.meus) || []).map((l) => [l.protocolo, l.pedido, C.TIPO_AVISO[l.tipo], l.texto, C.STATUS_AVISO[l.status], l.resposta, C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.status === 'resolvido' ? '' : (l.foraDoSc9 ? 'Não' : 'Sim'), (l.historico || []).map((x) => C.dataHoraCsv(x.em) + ' - ' + (x.status ? C.STATUS_AVISO[x.status] || x.status : 'Atualização') + (x.texto ? ' - ' + x.texto : '')).join(' | ')])),
+    solic: () => C.baixarCsv(C.nomeArquivo('minhas-solicitacoes-a-logistica'), ['Protocolo', 'Assunto', 'Pedido(s)', 'Para quando', 'Status', 'Pedida em', 'Atualizada em', 'Resposta da logística', 'Histórico'],
+      (root.SolicitacoesVend ? root.SolicitacoesVend.todas() : []).map((l) => [l.protocolo, root.SolComum.tipoDe(l).rotulo, (l.pedidos && l.pedidos.length ? l.pedidos.map((x) => x.pedido) : [l.pedido]).filter(Boolean).join(' '), root.SolComum.paraQuandoTxt(l.paraQuando), root.SolComum.STATUS[l.status] || l.status, C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.resposta, (l.historico || []).filter((x) => x.acao !== 'interno').map((x) => C.dataHoraCsv(x.em) + ' - ' + (x.status ? root.SolComum.STATUS[x.status] || x.status : 'Atualização') + (x.texto ? ' - ' + x.texto : '')).join(' | ')])),
     consultas: () => C.baixarCsv(C.nomeArquivo('pedidos-consultados'), ['Pedido', 'Consultado em', 'Situação na hora', 'Filial', 'Cliente'], listaConsultas().map((x) => [x.pedido, C.dataHoraCsv(x.em), x.situacao, x.filial, x.cliente]))
   };
   // Com acesso (login) as consultas vêm do servidor (qualquer aparelho); sem acesso, só as deste aparelho.
@@ -278,9 +284,11 @@
     if (!estado.prio && !estado.prioErro) carregarPrioridades(true);
     if (!estado.avisos && !estado.avisosErro) carregarAvisos(true);
     if (estado.conta && !estado.consultasServ && !estado.consultasErro) carregarConsultas();
+    if (root.SolicitacoesVend && !root.SolicitacoesVend.carregada() && !root.SolicitacoesVend.erro()) root.SolicitacoesVend.carregar(true);
     return [C.cabecalho('baixar', 'Exportar', 'Baixe só o que é seu em planilha (CSV). Abre direto no Excel.'),
       estado.prioErro || estado.consultasErro ? h('div', { class: 'erro' }, ic('alerta'), estado.prioErro || estado.consultasErro) : null,
       cartao('lista', 'Minhas solicitações', 'Protocolo, prioridade, motivo, status, resposta da logística e histórico de cada pedido de prioridade.', meus.length, 'minhas', Boolean(estado.prio)),
+      cartao('enviar', 'Minhas solicitações à logística', 'Transferências, cancelar ou segurar pedido, nota fiscal, consulta de estoque e os outros pedidos feitos à logística, com a resposta e o histórico.', root.SolicitacoesVend ? root.SolicitacoesVend.todas().length : 0, 'solic', Boolean(root.SolicitacoesVend && root.SolicitacoesVend.carregada())),
       cartao('comentario', 'Meus avisos à expedição', 'Cada aviso que você mandou para a expedição, com o que informou, a resposta da equipe e o histórico.', ((estado.avisos && estado.avisos.meus) || []).length, 'avisos', Boolean(estado.avisos)),
       cartao('busca', 'Pedidos que consultei', estado.conta ? 'Cada pedido que você consultou logada, com data, hora e a situação que aparecia na hora. Vem do seu login, de qualquer aparelho.' : 'Cada pedido que você consultou, com data, hora e a situação que aparecia na hora. Fica guardado só neste aparelho; com acesso criado, passa a valer em qualquer aparelho.', consultas.length, 'consultas', !estado.conta || Boolean(estado.consultasServ)),
       h('p', { class: 'dica', text: estado.conta ? 'Suas solicitações vêm do seu login, de qualquer aparelho.' : 'Sem acesso criado, "Minhas solicitações" e "Pedidos que consultei" são só deste aparelho. Crie seu acesso para ter as solicitações em qualquer lugar.' }),
@@ -322,8 +330,10 @@
   function revisar() {
     const f = estado.f; f.erro = '';
     if (!f.previa || soNumeros(f.previa.pedido) !== soNumeros(f.pedido)) f.erro = 'Toque em "Localizar pedido" antes de continuar.';
+    else if (!f.nivel) f.erro = 'Escolha o nível de prioridade (nenhum vem marcado de propósito).';
     else if (!f.motivo) f.erro = 'Escolha o motivo do pedido de prioridade.';
     else if (f.motivo === 'outro' && f.observacao.trim().length < 5) f.erro = 'Explique o motivo na observação.';
+    else if (root.SolComum.erroParaQuando(f.pq, hojeISO())) f.erro = root.SolComum.erroParaQuando(f.pq, hojeISO());
     else if (f.nome.trim().length < 2) f.erro = 'Diga seu nome para a equipe saber quem pediu.';
     else f.etapa = 'revisar';
     desenhar();
@@ -331,12 +341,12 @@
   async function enviar() {
     const f = estado.f; f.erro = ''; f.enviando = true; desenhar();
     try {
-      const j = await api('/api/vendedoras/prioridade', { method: 'POST', body: JSON.stringify({ pedido: soNumeros(f.pedido), nivel: f.nivel, motivo: f.motivo, observacao: f.observacao, pedidoPor: f.nome }) });
+      const j = await api('/api/vendedoras/prioridade', { method: 'POST', body: JSON.stringify({ pedido: soNumeros(f.pedido), nivel: f.nivel, motivo: f.motivo, observacao: f.observacao, pedidoPor: f.nome, paraQuando: root.SolComum.corpoParaQuando(f.pq) }) });
       gravarLS(LS.nome, f.nome.trim());
       if (f.previa && f.previa.achado) seguir(f.previa); // quem pediu prioridade passa a acompanhar o pedido
       gravarLS(LS.meus, [j.linha.id].concat(lerLS(LS.meus, []).filter((x) => x !== j.linha.id)).slice(0, 60));
       f.enviada = { linha: j.linha, duplicado: j.duplicado, naoAchado: j.naoAchado }; f.etapa = 'enviada';
-      f.pedido = ''; f.observacao = ''; f.motivo = ''; f.nivel = 'normal'; f.previa = null;
+      f.pedido = ''; f.observacao = ''; f.motivo = ''; f.nivel = ''; f.pq = { tipo: '', data: '' }; f.previa = null;
       C.toast('Solicitação enviada.');
       carregarPrioridades(true);
     } catch (e) { f.erro = e.message; f.etapa = 'form'; }
@@ -359,14 +369,14 @@
       return [h('section', { class: 'card' }, h('div', { class: 'protocolo-ok' }, h('div', { class: 'selo-ok' }, ic('ok')), h('h2', { text: f.enviada.duplicado ? 'Pedido reforçado' : 'Solicitação enviada' }), h('p', { class: 'mudo', text: f.enviada.duplicado ? 'Este pedido já estava na fila. Reforçamos a solicitação existente.' : 'Prioridade não passa o pedido na frente sozinha.' }),
         h('div', { class: 'processo compacta forte', role: 'status' }, ic('relogio'), h('p', null, h('b', { text: 'Agora é só aguardar. ' }), 'A equipe do SC9 vai analisar e a resposta aparece em "Minhas solicitações". Não precisa enviar de novo nem cobrar por mensagem.')),
         h('div', { class: 'codigo', text: l.protocolo || '' }),
-        h('div', { class: 'resumo-lista' }, [['Pedido', l.pedido], ['Prioridade', C.NIVEL[l.nivel]], ['Data e horário', C.dataHora(l.criadoEm)], ['Status', C.STATUS[l.status]]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
+        h('div', { class: 'resumo-lista' }, [['Pedido', l.pedido], ['Prioridade', C.NIVEL[l.nivel]], l.paraQuando ? ['Para quando', root.SolComum.paraQuandoTxt(l.paraQuando)] : null, ['Data e horário', C.dataHora(l.criadoEm)], ['Status', C.STATUS[l.status]]].filter(Boolean).map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
         f.enviada.naoAchado ? h('div', { class: 'aviso', style: 'width:100%' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar o SC9. Assim que ele entrar, o andamento aparece em "Acompanhar pedidos". Se o número estava errado, fale com a expedição.')) : null,
         h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn primario', type: 'button', onclick: () => { estado.tela = 'minhas'; estado.visao = 'minhas'; desenhar(); root.scrollTo(0, 0); } }, ic('lista'), 'Ver minhas solicitações'), h('button', { class: 'btn', type: 'button', onclick: () => { f.etapa = 'form'; f.enviada = null; desenhar(); } }, 'Nova solicitação'))))];
     }
     const cab = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, C.cabecalho('raio', 'Precisa de prioridade no pedido?', 'Informe o pedido, explique a necessidade e acompanhe a análise da logística.'), faixaProcesso('prioridade'));
     if (f.etapa === 'revisar' && f.previa) {
       return [cab, h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Confirme a solicitação' })), previaPedido(f.previa),
-        h('div', { class: 'resumo-lista', style: 'margin-top:12px' }, [['Prioridade', C.NIVEL[f.nivel]], ['Motivo', C.MOTIVO[f.motivo]], ['Solicitante', f.nome.trim()], ['Observação', f.observacao.trim() || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
+        h('div', { class: 'resumo-lista', style: 'margin-top:12px' }, [['Prioridade', C.NIVEL[f.nivel]], ['Motivo', C.MOTIVO[f.motivo]], ['Para quando', root.SolComum.paraQuandoTxt(root.SolComum.corpoParaQuando(f.pq) ? { tipo: f.pq.tipo, data: f.pq.data } : null) || 'Não informado'], ['Solicitante', f.nome.trim()], ['Observação', f.observacao.trim() || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
         h('div', { class: 'processo compacta forte', style: 'margin-top:12px', role: 'note' }, ic('relogio'), h('p', null, h('b', { text: 'Depois de enviar, aguarde. ' }), 'A análise é feita pela equipe do SC9 e não é na hora. Você recebe um protocolo e acompanha a resposta aqui.')),
         f.erro ? h('div', { class: 'erro', role: 'alert', style: 'margin-top:12px' }, ic('alerta'), f.erro) : null,
         h('div', { class: 'acoes' }, h('button', { class: 'btn primario', type: 'button', disabled: f.enviando, onclick: enviar }, ic('enviar'), f.enviando ? 'Enviando…' : 'Enviar solicitação'), h('button', { class: 'btn', type: 'button', disabled: f.enviando, onclick: () => { f.etapa = 'form'; f.erro = ''; desenhar(); } }, 'Voltar e corrigir')))];
@@ -378,6 +388,7 @@
       f.previa ? previaPedido(f.previa) : null,
       f.previa ? [campoNivel(),
         h('div', null, h('label', { class: 'rotulo', for: 'p-motivo', text: '3. Motivo' }), h('select', { id: 'p-motivo', class: 'entrada', onchange: (ev) => { f.motivo = ev.target.value; } }, h('option', { value: '', text: 'Escolha o motivo', selected: !f.motivo }), Object.keys(C.MOTIVO).map((k) => h('option', { value: k, text: C.MOTIVO[k], selected: f.motivo === k })))),
+        root.SolComum.campoParaQuando(f.pq, desenhar, 'p-pq', hojeISO()),
         h('div', null, h('label', { class: 'rotulo', for: 'p-obs', text: 'Observações adicionais' }), h('textarea', { id: 'p-obs', class: 'entrada', maxlength: '300', placeholder: 'Ex.: cliente tem prazo na sexta; retira na expedição', oninput: (ev) => { f.observacao = ev.target.value; } }, f.observacao), h('p', { class: 'dica', text: 'Quanto mais claro, mais rápido a logística decide.' })),
         estado.conta ? h('div', null, h('span', { class: 'rotulo', text: 'Solicitante' }), h('div', { class: 'previa', style: 'display:flex;align-items:center;gap:8px' }, ic('usuarioCheck'), h('b', { text: estado.conta.nome }), h('span', { class: 'mudo peq', text: 'login ' + estado.conta.login })))
           : h('div', null, h('label', { class: 'rotulo', for: 'p-nome', text: 'Seu nome' }), h('input', { id: 'p-nome', class: 'entrada', type: 'text', autocomplete: 'name', maxlength: '60', placeholder: 'Ex.: Ana (Vendas)', value: f.nome, oninput: (ev) => { f.nome = ev.target.value; } }), h('p', { class: 'dica' }, 'Quer acompanhar em qualquer aparelho e saber o que já pediu? ', h('button', { class: 'link-botao', type: 'button', onclick: () => { estado.tela = 'conta'; desenhar(); root.scrollTo(0, 0); } }, 'Crie seu acesso (opcional)'))),
@@ -490,13 +501,14 @@
         h('div', { class: 'gaveta-cab' }, h('div', null, h('p', { class: 'mudo peq', text: l.protocolo || 'Solicitação' }), h('h3', { class: 'num', text: 'Pedido ' + l.pedido }), h('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' }, C.selo(C.NIVEL[l.nivel], l.nivel), C.selo(C.STATUS[l.status], l.status))), h('button', { class: 'btn peq fantasma', type: 'button', 'aria-label': 'Fechar', onclick: fecha }, ic('fechar'))),
         h('div', { class: 'gaveta-corpo' },
           l.foraDoSc9 ? h('div', { class: 'aviso' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar o SC9. Quando ele entrar, o andamento aparece em "Acompanhar pedidos".')) : null,
-          h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Motivo', C.MOTIVO[l.motivo] || '—'], ['Pedida em', C.dataHora(l.criadoEm)], ['Observação', l.observacao || '—'], ['Última atualização', C.dataHora(l.atualizadoEm)]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
+          h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Motivo', C.MOTIVO[l.motivo] || '—'], ['Para quando', root.SolComum.paraQuandoTxt(l.paraQuando) || 'Não informado'], ['Pedida em', C.dataHora(l.criadoEm)], ['Observação', l.observacao || '—'], ['Última atualização', C.dataHora(l.atualizadoEm)]].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
           l.resposta ? h('div', { class: 'ok', style: 'background:var(--azul-claro);border-color:var(--azul-borda);color:var(--azul-escuro)' }, ic('comentario'), h('div', null, h('b', { style: 'display:block', text: 'Resposta da logística' }), l.resposta)) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico da solicitação' }, (l.historico || []).slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? C.STATUS[x.status] || x.status : '' }), x.texto ? (x.status ? ' · ' : '') + x.texto : ''))))))];
   }
-  function telaMinhas() {
+  function telaMinhasAntiga() {
     const meus = (estado.prio && estado.prio.meus) || [];
-    const blocos = [faixaProcesso('minhas', true), C.cabecalho('lista', 'Minhas solicitações', 'Só o que é seu: acompanhe a análise da logística sem precisar mandar mensagem.')];
+    const blocos = [faixaProcesso('minhas', true), C.cabecalho('lista', 'Minhas solicitações (formato antigo)', 'As mesmas solicitações em abas separadas: prioridades, avisos e quem você acompanha.'),
+      h('div', { class: 'acoes' }, h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.minhasAntiga = false; desenhar(); root.scrollTo(0, 0); } }, ic('voltar') , 'Voltar à lista única'))];
     blocos.push(abasMinhas());
     if (estado.sub === 'avisos') return blocos.concat(corpoAvisos());
     if (estado.sub === 'acompanho') return blocos.concat([cartaoSeguindo() || h('section', { class: 'card' }, C.vazio('relogio', 'Você ainda não acompanha nenhum pedido', 'Consulte um pedido e toque em "Acompanhar este pedido". Aqui aparece a situação de cada um e o que mudou desde a última vez.'))]);
@@ -508,10 +520,52 @@
     return blocos;
   }
 
+  /* ---------- Minhas: uma lista só (prioridades + avisos + solicitações da Central) ---------- */
+  const PRIO_ATIVAS = ['recebida', 'em_analise', 'aprovada', 'em_atendimento'];
+  const TIPOS_MINHAS = [['', 'Tudo'], ['prioridades', 'Prioridades'], ['avisos', 'Avisos à expedição'], ['solic', 'Solicitações à logística']];
+  function itensMinhas() {
+    const SV = root.SolicitacoesVend, itens = [];
+    ((estado.prio && estado.prio.meus) || []).forEach((l) => itens.push({ tipo: 'prioridades', ativo: PRIO_ATIVAS.includes(l.status), quando: l.atualizadoEm || l.criadoEm || '', no: cartaoSolicitacao(l) }));
+    ((estado.avisos && estado.avisos.meus) || []).forEach((l) => itens.push({ tipo: 'avisos', ativo: l.status !== 'resolvido', quando: l.atualizadoEm || l.criadoEm || '', no: cartaoAviso(l) }));
+    (SV ? SV.todas() : []).forEach((l) => itens.push({ tipo: 'solic', ativo: root.SolComum.ATIVOS.includes(l.status), quando: l.atualizadoEm || l.criadoEm || '', no: SV.cartao(l) }));
+    return itens.sort((a, b) => String(b.quando).localeCompare(String(a.quando)));
+  }
+  function telaMinhas() {
+    if (estado.minhasAntiga) return telaMinhasAntiga();
+    // atalhos antigos (sub = 'avisos' vindo de "Ver meus avisos"; 'acompanho') continuam levando ao lugar certo
+    if (estado.sub === 'avisos') { estado.tipoMinhas = 'avisos'; estado.filtroMinhas = 'abertas'; estado.sub = 'todas'; }
+    if (estado.sub === 'acompanho') { estado.filtroMinhas = 'acompanho'; estado.sub = 'todas'; }
+    const SV = root.SolicitacoesVend, todos = itensMinhas(), tipo = estado.tipoMinhas, f = estado.filtroMinhas;
+    const doTipo = todos.filter((x) => !tipo || x.tipo === tipo), abertas = doTipo.filter((x) => x.ativo), fechadas = doTipo.filter((x) => !x.ativo);
+    const carregando = (!estado.prio && !estado.prioErro) || (!estado.avisos && !estado.avisosErro) || (SV && !SV.carregada() && !SV.erro());
+    const erros = [estado.prioErro, estado.avisosErro, SV && SV.erro()].filter(Boolean);
+    const filtro = (id, nome, n) => h('button', { type: 'button', 'aria-pressed': String(f === id), onclick: () => { estado.filtroMinhas = id; estado.aberta = null; estado.abertoAviso = null; if (SV) SV.fechar(); desenhar(); } }, nome + ' (' + n + ')');
+    const blocos = [faixaProcesso('minhas', true), C.cabecalho('lista', 'Minhas solicitações', 'Tudo o que é seu em uma lista só: prioridades, avisos à expedição e pedidos à logística. A resposta aparece aqui, sem precisar mandar mensagem.'),
+      h('div', { class: 'abas-pequenas abas-3', role: 'group', 'aria-label': 'Mostrar' }, filtro('abertas', 'Abertas', abertas.length), filtro('concluidas', 'Concluídas', fechadas.length), filtro('acompanho', 'Acompanho', estado.seguindo.length)),
+      f !== 'acompanho' ? h('div', { class: 'sol-tipos-minhas', role: 'group', 'aria-label': 'Tipo de solicitação' }, TIPOS_MINHAS.map(([id, nome]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(tipo === id), onclick: () => { estado.tipoMinhas = id; desenhar(); } }, nome))) : null];
+    erros.forEach((m) => blocos.push(h('div', { class: 'erro', role: 'alert' }, ic('alerta'), m)));
+    if (f === 'acompanho') blocos.push(cartaoSeguindo() || h('section', { class: 'card' }, C.vazio('relogio', 'Você ainda não acompanha nenhum pedido', 'Consulte um pedido e toque em "Acompanhar este pedido". Aqui aparece a situação de cada um e o que mudou desde a última vez.')));
+    else if (carregando && !todos.length) blocos.push(C.esqueleto(2));
+    else {
+      const lista = f === 'concluidas' ? fechadas : abertas;
+      blocos.push(h('section', { class: 'card', 'aria-label': f === 'concluidas' ? 'Concluídas' : 'Abertas' }, lista.length ? lista.map((x) => x.no)
+        : C.vazio('lista', f === 'concluidas' ? 'Nada concluído ainda' : 'Nada em aberto', todos.length ? 'Troque o filtro acima para ver o resto.' : 'Quando você pedir prioridade, avisar a expedição ou pedir algo à logística, aparece aqui com o protocolo e a resposta.'),
+        h('p', { class: 'dica', style: 'margin-top:12px', text: (estado.conta ? 'Lista do seu login, em qualquer aparelho.' : 'Esta lista é deste aparelho. Crie seu acesso para vê-la em qualquer aparelho.') + ' Atualiza sozinha a cada minuto.' })));
+    }
+    const pAberta = estado.aberta && ((estado.prio && estado.prio.meus) || []).find((x) => x.id === estado.aberta), aAberto = estado.abertoAviso && ((estado.avisos && estado.avisos.meus) || []).find((x) => x.id === estado.abertoAviso);
+    if (pAberta) blocos.push(...gavetaSolicitacao(pAberta));
+    if (aAberto) blocos.push(...gavetaAviso(aAberto));
+    if (SV) blocos.push(...SV.gavetaAberta());
+    blocos.push(h('p', { class: 'dica' }, 'Prefere ver separado? ', h('button', { class: 'btn peq fantasma', type: 'button', onclick: () => { estado.minhasAntiga = true; desenhar(); root.scrollTo(0, 0); } }, 'Abrir no formato antigo (abas separadas)')));
+    return blocos;
+  }
+
   /* ---------- Central de solicitações (solicitacoes-vend.js): aba "Solicitar" ---------- */
+  const cfgSolic = { api, conta: () => estado.conta, redesenhar: () => desenhar(), faixa: (modo) => faixaProcesso(modo) };
+  if (root.SolicitacoesVend) root.SolicitacoesVend.ligar(cfgSolic);
   function telaSolicitar() {
     if (!root.SolicitacoesVend) return [h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'Não consegui carregar esta aba. Recarregue a página.')];
-    root.SolicitacoesVend.ligar({ api, conta: () => estado.conta, redesenhar: desenhar });
+    root.SolicitacoesVend.ligar(cfgSolic);
     return root.SolicitacoesVend.tela();
   }
 
@@ -521,7 +575,7 @@
     const foco = root.document.activeElement && root.document.activeElement.id ? root.document.activeElement.id : '';
     const y = root.scrollY;
     const topo = h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Acompanhamento de pedidos'),
-      chaveLink ? h('nav', { class: 'nav', 'aria-label': 'Principal' }, NAV.map(([id, i, nome, curto]) => h('button', { type: 'button', 'aria-label': nome, 'aria-current': estado.tela === id ? 'page' : null, onclick: () => { estado.tela = id; estado.aberta = null; if ((id === 'minhas' || id === 'exportar') && !estado.prio) carregarPrioridades(); if (id === 'minhas' || id === 'exportar') carregarAvisos(true); desenhar(); root.scrollTo(0, 0); } }, ic(i), h('span', { class: 'longo', text: nome }), h('span', { class: 'curto', text: curto })))) : null,
+      chaveLink ? h('nav', { class: 'nav', 'aria-label': 'Principal' }, NAV.map(([id, i, nome, curto]) => h('button', { type: 'button', 'aria-label': nome, 'aria-current': estado.tela === id ? 'page' : null, onclick: () => { estado.tela = id; estado.aberta = null; if (root.SolicitacoesVend) root.SolicitacoesVend.fechar(); if ((id === 'minhas' || id === 'exportar') && !estado.prio) carregarPrioridades(); if (id === 'minhas' || id === 'exportar') { carregarAvisos(true); if (root.SolicitacoesVend) root.SolicitacoesVend.carregar(true); } desenhar(); root.scrollTo(0, 0); } }, ic(i), h('span', { class: 'longo', text: nome }), h('span', { class: 'curto', text: curto })))) : null,
       chaveLink ? h('div', { class: 'topo-lado' }, estado.atualizadoEm ? h('span', { class: 'atualizado' + (idadeBaseH() > LIMITE_BASE_VELHA_H ? ' velha' : ''), title: 'Base do SC9 atualizada em ' + C.dataHora(estado.atualizadoEm) }, h('i', { class: 'ponto' }), h('span', { class: 'rotulo-hora', text: 'Atualizado às ' }), C.horaBR(estado.atualizadoEm)) : null,
         h('button', { class: 'btn peq conta-botao' + (estado.tela === 'conta' ? ' ativo' : ''), type: 'button', 'aria-label': estado.conta ? 'Seu acesso: ' + estado.conta.nome : 'Criar acesso ou entrar', onclick: () => { estado.tela = 'conta'; estado.aberta = null; desenhar(); root.scrollTo(0, 0); } }, ic(estado.conta ? 'usuarioCheck' : 'usuario'), h('span', { class: 'conta-nome', text: estado.conta ? estado.conta.nome.split(' ')[0] : 'Entrar' }))) : null));
     let corpo;

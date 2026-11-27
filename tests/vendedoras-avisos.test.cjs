@@ -39,7 +39,7 @@ test('avisos: protocolo, tipo e texto obrigatórios, limite por dia, equipe assu
 
 test('servidor: vendedora avisa a expedição (com ou sem login), só vê os próprios avisos, equipe vê tudo, responde e a vendedora vê a resposta', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-avisos-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'avisos-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'para-quando.js', 'solicitacoes-store.js', 'avisos-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   const data = path.join(dir, 'data'); fs.mkdirSync(data);
   const linha = (o) => Object.assign({ pedido: '0355386', armazem: 'Cambuci', nf: '', nome: 'CLIENTE ALFA', cliente: '001', dt: '2026-11-18', dtLiberacaoHora: '2026-11-18T12:10:00.000Z', qt: 5, itens: 2, status: 'Liberado', separador: '', conferente: '' }, o);
   fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify({ savedAt: '2026-11-24T14:00:00.000Z', orders: [linha({ pedido: '355386' })], faturamento: [], entregaInfo: [], valores: [] }));

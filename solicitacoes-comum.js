@@ -44,7 +44,8 @@
   const FILIAIS_ROTULO = { Cambuci: 'Cambuci', Tambore: 'Tamboré', BH: 'BH', CE: 'CE', DF: 'DF', RJ: 'RJ' };
   // Código da filial no Protheus (só para mostrar; o servidor aceita a chave, o nome ou o código): Cambuci 01, Tamboré 03; as demais só têm a sigla.
   const FILIAIS_COD = { Cambuci: '01', Tambore: '03' };
-  // Armazéns oferecidos na transferência. O campo "Outro" aceita qualquer sigla de 1 a 6 letras/números (ex.: ZZ2).
+  // Armazéns oferecidos quando a lista da logística não carregou (reserva). A lista de verdade vem de /api/vendedoras/armazens, por filial, e o servidor
+  // recusa qualquer armazém que não esteja nela: não existe mais campo livre para digitar armazém.
   const ARMAZENS = ['01', '02'];
   const ROTULO_TRANSF = { entre_armazens: 'Entre armazéns', entre_filiais: 'Entre filiais' };
   const AREAS = { estoque: 'Estoque', expedicao: 'Expedição', faturamento: 'Faturamento' };
@@ -69,12 +70,38 @@
   const ORDEM_TIPOS = Object.keys(TIPOS);
   const tipoDe = (l) => TIPOS[l && l.tipo] || { rotulo: (l && l.tipo) || 'Solicitação', completo: (l && l.tipo) || 'Solicitação', frase: '', icone: 'comentario', tom: 'neutro', grupo: 'outros', pedido: false, area: 'expedicao', sla: 240, campos: [] };
 
-  const STATUS = { recebida: 'Recebida', em_analise: 'Em análise', em_andamento: 'Em andamento', concluida: 'Concluída', negada: 'Negada' };
-  const ATIVOS = ['recebida', 'em_analise', 'em_andamento'];
+  const STATUS = { recebida: 'Recebida', em_analise: 'Em análise', em_andamento: 'Em andamento', concluida: 'Concluída', negada: 'Negada', aguardando_aprovacao: 'Aguardando aprovação' };
+  const ATIVOS = ['recebida', 'em_analise', 'em_andamento', 'aguardando_aprovacao'];
   const PRIORIDADE = { normal: 'Normal', alta: 'Alta', urgente: 'Urgente' };
   const PESO = { urgente: 2, alta: 1, normal: 0 };
   const ETAPA = { nao_separado: 'Ainda não separado', em_separacao: 'Em separação', separado: 'Já separado', conferido: 'Já conferido', faturado: 'Já faturado', despachado: 'Já despachado', nao_achado: 'Não encontrado no SC9' };
   const ACAO = { criar: 'Solicitação enviada', status: 'Status', assumir: 'Assumiu', interno: 'Comentário interno', prioridade: 'Prioridade', area: 'Área' };
+
+  /* ---------- "Para quando?" (opcional; Prioridade e Solicitar usam o mesmo campo) ---------- */
+  const PARA_QUANDO = [['hoje_coleta', 'Hoje, antes da coleta'], ['hoje_16h', 'Hoje, até as 16h'], ['amanha', 'Amanhã'], ['data', 'Escolher data']];
+  const dataBR2 = (iso) => (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso.slice(8) + '/' + iso.slice(5, 7) : '');
+  // Texto de um paraQuando que veio do servidor ({ tipo, data }).
+  const paraQuandoTxt = (pq) => {
+    if (!pq || typeof pq !== 'object' || !pq.tipo) return '';
+    if (pq.tipo === 'data') return 'Até ' + (pq.data ? dataBR2(pq.data) + '/' + pq.data.slice(0, 4) : 'data não informada');
+    const r = PARA_QUANDO.find((x) => x[0] === pq.tipo);
+    return r ? r[1] + (pq.data ? ' (' + dataBR2(pq.data) + ')' : '') : '';
+  };
+  // Confere o que ela escolheu: '' se está bom (ou vazio), senão o texto do problema. pq = { tipo:'', data:'' }.
+  function erroParaQuando(pq, hojeISO) {
+    if (!pq || !pq.tipo) return '';
+    if (pq.tipo === 'data') { if (!pq.data) return 'Escolha a data em "Para quando" ou toque de novo na opção para tirar.'; if (hojeISO && pq.data < hojeISO) return 'A data de "Para quando" não pode ser no passado.'; }
+    return '';
+  }
+  const corpoParaQuando = (pq) => (pq && pq.tipo ? (pq.tipo === 'data' ? { tipo: 'data', data: pq.data } : { tipo: pq.tipo }) : undefined);
+  // Chips "Para quando?": toque numa opção para marcar, toque de novo para tirar. pq é o objeto { tipo, data } do formulário; aoMudar() redesenha.
+  function campoParaQuando(pq, aoMudar, idBase, hojeISO, opcoes) {
+    const h = C.h, id = idBase || 'pq', lista = opcoes && opcoes.semData ? PARA_QUANDO.filter((x) => x[0] !== 'data') : PARA_QUANDO;
+    return h('div', { class: 'sol-pq' }, h('span', { class: 'rotulo', id: id + '-rot', text: 'Para quando? (opcional)' }),
+      h('div', { class: 'sol-chips', role: 'group', 'aria-labelledby': id + '-rot' }, lista.map(([v, t]) => h('button', { class: 'chip', type: 'button', id: id + '-' + v, 'aria-pressed': String(pq.tipo === v), onclick: () => { pq.tipo = pq.tipo === v ? '' : v; if (pq.tipo !== 'data') pq.data = ''; aoMudar(); } }, t))),
+      pq.tipo === 'data' ? h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: id + '-data', text: 'Data' }), h('input', { id: id + '-data', class: 'entrada', type: 'date', min: hojeISO || null, value: pq.data || '', onchange: (ev) => { pq.data = ev.target.value; } })) : null,
+      h('p', { class: 'dica', text: 'Ajuda a logística a ordenar a fila. Não é uma promessa de horário.' }));
+  }
 
   /* ---------- textos e números ---------- */
   const minTxt = (min) => {
@@ -204,5 +231,5 @@
 
   const etapaTom = (l) => (l && l.aTempo ? 'ok' : l && l.etapa === 'nao_achado' ? 'info' : 'tarde');
 
-  root.SolComum = { ic, norm, chaveFilial, nomeDe, armNorm, mesmaFilial, FILIAIS, FILIAIS_ROTULO, FILIAIS_COD, ARMAZENS, ROTULO_TRANSF, plural, nomeFilial, localCurto, localLongo, mesmoLocal, tipoDaTransf, totaisTransf, saldoNoLocal, lotesNoLocal, saldoDoItem, acimaDoSaldo, validadeCurta, validarTransf, corpoTransf, textoRevisao, rotaTransf, tabelaItens, AREAS, GRUPOS, TIPOS, ORDEM_TIPOS, tipoDe, STATUS, ATIVOS, PRIORIDADE, PESO, ETAPA, ACAO, minTxt, dataCurtaISO, soDigitos, pedidoValido, dadosLegiveis, resumo, etapaTom };
+  root.SolComum = { PARA_QUANDO, paraQuandoTxt, erroParaQuando, corpoParaQuando, campoParaQuando, ic, norm, chaveFilial, nomeDe, armNorm, mesmaFilial, FILIAIS, FILIAIS_ROTULO, FILIAIS_COD, ARMAZENS, ROTULO_TRANSF, plural, nomeFilial, localCurto, localLongo, mesmoLocal, tipoDaTransf, totaisTransf, saldoNoLocal, lotesNoLocal, saldoDoItem, acimaDoSaldo, validadeCurta, validarTransf, corpoTransf, textoRevisao, rotaTransf, tabelaItens, AREAS, GRUPOS, TIPOS, ORDEM_TIPOS, tipoDe, STATUS, ATIVOS, PRIORIDADE, PESO, ETAPA, ACAO, minTxt, dataCurtaISO, soDigitos, pedidoValido, dadosLegiveis, resumo, etapaTom };
 })(window);

@@ -156,8 +156,8 @@
   /* ---------- exportar (CSV para Excel) ---------- */
   const txtSituacao = (l) => (l.situacao ? [l.situacao.texto, l.situacao.cliente, l.situacao.transportadora].filter(Boolean).join(' · ') : '');
   function exportarSolicitacoes() {
-    C.baixarCsv(C.nomeArquivo('solicitacoes-de-prioridade'), ['Protocolo', 'Pedido', 'Prioridade', 'Status', 'Motivo', 'Vendedora', 'Login da vendedora', 'Filial', 'Solicitado em', 'Atualizado em', 'Responsável', 'Resposta para a vendedora', 'Observação', 'Situação do pedido (ativas)', 'Está no SC9? (ativas)', 'Reforços'],
-      ordenadas().map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.STATUS[l.status], C.MOTIVO[l.motivo] || '', l.pedidoPor, l.conta || '', filialDe(l), C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.responsavel, l.resposta, l.observacao, txtSituacao(l), l.situacao === null ? 'Não' : l.situacao ? 'Sim' : '', (l.historico || []).filter((x) => x.acao === 'reforco').length]));
+    C.baixarCsv(C.nomeArquivo('solicitacoes-de-prioridade'), ['Protocolo', 'Pedido', 'Prioridade', 'Status', 'Motivo', 'Vendedora', 'Login da vendedora', 'Filial', 'Solicitado em', 'Atualizado em', 'Responsável', 'Resposta para a vendedora', 'Observação', 'Situação do pedido (ativas)', 'Está no SC9? (ativas)', 'Reforços', 'Para quando'],
+      ordenadas().map((l) => [l.protocolo, l.pedido, C.NIVEL[l.nivel], C.STATUS[l.status], C.MOTIVO[l.motivo] || '', l.pedidoPor, l.conta || '', filialDe(l), C.dataHoraCsv(l.criadoEm), C.dataHoraCsv(l.atualizadoEm), l.responsavel, l.resposta, l.observacao, txtSituacao(l), l.situacao === null ? 'Não' : l.situacao ? 'Sim' : '', (l.historico || []).filter((x) => x.acao === 'reforco').length, root.SolComum ? root.SolComum.paraQuandoTxt(l.paraQuando) : '']));
   }
   function exportarHistorico() {
     const linhas = [];
@@ -261,7 +261,7 @@
   function abas() {
     const nAv = estado.avisos ? estado.avisos.ativos.filter((l) => l.status === 'recebido').length : 0;
     const nSol = root.SolicitacoesUI ? root.SolicitacoesUI.contagem() : 0; // Central de solicitações (solicitacoes-ui.js)
-    const lista = [['fila', 'lista', 'Solicitações'], ['avisos', 'comentario', 'Avisos das vendedoras' + (nAv ? ' (' + nAv + ')' : '')], ['solic', 'caixaEntrada', 'Caixa de entrada' + (nSol ? ' (' + nSol + ')' : '')], ['dash', 'grafico', 'Dashboard'], ['exportar', 'baixar', 'Exportar']].concat(estado.sessao.admin ? [['acessos', 'usuarioCheck', 'Acessos das vendedoras']] : []);
+    const lista = [['fila', 'lista', 'Solicitações'], ['avisos', 'comentario', 'Avisos das vendedoras' + (nAv ? ' (' + nAv + ')' : '')], ['solic', 'caixaEntrada', 'Caixa de entrada' + (nSol ? ' (' + nSol + ')' : '')], ['dash', 'grafico', 'Dashboard'], ['armazens', 'predio', 'Armazéns'], ['exportar', 'baixar', 'Exportar']].concat(estado.sessao.admin ? [['acessos', 'usuarioCheck', 'Acessos das vendedoras']] : []);
     return h('div', { class: 'cx-abas', role: 'group', 'aria-label': 'Seções do painel' }, lista.map(([id, i, nome]) => h('button', { type: 'button', 'aria-pressed': String(estado.aba === id), onclick: () => { estado.aba = id; estado.aberta = null; if (id === 'acessos' && !estado.contas) carregarContas(); desenhar(); } }, ic(i), nome)));
   }
 
@@ -315,7 +315,7 @@
     return h('div', { class: 'tabela-rolagem' }, h('table', { class: 'tabela' },
       h('thead', null, h('tr', null, ['Pedido', 'Vendedora', 'Filial', 'Prioridade', 'Motivo', 'Solicitado', 'Status', 'Responsável'].map((t) => h('th', { scope: 'col', text: t })))),
       h('tbody', null, linhas.map((l) => h('tr', { class: 'linha ' + (ATIVOS.includes(l.status) ? l.nivel : '') + (estado.aberta === l.id ? ' sel' : '') + (estado.novos.has(l.id) ? ' novo-fio' : ''), tabindex: '0', role: 'button', 'aria-label': 'Abrir solicitação do pedido ' + l.pedido, onclick: () => abrir(l), onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); abrir(l); } } },
-        h('td', null, h('span', { class: 'pedido', text: l.pedido }), h('span', { class: 'sub', text: l.protocolo || '' }), l.situacao === null ? C.selo('Fora do SC9', 'alta') : null),
+        h('td', null, h('span', { class: 'pedido', text: l.pedido }), h('span', { class: 'sub', text: l.protocolo || '' }), l.paraQuando && root.SolComum ? h('span', { class: 'sub', text: 'Para quando: ' + root.SolComum.paraQuandoTxt(l.paraQuando) }) : null, l.situacao === null ? C.selo('Fora do SC9', 'alta') : null),
         h('td', null, l.pedidoPor || '—', l.conta ? h('span', { class: 'sub', text: 'login ' + l.conta }) : null), h('td', { text: filialDe(l) || '—' }), h('td', null, C.selo(C.NIVEL[l.nivel], l.nivel)), h('td', { text: C.MOTIVO[l.motivo] ? C.MOTIVO[l.motivo].replace(' (explique na observação)', '') : '—' }),
         h('td', null, C.dataHora(l.criadoEm), h('span', { class: 'sub', text: 'há ' + C.duracao(l.criadoEm) })), h('td', null, C.selo(C.STATUS[l.status], l.status)), h('td', { text: l.responsavel || '—', class: l.responsavel ? '' : 'mudo' }))))));
   }
@@ -331,7 +331,7 @@
         h('div', { class: 'gaveta-corpo' },
           ativo ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Situação do pedido agora' }), s ? h('div', { class: 'cx-situacao' }, h('b', { text: s.texto }), h('div', { class: 'mudo peq', style: 'margin-top:4px', text: [s.cliente, s.armazem, s.transportadora, s.dias != null ? s.dias + ' dias desde a liberação' : ''].filter(Boolean).join(' · ') }), s.ocorrencia ? h('div', { class: 'peq', style: 'margin-top:4px;color:#8a4207', text: 'Ocorrência: ' + s.ocorrencia }) : null) : h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), estado.dados && estado.dados.baseEm && Date.parse(l.criadoEm) <= Date.parse(estado.dados.baseEm) ? 'Mesmo depois da última carga ele não aparece: confira o número com a vendedora.' : 'Recarregue o SC9 para mostrar a situação dele (a vendedora já foi avisada de que a equipe vai recarregar).'))) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Solicitação' }), h('div', { class: 'resumo-lista', style: 'margin-top:0' },
-            [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', filialDe(l) || '—'], ['Solicitado', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Motivo', C.MOTIVO[l.motivo] || '—'], ['Observação', l.observacao || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
+            [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', filialDe(l) || '—'], ['Solicitado', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Motivo', C.MOTIVO[l.motivo] || '—'], ['Para quando', root.SolComum ? root.SolComum.paraQuandoTxt(l.paraQuando) || 'Não informado' : '—'], ['Observação', l.observacao || '—']].map(([t, v]) => h('div', null, h('span', { text: t }), h('b', { text: v })))),
             (l.historico || []).filter((x) => x.acao === 'reforco').map((x) => h('p', { class: 'mudo peq', style: 'margin-top:8px', text: 'Reforço de ' + (x.por || '—') + ' (' + C.dataHora(x.em) + ')' + (x.texto ? ': ' + x.texto : '') }))),
           l.resposta ? h('div', { class: 'cx-situacao', style: 'background:var(--azul-claro);color:var(--azul-escuro)' }, h('b', { text: 'Última resposta para a vendedora: ' }), l.resposta) : null,
           ativo ? h('div', { style: 'display:flex;flex-direction:column;gap:14px' },
@@ -384,6 +384,7 @@
         estado.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), estado.erro) : null,
         estado.mostraLink && estado.sessao.admin ? cartaoLink() : null,
         sol,
+        estado.aba === 'armazens' && root.ArmazensUI ? root.ArmazensUI.tela(ctxSolic) : null,
         estado.aba === 'avisos' ? telaAvisos() : estado.aba === 'exportar' ? (d ? telaExportar(linhas) : C.esqueleto(2)) : estado.aba === 'acessos' && estado.sessao.admin ? [telaAcessos(), cartaoConsultas()] : null,
         estado.aba !== 'fila' ? null : d ? indicadores() : C.esqueleto(2),
         estado.aba !== 'fila' ? null : d ? h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Solicitações' }), h('span', { class: 'mudo peq', text: linhas.length + (algumFiltro() ? ' de ' + todas().length : '') + (todas().length === 1 ? ' solicitação' : ' solicitações') })), barraFiltros(), h('div', { style: 'margin-top:14px' }, tabela(linhas))) : null);

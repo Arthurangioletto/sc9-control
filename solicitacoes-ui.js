@@ -109,7 +109,7 @@
       h('span', { class: 'sol-l-corpo' },
         h('span', { class: 'sol-l-topo' }, h('b', { text: t.rotulo }), seloPrio(l.prioridade), C.selo(S.STATUS[l.status] || l.status, l.status), seloTempo(l), tr ? h('span', { class: 'sol-selo-tipo tipo-' + (l.dados.tipoTransferencia || S.tipoDaTransf(l.dados.origem, l.dados.destino)), text: S.ROTULO_TRANSF[l.dados.tipoTransferencia || S.tipoDaTransf(l.dados.origem, l.dados.destino)] }) : null),
         resumoTxt ? h('span', { class: 'sol-l-resumo', text: resumoTxt }) : null,
-        h('span', { class: 'sol-l-meta' }, l.pedido ? h('span', { class: 'num', text: 'Pedido ' + l.pedido }) : null, h('span', { text: l.pedidoPor || '—' }), l.filial ? h('span', { text: S.nomeFilial(l.filial) }) : null, h('span', { text: S.AREAS[l.area] || l.area }), h('span', { class: 'mudo', text: l.protocolo || '' }))),
+        h('span', { class: 'sol-l-meta' }, l.pedido ? h('span', { class: 'num', text: 'Pedido ' + l.pedido }) : null, l.paraQuando ? h('span', { class: 'sol-pq-tag', title: 'Para quando a vendedora precisa' }, ic('relogio'), S.paraQuandoTxt(l.paraQuando)) : null, h('span', { text: l.pedidoPor || '—' }), l.filial ? h('span', { text: S.nomeFilial(l.filial) }) : null, h('span', { text: S.AREAS[l.area] || l.area }), h('span', { class: 'mudo', text: l.protocolo || '' }))),
       h('span', { class: 'sol-l-lado' }, ativa ? seloSla(l) : h('span', { class: 'mudo peq', text: 'Encerrada ' + (l.concluidaEm ? 'há ' + C.duracao(l.concluidaEm) : '') }), h('span', { class: 'mudo peq', text: 'Pedida há ' + C.duracao(l.criadoEm) }), l.responsavel ? h('span', { class: 'mudo peq', text: 'Com ' + l.responsavel }) : ativa ? h('span', { class: 'peq sem-dono', text: 'Sem responsável' }) : null));
   }
   const corpoLista = () => {
@@ -140,7 +140,7 @@
     const abre = u.gavAnim !== l.id ? ' abre' : ''; u.gavAnim = l.id;
     const bt = (st, texto, cls) => h('button', { class: 'btn peq ' + (cls || ''), type: 'button', disabled: ocupado, onclick: () => mudarStatus(l, st) }, texto);
     const dados = S.dadosLegiveis(l), sl = sla(l);
-    const infos = [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', l.filial ? S.nomeFilial(l.filial) : '—'], ['Pedida', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Área', S.AREAS[l.area] || l.area],
+    const infos = [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', l.filial ? S.nomeFilial(l.filial) : '—'], ['Pedida', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Para quando', l.paraQuando ? S.paraQuandoTxt(l.paraQuando) : 'Não informado'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Área', S.AREAS[l.area] || l.area],
       ['Prazo da 1ª resposta', S.minTxt(l.slaMin)], ['1ª resposta', l.primeiraRespostaEm ? C.dataHora(l.primeiraRespostaEm) : 'ainda não']];
     return [h('div', { class: 'gaveta-fundo' + abre, onclick: fecha }),
       h('aside', { class: 'gaveta' + abre, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Solicitação ' + (l.protocolo || t.rotulo) },

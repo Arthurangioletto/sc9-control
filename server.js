@@ -509,6 +509,7 @@ SERVABLE.add("indicador-i09-ui.js");
 SERVABLE.add("solicitacoes-ui.js");
 SERVABLE.add("solicitacoes-comum.js");
 SERVABLE.add("solicitacoes-vend.js");
+SERVABLE.add("armazens-ui.js");
 SERVABLE.add("solicitacoes.css");
 
 function serveStatic(req, res, urlPath) {
@@ -1604,6 +1605,28 @@ async function indiceProdutos() {
   })();
   return produtosIdx.construindo;
 }
+// Lista de armazéns que a vendedora pode pedir (armazens-vendedoras.js), mantida pela logística em armazens-vendedoras.json. Fica em memória (60 s): a busca
+// de produtos e a validação da transferência a consultam sem ir ao disco/Supabase a cada digitação; a gravação limpa o cache na hora.
+const ARMAZENS_OBJ = "armazens-vendedoras.json";
+const armazensCache = { efetiva: null, em: 0, carregando: null };
+const ARMAZENS_TTL_MS = 60 * 1000;
+async function armazensVendedoras() {
+  const A = require("./armazens-vendedoras.js");
+  if (armazensCache.efetiva && Date.now() - armazensCache.em < ARMAZENS_TTL_MS) return armazensCache.efetiva;
+  if (armazensCache.carregando) return armazensCache.carregando;
+  armazensCache.carregando = (async () => {
+    try {
+      armazensCache.efetiva = A.efetiva(await objLoad(ARMAZENS_OBJ, { fresh: true }));
+      armazensCache.em = Date.now();
+    } catch (e) {
+      console.error("Armazéns das vendedoras: erro ao ler a lista:", e.message);
+      if (!armazensCache.efetiva) armazensCache.efetiva = A.efetiva(null); // sem lista salva e sem conseguir ler: usa o padrão conservador
+      armazensCache.em = Date.now() - ARMAZENS_TTL_MS + 10000; // tenta de novo em 10 s
+    } finally { armazensCache.carregando = null; }
+    return armazensCache.efetiva;
+  })();
+  return armazensCache.carregando;
+}
 let ultimoFechamentoPrioridades = 0; // última vez que concluímos sozinhos os pedidos de prioridade já despachados (no máx. 1x por minuto)
 const idReforco = (id) => "r" + crypto.createHmac("sha256", SESSION_SECRET).update("reforco|" + id).digest("base64url").slice(0, 20); // ver prioridades-store.visaoMeu
 function limiteVendedoras(chave, max, janelaMs) {
@@ -2221,6 +2244,8 @@ async function handleApi(req, res, pathname) {
     return r;
   };
 
+  // Etapa do pedido (nao_separado ... despachado, nao_achado) e o aviso de "ainda dá tempo / já andou" para o cancelar/segurar: só acrescentados ao rastreio, que não muda.
+  const comEtapa = (r) => { const SS = require("./solicitacoes-store.js"), etapa = SS.etapaDoRastreio(r); return Object.assign({}, r, { etapa, avisoEtapa: SS.avisoDaEtapa(etapa) }); };
   // Acesso opcional das vendedoras (login + código, vendedoras-contas.js): a sessão vem no cabeçalho X-Vend-Token.
   const contasLinhas = async () => require("./vendedoras-contas.js").normalizarLista(await objLoad("vendedoras-contas.json", { fresh: true }));
   const contasLinhasParaGravar = async () => require("./vendedoras-contas.js").normalizarLista(await objLoadParaGravar("vendedoras-contas.json"));
@@ -2282,7 +2307,7 @@ async function handleApi(req, res, pathname) {
         const r = await rastrearPedido(consulta.get("pedido"), await ocorrenciasParaRastreio().catch(() => []));
         if (req.headers["x-vend-token"] && consulta.get("auto") !== "1") { const contaConsulta = await contaDoToken(req); if (contaConsulta) registrarConsultaVendedora(contaConsulta, r); } // só com acesso; a atualização automática não conta
         if (!r.achado && limiteVendedoras("vn|" + ip, 40, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas sem resultado. Confira os números e tente de novo em alguns minutos." });
-        return sendJson(res, 200, r);
+        return sendJson(res, 200, comEtapa(r));
       }
       if (pathname === "/api/vendedoras/pedidos" && method === "GET") {
         // vários pedidos numa chamada só (a lista "Pedidos que você acompanha"): uma leitura de cada base, em vez de uma por pedido
@@ -2293,7 +2318,7 @@ async function handleApi(req, res, pathname) {
         const ocorr = await ocorrenciasParaRastreio().catch(() => []);
         await saidasEmCache(lista); // aquece o cache de uma vez só; o rastreio de cada pedido lê dele
         const pedidos = [];
-        for (const p of lista) pedidos.push(await rastrearPedido(p, ocorr));
+        for (const p of lista) pedidos.push(comEtapa(await rastrearPedido(p, ocorr)));
         return sendJson(res, 200, { pedidos });
       }
       if (pathname === "/api/vendedoras/conta") {
@@ -2416,31 +2441,42 @@ async function handleApi(req, res, pathname) {
         if (limiteVendedoras(quemLimite ? "vs|c|" + quemLimite.login : "vs|" + ip, quemLimite ? 12 : 8, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas solicitações em pouco tempo. Aguarde alguns minutos ou fale com a logística." });
         let corpo;
         try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
-        const SS = require("./solicitacoes-store.js"), P = require("./prioridades-store.js");
+        const SS = require("./solicitacoes-store.js"), P = require("./prioridades-store.js"), AV = require("./armazens-vendedoras.js"), PQV = require("./para-quando.js");
         if (!corpo || !SS.TIPOS[corpo.tipo]) return sendJson(res, 400, { error: "Escolha o tipo de solicitação." });
         const def = SS.TIPOS[corpo.tipo], informou = corpo.pedido != null && String(corpo.pedido).trim() !== "";
-        const pedido = P.numeroDoPedido(corpo.pedido) || "";
+        const listaP = SS.listaDePedidos(corpo, def); // um pedido (como sempre) ou um lote de até 20 (pedidos[]), normalizado e sem repetidos
+        if (listaP.erro) return sendJson(res, 400, { error: listaP.erro });
+        const pedido = listaP.lote ? listaP.lista[0] || "" : P.numeroDoPedido(corpo.pedido) || "";
         if ((def.pedido || informou) && !pedido) return sendJson(res, 400, { error: "Número do pedido inválido (só números, de 4 a 10 dígitos)." });
-        const prevDados = SS.dadosDoTipo(corpo.tipo, corpo.dados, true, Date.now());
+        const efArm = corpo.tipo === "transferencia_peca" ? await armazensVendedoras() : null; // armazém fora da lista da logística é recusado aqui
+        const ctxArm = efArm ? { armazemPermitido: (f, a, papel) => AV.erroDoArmazem(efArm.lista, f, a, papel) } : {};
+        const prevDados = SS.dadosDoTipo(corpo.tipo, corpo.dados, true, Date.now(), ctxArm);
         if (prevDados.erro) return sendJson(res, 400, { error: prevDados.erro });
+        const prevPq = PQV.validar(corpo.paraQuando, Date.now());
+        if (prevPq.erro) return sendJson(res, 400, { error: prevPq.erro });
         // a cota geral só conta solicitação válida: requisição inválida não gasta a cota das outras vendedoras
         if (limiteVendedoras("vs-total", 80, 60 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas solicitações em pouco tempo. Aguarde alguns minutos ou fale com a logística." });
-        const r = pedido ? await rastrearPedido(pedido, []) : null; // onde o pedido está agora (cancelamento esperto) e a filial dele
+        // onde cada pedido está agora (cancelamento esperto, etapa de cada pedido do lote) e a filial dele
+        if (listaP.lista.length > 1) await saidasEmCache(listaP.lista);
+        const pedidosInfo = [], rs = [];
+        for (const p of listaP.lista) { const rr = await rastrearPedido(p, []); rs.push(rr); pedidosInfo.push({ pedido: p, etapa: SS.etapaDoRastreio(rr), naoAchado: !rr.achado }); }
+        const r = rs[0] || null, rFilial = rs.find((x) => x.achado) || r;
+        const naoAchado = listaP.lote ? pedidosInfo.some((x) => x.naoAchado) : Boolean(r && !r.achado);
         const contaSol = await contaDoToken(req); // com acesso, o nome e o login vêm da conta
         const cancela = corpo.tipo === "cancelar_pedido" || corpo.tipo === "segurar_pedido";
-        const indice = corpo.tipo === "transferencia_peca" ? await indiceProdutos() : null; // descrição e saldo na origem vêm do servidor, não do aparelho
-        const ctxProd = { produto: (codigo, onde) => require("./solicitacoes-produtos.js").consultarProduto(indice, codigo, onde) };
+        const indice = corpo.tipo === "transferencia_peca" || corpo.tipo === "falta_item" ? await indiceProdutos() : null; // descrição e saldo na origem vêm do servidor, não do aparelho
+        const ctxProd = Object.assign({ produto: (codigo, onde) => require("./solicitacoes-produtos.js").consultarProduto(indice, codigo, onde) }, ctxArm);
         let resultado, linhas;
         await comFila("solicitacoes-vendedoras", async () => {
           const atual = await objLoadParaGravar(SOLIC_OBJ);
-          const feito = SS.aplicar(SS.normalizarLista(atual), { acao: "criar", tipo: corpo.tipo, pedido, texto: corpo.texto, dados: corpo.dados, pedidoPor: contaSol ? contaSol.nome : corpo.pedidoPor, conta: contaSol ? contaSol.login : "", filial: r && r.achado && r.detalhes ? r.detalhes.armazem : "", etapa: cancela && r ? SS.etapaDoRastreio(r) : "", naoAchado: Boolean(r && !r.achado) }, "", Date.now(), ctxProd);
+          const feito = SS.aplicar(SS.normalizarLista(atual), { acao: "criar", tipo: corpo.tipo, pedido, pedidos: listaP.lote ? listaP.lista : undefined, pedidosInfo, paraQuando: corpo.paraQuando, texto: corpo.texto, dados: corpo.dados, pedidoPor: contaSol ? contaSol.nome : corpo.pedidoPor, conta: contaSol ? contaSol.login : "", filial: rFilial && rFilial.achado && rFilial.detalhes ? rFilial.detalhes.armazem : "", etapa: cancela && r && !listaP.lote ? SS.etapaDoRastreio(r) : "", naoAchado }, "", Date.now(), ctxProd);
           if (feito.erro) { resultado = { erro: feito.erro }; return; }
           resultado = feito.resultado; linhas = feito.linhas;
           await objSave(SOLIC_OBJ, { linhas });
         });
         if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
         const criada = SS.visaoMeu(linhas.find((l) => l.id === resultado.id));
-        return sendJson(res, 200, { ok: true, naoAchado: Boolean(r && !r.achado), etapa: criada.etapa, aviso: criada.aviso, linha: Object.assign(criada, { foraDoSc9: Boolean(r && !r.achado) }) });
+        return sendJson(res, 200, { ok: true, naoAchado, etapa: criada.etapa, aviso: criada.aviso, linha: Object.assign(criada, { foraDoSc9: naoAchado }) });
       }
       if (pathname === "/api/vendedoras/produtos" && method === "GET") {
         // busca a cada digitação (o aparelho espera ~250 ms): limite generoso por IP; a resposta sai do índice em memória, sem ler disco
@@ -2450,8 +2486,15 @@ async function handleApi(req, res, pathname) {
         const q = String(consulta.get("q") || "");
         if (q.trim().length < PR.MIN_BUSCA) return sendJson(res, 200, { produtos: [], q: q.trim().slice(0, 60), minimo: PR.MIN_BUSCA });
         const indice = await indiceProdutos();
-        const produtos = PR.buscar(indice, q, { filial: consulta.get("filial") || "", armazem: consulta.get("armazem") || "" });
+        const AVp = require("./armazens-vendedoras.js"), efArmP = await armazensVendedoras(); // só armazém vendável entra no total; 59/26 vêm à parte (saldoSeparado)
+        const produtos = PR.buscar(indice, q, { filial: consulta.get("filial") || "", armazem: consulta.get("armazem") || "", vendavel: (f, a) => AVp.vendavel(efArmP.lista, f, a) });
         return sendJson(res, 200, { produtos, q: q.trim().slice(0, 60), catalogoVazio: !indice || !indice.lista.length, saldoEm: indice && indice.fonte !== "nenhuma" ? indice.fonte : null });
+      }
+      if (pathname === "/api/vendedoras/armazens" && method === "GET") {
+        // armazéns que ela pode escolher na transferência, por filial, cruzados com o que realmente tem saldo (lista mantida pela logística)
+        if (limiteVendedoras("vc|" + ip, 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
+        const AV = require("./armazens-vendedoras.js"), ef = await armazensVendedoras();
+        return sendJson(res, 200, { filiais: AV.visaoVendedora(ef.lista, await indiceProdutos()), atualizadoEm: ef.atualizadoEm || null });
       }
       if (pathname === "/api/vendedoras/solicitacoes" && method === "GET") {
         if (limiteVendedoras("vc|" + ip, 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
@@ -2460,7 +2503,7 @@ async function handleApi(req, res, pathname) {
         const meus = new Set(String(consulta.get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 100));
         // cada vendedora só recebe o que ela mesma enviou
         const minhas = (await solicLinhas()).filter((l) => meus.has(l.id) || SS.ehDela(l, conta && conta.login))
-          .map((l) => Object.assign(SS.visaoMeu(l), { foraDoSc9: SS.ATIVOS.includes(l.status) && Boolean(l.pedido) && !Rastreio.montarRastreio(snap, l.pedido, { agora: new Date() }).achado }));
+          .map((l) => Object.assign(SS.visaoMeu(l), { foraDoSc9: SS.ATIVOS.includes(l.status) && Boolean(l.pedido) && (l.pedidos.length ? l.pedidos.some((x) => x.naoAchado && !x.concluido && !Rastreio.montarRastreio(snap, x.pedido, { agora: new Date() }).achado) : !Rastreio.montarRastreio(snap, l.pedido, { agora: new Date() }).achado) }));
         const recentes = (a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm));
         return sendJson(res, 200, {
           ativas: minhas.filter((l) => SS.ATIVOS.includes(l.status)).sort(recentes), recentes: minhas.filter((l) => !SS.ATIVOS.includes(l.status)).sort(recentes).slice(0, 30),
@@ -2503,7 +2546,7 @@ async function handleApi(req, res, pathname) {
         let resultado, linhas;
         await comFila("prioridades-vendedoras", async () => {
           const atual = await objLoadParaGravar("prioridades-vendedoras.json");
-          const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: contaPedido ? contaPedido.nome : corpo.pedidoPor, conta: contaPedido ? contaPedido.login : "", motivo: corpo.motivo, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, corpo && corpo.pedidoPor, Date.now());
+          const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: contaPedido ? contaPedido.nome : corpo.pedidoPor, conta: contaPedido ? contaPedido.login : "", motivo: corpo.motivo, paraQuando: corpo.paraQuando, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, corpo && corpo.pedidoPor, Date.now());
           if (feito.erro) { resultado = { erro: feito.erro }; return; }
           resultado = feito.resultado; linhas = feito.linhas;
           await objSave("prioridades-vendedoras.json", { linhas });
@@ -2611,6 +2654,37 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  // Equipe (mesma permissão da Central): lista de armazéns que as vendedoras podem pedir em transferência. GET lê; POST { acao:"salvar", armazens:[...] } grava
+  // a lista inteira (validada) e { acao:"restaurar" } volta ao padrão provisório. Cada gravação fica no histórico (quem, quando, o que mudou).
+  if (pathname === "/api/armazens-vendedoras" && (method === "GET" || method === "POST")) {
+    const sess = await exigir(req, res, ["admin", "operador"], "ocorrencias"); if (!sess) return;
+    res.setHeader("Cache-Control", "no-store");
+    if (limiteVendedoras("arm|" + (method === "POST" ? "w|" : "r|") + sess.usuario, method === "POST" ? 20 : 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas requisições em pouco tempo. Aguarde um instante." });
+    const AV = require("./armazens-vendedoras.js"), SS = require("./solicitacoes-store.js");
+    try {
+      const responder = async () => {
+        const arq = await objLoad(ARMAZENS_OBJ, { fresh: true }), ef = AV.efetiva(arq);
+        return sendJson(res, 200, Object.assign(AV.visaoEquipe(ef, await indiceProdutos()), { filiais: SS.FILIAIS_INFO.map((f) => ({ chave: f.chave, nome: f.nome, codigo: f.codigo })), historico: AV.limparHistorico(arq && arq.historico).slice().reverse() }));
+      };
+      if (method === "GET") return responder();
+      let corpo;
+      try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+      if (!corpo || !["salvar", "restaurar"].includes(corpo.acao)) return sendJson(res, 400, { error: "ação inválida" });
+      const feito = corpo.acao === "restaurar" ? { lista: AV.PADRAO.map((x) => Object.assign({}, x)) } : AV.normalizar(corpo.armazens, true);
+      if (feito.erro) return sendJson(res, 400, { error: feito.erro });
+      await comFila("armazens-vendedoras", async () => {
+        const atual = await objLoadParaGravar(ARMAZENS_OBJ), quando = new Date().toISOString();
+        const historico = AV.limparHistorico(atual && atual.historico).slice(-(AV.MAX_HISTORICO - 1)).concat([{ em: quando, por: String(sess.usuario || "").slice(0, 60), resumo: (corpo.acao === "restaurar" ? "Voltou ao padrão. " : "") + AV.resumoMudanca(AV.efetiva(atual).lista, feito.lista) }]);
+        await objSave(ARMAZENS_OBJ, { armazens: feito.lista, provisoria: corpo.acao === "restaurar", atualizadoEm: quando, atualizadoPor: String(sess.usuario || "").slice(0, 60), historico });
+      });
+      armazensCache.efetiva = null; armazensCache.em = 0; // a vendedora já enxerga a lista nova
+      return responder();
+    } catch (e) {
+      console.error("Erro nos armazéns das vendedoras:", e);
+      return sendJson(res, 500, erroPublico(e, "erro nos armazéns das vendedoras"));
+    }
+  }
+
   // Equipe (logada, perfil "ocorrencias" ou administrador): central de solicitações das vendedoras (solicitacoes-store.js).
   // GET lista (com filtros), POST age (status | assumir | interno | prioridade | area), /dashboard e /exportar só leem.
   if ((pathname === "/api/solicitacoes" && (method === "GET" || method === "POST")) || (method === "GET" && (pathname === "/api/solicitacoes/dashboard" || pathname === "/api/solicitacoes/exportar"))) {
@@ -2636,13 +2710,13 @@ async function handleApi(req, res, pathname) {
         const situacao = (l) => { if (!l.pedido) return null; const r = Rastreio.montarRastreio(snap, l.pedido, { agora: new Date(agora) }); return r.achado ? { texto: r.resumo.texto, nivel: r.resumo.nivel, cliente: r.detalhes.cliente, armazem: r.detalhes.armazem } : null; };
         const ativos = SS.ordenarFila(lista.filter((l) => SS.ATIVOS.includes(l.status))).map((l) => Object.assign({}, l, SS.slaDe(l, agora), { situacao: situacao(l) }));
         const demais = lista.filter((l) => !SS.ATIVOS.includes(l.status)).sort((a, b) => String(b.atualizadoEm).localeCompare(String(a.atualizadoEm))).slice(0, 300).map((l) => Object.assign({}, l, SS.slaDe(l, agora)));
-        const tipos = {}; for (const k of SS.TIPOS_IDS) tipos[k] = { rotulo: SS.TIPOS[k].rotulo, pedido: SS.TIPOS[k].pedido, area: SS.TIPOS[k].area, sla: SS.TIPOS[k].sla };
+        const tipos = {}; for (const k of SS.TIPOS_IDS) tipos[k] = { rotulo: SS.TIPOS[k].rotulo, pedido: SS.TIPOS[k].pedido, lote: Boolean(SS.TIPOS[k].lote), area: SS.TIPOS[k].area, sla: SS.TIPOS[k].sla };
         return sendJson(res, 200, { ativos, demais, tipos, areas: SS.AREAS_ROTULO, filiais: SS.FILIAIS_ROTULO, baseEm: snap && snap.savedAt ? new Date(snap.savedAt).toISOString() : null, agora: new Date(agora).toISOString() });
       };
       if (method === "GET") return responder(await solicLinhas());
       let corpo;
       try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
-      if (!["status", "assumir", "interno", "prioridade", "area"].includes(corpo && corpo.acao)) return sendJson(res, 400, { error: "ação inválida" });
+      if (!["status", "assumir", "interno", "prioridade", "area", "concluir_pedido"].includes(corpo && corpo.acao)) return sendJson(res, 400, { error: "ação inválida" });
       let resultado, linhas;
       await comFila("solicitacoes-vendedoras", async () => {
         const atual = await objLoadParaGravar(SOLIC_OBJ);
