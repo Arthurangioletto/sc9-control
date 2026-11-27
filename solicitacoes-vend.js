@@ -36,6 +36,7 @@
       e.listaErro = '';
     } catch (x) { e.listaErro = x.message; }
     e.carregando = false;
+    if (cfg && cfg.aoCarregar && cfg.aoCarregar()) return redesenhar(); // a aba Minhas/Exportar mostra esta lista
     if (!silencioso || root.document.getElementById('sol-vend-raiz')) redesenhar();
   }
   // Armazéns que ela pode escolher, por filial (lista mantida pela logística). Carrega uma vez; o servidor confere de novo ao enviar.
@@ -320,6 +321,8 @@
         item.produto ? h('div', { class: 'sol-saldos', style: 'margin-top:8px' }, linhaSaldo(item.produto, o())) : null);
     }
     if (c.tipo === 'area') ent = h('textarea', { id, class: 'entrada', maxlength: String(c.max || 300), rows: '3', oninput: (ev) => { d[c.id] = ev.target.value; } }, v);
+    else if (c.tipo === 'enum') ent = h('select', { id, class: 'entrada', onchange: (ev) => { d[c.id] = ev.target.value; redesenhar(); } }, h('option', { value: '', text: c.obrig ? 'Escolha' : 'Nenhum', selected: !v }), (c.opcoes || []).map(([ov, ot]) => h('option', { value: ov, text: ot, selected: v === ov })));
+    else if (c.tipo === 'hora') ent = h('input', { id, class: 'entrada', type: 'time', value: v, onchange: (ev) => { d[c.id] = ev.target.value; } });
     else if (c.tipo === 'filial') ent = h('select', { id, class: 'entrada', onchange: (ev) => { d[c.id] = ev.target.value; redesenhar(); } }, h('option', { value: '', text: 'Não sei / qualquer uma', selected: !v }), S.FILIAIS.map((fl) => h('option', { value: fl, text: S.FILIAIS_ROTULO[fl], selected: v === fl })));
     else if (c.tipo === 'data') ent = h('input', { id, class: 'entrada', type: 'date', min: hoje(), value: v, onchange: (ev) => { d[c.id] = ev.target.value; } });
     else if (c.tipo === 'numero') ent = h('input', { id: c.id === 'qt' ? 'sv-qt' : id, class: 'entrada num', type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '5', placeholder: 'Ex.: 10', value: v, oninput: (ev) => { d[c.id] = apenasDigitos(ev, 5); } });
@@ -360,11 +363,11 @@
   function cartaoMinha(l) {
     const t = S.tipoDe(l), ativa = S.ATIVOS.includes(l.status), r = S.resumo(l);
     return h('button', { class: 'cartao-lista sol-minha st-' + l.status, type: 'button', onclick: () => { e.aberta = l.id; redesenhar(); } },
-      h('div', { class: 'l1' }, orbe(t, 'pequena'), h('b', { text: t.rotulo }), l.pedido ? h('span', { class: 'num mudo', text: 'Pedido ' + l.pedido }) : null, C.selo(S.STATUS[l.status] || l.status, l.status), h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
+      h('div', { class: 'l1' }, orbe(t, 'pequena'), h('b', { text: t.rotulo }), l.pedido ? h('span', { class: 'num mudo', text: 'Pedido ' + l.pedido + (l.pedidos && l.pedidos.length > 1 ? ' +' + (l.pedidos.length - 1) : '') }) : null, C.selo(S.STATUS[l.status] || l.status, l.status), h('span', { class: 'mudo peq', style: 'margin-left:auto', text: l.protocolo || '' })),
       r ? h('p', { class: 'sol-resumo', text: r }) : null,
-      h('div', { class: 'l2' }, h('span', { text: 'Enviada em ' + C.dataHora(l.criadoEm) }),
+      h('div', { class: 'l2' }, S.progressoLote(l) ? h('span', { class: 'forte', text: S.progressoLote(l) }) : null, l.paraQuando ? h('span', { text: 'Para quando: ' + S.paraQuandoTxt(l.paraQuando) }) : null, h('span', { text: 'Enviada em ' + C.dataHora(l.criadoEm) }),
         l.resposta ? h('span', { class: 'sol-resposta-previa', text: 'Logística: ' + l.resposta }) : null,
-        ativa && !l.resposta ? h('span', { class: 'aguarde', text: l.status === 'recebida' ? 'Aguarde: a logística ainda vai ver.' : 'Em andamento: a logística está cuidando.' }) : null,
+        ativa && !l.resposta ? h('span', { class: 'aguarde', text: l.status === 'recebida' ? 'Aguarde: a logística ainda vai ver.' : l.status === 'aguardando_aprovacao' ? 'Aguardando a aprovação da equipe.' : 'Em andamento: a logística está cuidando.' }) : null,
         l.foraDoSc9 ? h('span', { class: 'aguarde', text: 'Pedido ainda fora do SC9: a equipe foi avisada.' }) : null));
   }
   function gaveta(l) {
@@ -378,9 +381,12 @@
           pedidoDoTipo && (l.etapa || l.aviso) ? h('div', { class: 'sol-etapa ' + tom }, ic(tom === 'ok' ? 'okCirculo' : tom === 'info' ? 'info' : 'alerta'), h('div', null, l.etapa ? h('b', { text: 'Pedido: ' + (S.ETAPA[l.etapa] || l.etapa) }) : null, l.aviso ? h('p', { text: l.aviso }) : null)) : null,
           l.foraDoSc9 ? h('div', { class: 'aviso' }, ic('atualizar'), h('div', null, h('b', { text: 'Este pedido ainda não está no SC9. ' }), 'A equipe foi avisada para recarregar.')) : null,
           l.tipo === 'transferencia_peca' && d.itens ? [S.rotaTransf(d), S.tabelaItens(d, { saldo: true }), d.prazo || d.motivo ? h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [d.prazo ? ['Prazo', S.dataCurtaISO(d.prazo)] : null, d.motivo ? ['Motivo', d.motivo] : null].filter(Boolean).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))) : null] : null,
+          l.pedidos && l.pedidos.length > 1 ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Pedidos desta solicitação (' + S.progressoLote(l) + ')' }), h('ul', { class: 'sol-lote-lista' }, l.pedidos.map((x) => h('li', { class: x.concluido ? 'feito' : '' }, h('b', { class: 'num', text: x.pedido }), h('span', { class: 'mudo', text: x.concluido ? 'Atendido' : x.naoAchado ? 'Ainda fora do SC9' : x.etapa ? S.ETAPA[x.etapa] || '' : 'Em andamento' }))))) : null,
+          l.tipo === 'falta_item' && d.itens ? S.tabelaItens(d, { semLote: true }) : null,
           dados.length || l.paraQuando ? h('div', { class: 'resumo-lista', style: 'margin-top:0' }, (l.paraQuando ? [['Para quando', S.paraQuandoTxt(l.paraQuando)]] : []).concat(dados).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v })))) : null,
           l.resposta ? h('div', { class: 'ok sol-resposta' }, ic('comentario'), h('div', null, h('b', { style: 'display:block', text: 'Resposta da logística' }), l.resposta)) : null,
           h('div', { class: 'resumo-lista', style: 'margin-top:0' }, [['Enviada em', C.dataHora(l.criadoEm)], ['Última atualização', C.dataHora(l.atualizadoEm)]].map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v || '—' })))),
+          cfg && cfg.repetir ? h('div', { class: 'acoes' }, h('button', { class: 'btn peq', type: 'button', onclick: () => { e.aberta = null; e.gavAnim = null; cfg.repetir(l); } }, ic('atualizar'), 'Pedir de novo')) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Histórico' }), h('ol', { class: 'hist', 'aria-label': 'Histórico da solicitação' }, (l.historico || []).filter((x) => x.acao !== 'interno').slice().reverse().map((x) => h('li', null, h('span', { class: 'hora', text: C.dataHora(x.em) }), ' ', h('b', { text: x.status ? S.STATUS[x.status] || x.status : S.ACAO[x.acao] || '' }), x.texto ? ' · ' + x.texto : ''))))))];
   }
   function telaMinhas() {
@@ -420,8 +426,23 @@
   function ligar(opcoes) { cfg = opcoes; }
   root.setInterval(() => { if (!root.document.hidden && root.document.getElementById('sol-vend-raiz') && e.sub === 'minhas' && !e.enviando) carregar(true); }, 60000);
   root.document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && e.aberta) { e.aberta = null; e.gavAnim = null; redesenhar(); } });
+  // "Pedir de novo": copia uma solicitação anterior (transferência, consulta de estoque, outro assunto) para o formulário, editável. Os saldos são consultados de novo.
+  function repetir(l) {
+    const d = (l && l.dados) || {};
+    e.enviado = null; e.erro = '';
+    if (l.tipo === 'transferencia_peca' && d.origem && d.destino) {
+      const t = novaTransf();
+      t.origem = { filial: S.chaveFilial(d.origem.filial), armazem: d.origem.armazem || '' }; t.destino = { filial: S.chaveFilial(d.destino.filial), armazem: d.destino.armazem || '' };
+      t.itens = (d.itens || []).slice(0, 30).map((x) => Object.assign(novoItem(), { produto: { codigo: x.produto, descricao: x.descricao || '', saldoDisponivel: false, saldos: [], lotes: [] }, lote: x.lote || '', qt: String(x.qt || '') }));
+      if (!t.itens.length) t.itens = [novoItem()];
+      t.motivo = d.motivo || ''; e.t = t; e.sub = 'transf'; agendarRefresh();
+    } else if (l.tipo === 'consulta_estoque') { e.f.consulta_estoque = { pedido: '', dados: { produto: d.produto || '', qt: d.qt ? String(d.qt) : '', filial: d.filial || '' } }; e.consulta = novoItem(); e.sub = 'consulta'; }
+    else { e.f.outro = { pedido: l.pedido || '', dados: { texto: d.texto || l.texto || '' } }; e.sub = 'outro'; }
+    if (l.paraQuando && l.paraQuando.tipo && l.paraQuando.tipo !== 'data') e.pq[SUB_TIPO[e.sub] || 'transferencia_peca'] = { tipo: l.paraQuando.tipo, data: '' };
+    redesenhar(); root.scrollTo(0, 0);
+  }
   // Para a aba "Minhas" de vendedoras.js, que mostra tudo numa lista só: cartão, painel da solicitação aberta e a lista inteira (ativas + recentes).
   const todasMinhas = () => ativas().concat(recentes());
   const gavetaAberta = () => { const l = e.aberta && todasMinhas().find((x) => x.id === e.aberta); return l ? gaveta(l) : []; };
-  root.SolicitacoesVend = { ligar, tela, carregar, idsGuardados: () => lerLS(LS_IDS, []), cartao: cartaoMinha, gavetaAberta, fechar: () => { e.aberta = null; e.gavAnim = null; }, todas: todasMinhas, carregada: () => Boolean(e.lista), erro: () => e.listaErro };
+  root.SolicitacoesVend = { abrirSub: (sub) => { e.sub = sub; e.enviado = null; e.erro = ''; e.t.rev = false; }, repetir, abertaId: () => e.aberta, ligar, tela, carregar, idsGuardados: () => lerLS(LS_IDS, []), cartao: cartaoMinha, gavetaAberta, fechar: () => { e.aberta = null; e.gavAnim = null; }, todas: todasMinhas, carregada: () => Boolean(e.lista), erro: () => e.listaErro };
 })(window);

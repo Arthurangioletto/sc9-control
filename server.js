@@ -510,6 +510,7 @@ SERVABLE.add("solicitacoes-ui.js");
 SERVABLE.add("solicitacoes-comum.js");
 SERVABLE.add("solicitacoes-vend.js");
 SERVABLE.add("armazens-ui.js");
+SERVABLE.add("vendedoras-inicio.js");
 SERVABLE.add("solicitacoes.css");
 
 function serveStatic(req, res, urlPath) {
@@ -2509,6 +2510,31 @@ async function handleApi(req, res, pathname) {
           ativas: minhas.filter((l) => SS.ATIVOS.includes(l.status)).sort(recentes), recentes: minhas.filter((l) => !SS.ATIVOS.includes(l.status)).sort(recentes).slice(0, 30),
           conta: conta ? V.visaoPublica(conta) : null, sessaoRecusada: Boolean(req.headers["x-vend-token"] && !conta), agora: new Date().toISOString()
         });
+      }
+      if (pathname === "/api/vendedoras/modelos" && (method === "GET" || method === "POST")) {
+        // modelos rápidos da vendedora com acesso (login): um formulário salvo para preencher de novo. Sem login ficam só no aparelho (front).
+        if (limiteVendedoras("vm|" + ip, 60, 60 * 1000)) return sendJson(res, 429, { error: "Muitas requisições seguidas. Aguarde um instante." });
+        const VM = require("./vendedoras-modelos.js"), conta = await contaDoToken(req);
+        if (!conta) return sendJson(res, 401, { error: "Entre com o seu acesso para guardar modelos em qualquer aparelho. Sem acesso, eles ficam só neste aparelho." });
+        res.setHeader("Cache-Control", "no-store");
+        try {
+          if (method === "GET") return sendJson(res, 200, { modelos: VM.doLogin(VM.normalizarArquivo(await objLoad("vendedoras-modelos.json", { fresh: true })), conta.login) });
+          let corpo;
+          try { corpo = await readJsonBody(req); } catch (e) { return sendJson(res, 400, { error: e.message }); }
+          if (!corpo || !["salvar", "apagar"].includes(corpo.acao)) return sendJson(res, 400, { error: "ação inválida" });
+          let resposta = null;
+          await comFila("vendedoras-modelos", async () => {
+            const arq = VM.normalizarArquivo(await objLoadParaGravar("vendedoras-modelos.json"));
+            if (corpo.acao === "apagar") { const novo = VM.apagar(arq, conta.login, corpo.id); await objSave("vendedoras-modelos.json", novo); resposta = { modelos: VM.doLogin(novo, conta.login) }; return; }
+            const feito = VM.salvar(arq, conta.login, corpo.modelo, Date.now());
+            if (feito.erro) { resposta = { erro: feito.erro }; return; }
+            await objSave("vendedoras-modelos.json", feito.arquivo); resposta = { modelo: feito.modelo, modelos: VM.doLogin(feito.arquivo, conta.login) };
+          });
+          return resposta.erro ? sendJson(res, 400, { error: resposta.erro }) : sendJson(res, 200, resposta);
+        } catch (e) {
+          console.error("Erro nos modelos das vendedoras:", e);
+          return sendJson(res, 500, erroPublico(e, "erro nos modelos das vendedoras"));
+        }
       }
       if (pathname === "/api/vendedoras/prioridades" && method === "GET") {
         if (limiteVendedoras("vc|" + ip, 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });

@@ -5,13 +5,16 @@
   const C = root.Central, h = C.h, ic = C.icone;
   const chaveLink = new URLSearchParams(root.location.search).get('k') || '';
   const $raiz = root.document.getElementById('raiz');
-  const LS = { recentes: 'sc9v_recentes', meus: 'sc9v_meus', nome: 'sc9v_nome', sessao: 'sc9v_sessao', consultas: 'sc9v_consultas', avisos: 'sc9v_avisos', seguindo: 'sc9v_seguindo' };
+  const LS = { vistos: 'sc9v_vistos', recentes: 'sc9v_recentes', meus: 'sc9v_meus', nome: 'sc9v_nome', sessao: 'sc9v_sessao', consultas: 'sc9v_consultas', avisos: 'sc9v_avisos', seguindo: 'sc9v_seguindo' };
   const lerLS = (k, padrao) => { try { const v = root.localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } };
   const gravarLS = (k, v) => { try { root.localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sem armazenamento: segue sem lembrar */ } };
   const LIMITE_BASE_VELHA_H = 10; // carga do SC9 mais velha que isso fica em destaque
 
+  // Primeira tela: "Início" (entrada única). Um link com ?pedido= abre direto o rastreio, e ?aba= leva aos caminhos antigos (prioridade, avisar, solicitar...).
+  const ABAS_VALIDAS = ['inicio', 'rastrear', 'prioridade', 'avisar', 'solicitar', 'minhas', 'exportar', 'conta'];
+  function telaInicial() { const q = new URLSearchParams(root.location.search), a = q.get('aba'); return ABAS_VALIDAS.includes(a) ? a : q.get('pedido') ? 'rastrear' : 'inicio'; }
   const estado = {
-    tela: 'rastrear', comoAberto: {}, filtroMinhas: 'abertas', tipoMinhas: '', digitado: '', consulta: null, varios: null, carregando: false, erro: '', atualizadoEm: null,
+    tela: telaInicial(), comoAberto: {}, filtroMinhas: 'abertas', tipoMinhas: '', digitado: '', consulta: null, varios: null, carregando: false, erro: '', atualizadoEm: null,
     f: { pedido: '', nivel: '', pq: { tipo: '', data: '' }, motivo: '', observacao: '', nome: lerLS(LS.nome, ''), etapa: 'form', previa: null, buscando: false, enviando: false, erro: '', enviada: null },
     prio: null, prioErro: '', visao: 'minhas', aberta: null,
     a: { pedido: '', tipo: '', texto: '', nome: lerLS(LS.nome, ''), previa: null, buscando: false, enviando: false, erro: '', enviado: null },
@@ -449,6 +452,7 @@
   }
   async function carregarAvisos(silencioso) {
     try { estado.avisos = await api('/api/vendedoras/avisos?ids=' + encodeURIComponent(lerLS(LS.avisos, []).join(',')) + '&nome=' + encodeURIComponent((estado.conta && estado.conta.nome) || lerLS(LS.nome, ''))); estado.avisosErro = ''; } catch (e) { estado.avisosErro = e.message; }
+    atualizarSelo();
     if (!silencioso || ['minhas', 'exportar'].includes(estado.tela)) desenhar();
   }
   const cartaoAviso = (l) => h('button', { class: 'cartao-lista st-' + l.status, type: 'button', onclick: () => { estado.abertoAviso = l.id; desenhar(); } },
@@ -488,6 +492,7 @@
       if (j.baseEm && (!estado.atualizadoEm || j.baseEm > estado.atualizadoEm)) estado.atualizadoEm = j.baseEm;
       if (j.sessaoRecusada && estado.conta) { estado.conta = null; gravarLS(LS.sessao, null); C.toast('Sua sessão acabou. Entre de novo para ver as solicitações do seu login.', 'erro'); }
     } catch (e) { estado.prioErro = e.message; }
+    atualizarSelo();
     if (!silencioso || ['minhas', 'exportar'].includes(estado.tela) || antes !== estado.atualizadoEm + '|' + (estado.conta && estado.conta.login)) desenhar();
   }
   const cartaoSolicitacao = (l) => h('button', { class: 'cartao-lista nv-' + l.nivel, type: 'button', onclick: () => { estado.aberta = l.id; desenhar(); } },
@@ -520,14 +525,48 @@
     return blocos;
   }
 
+  /* ---------- respostas novas: selo em "Minhas" e número no título da aba ---------- */
+  // Um item tem "resposta nova" quando já tem resposta (ou foi encerrado) e a última atualização ainda não foi vista neste aparelho. Ver = abrir o item
+  // ou tocar em "Marcar tudo como visto". Na primeira vez (sem nada guardado) o que já existe vira "visto": o selo só conta o que chegar depois.
+  const FINAIS_MINHAS = ['concluida', 'negada', 'nao_aprovada', 'aprovada', 'resolvido'];
+  function itensComResposta() {
+    const SV = root.SolicitacoesVend, lista = [];
+    const pos = (tipo, l) => { if (l && l.id && (l.resposta || FINAIS_MINHAS.includes(l.status))) lista.push({ chave: tipo + ':' + l.id, quando: l.atualizadoEm || l.criadoEm || '' }); };
+    ((estado.prio && estado.prio.meus) || []).forEach((l) => pos('p', l)); ((estado.avisos && estado.avisos.meus) || []).forEach((l) => pos('a', l)); (SV ? SV.todas() : []).forEach((l) => pos('s', l));
+    return lista;
+  }
+  const tudoCarregado = () => Boolean((estado.prio || estado.prioErro) && (estado.avisos || estado.avisosErro) && (!root.SolicitacoesVend || root.SolicitacoesVend.carregada() || root.SolicitacoesVend.erro()));
+  function novosMinhas() {
+    let vistos = lerLS(LS.vistos, null);
+    if (!vistos) { if (!tudoCarregado()) return []; vistos = {}; itensComResposta().forEach((x) => { vistos[x.chave] = x.quando; }); gravarLS(LS.vistos, vistos); }
+    return itensComResposta().filter((x) => vistos[x.chave] !== x.quando).map((x) => x.chave);
+  }
+  function marcarVistos(chaves) {
+    if (!chaves.length) return; const vistos = lerLS(LS.vistos, {}) || {}, por = new Map(itensComResposta().map((x) => [x.chave, x.quando]));
+    chaves.forEach((c) => { if (por.has(c)) vistos[c] = por.get(c); }); gravarLS(LS.vistos, vistos); atualizarSelo();
+  }
+  // Atualiza o número no botão "Minhas" e no título SEM redesenhar a tela (roda a cada minuto, mesmo fora da aba Minhas).
+  function atualizarSelo() {
+    const n = novosMinhas().length, el = root.document.getElementById('selo-minhas');
+    if (el) { el.textContent = String(n); el.hidden = !n; }
+    const sem = root.document.title.replace(/^\(\d+\) /, ''); root.document.title = (n ? '(' + n + ') ' : '') + sem;
+  }
+  async function atualizarEmSilencio() {
+    if (!chaveLink || estado.f.enviando || !(estado.conta || lerLS(LS.meus, []).length || lerLS(LS.avisos, []).length || lerLS('sc9v_solic', []).length)) return;
+    await Promise.all([carregarPrioridades(true), carregarAvisos(true), root.SolicitacoesVend ? root.SolicitacoesVend.carregar(true) : null]);
+    atualizarSelo();
+  }
+  root.setInterval(atualizarEmSilencio, 60000);
+
   /* ---------- Minhas: uma lista só (prioridades + avisos + solicitações da Central) ---------- */
   const PRIO_ATIVAS = ['recebida', 'em_analise', 'aprovada', 'em_atendimento'];
   const TIPOS_MINHAS = [['', 'Tudo'], ['prioridades', 'Prioridades'], ['avisos', 'Avisos à expedição'], ['solic', 'Solicitações à logística']];
   function itensMinhas() {
     const SV = root.SolicitacoesVend, itens = [];
-    ((estado.prio && estado.prio.meus) || []).forEach((l) => itens.push({ tipo: 'prioridades', ativo: PRIO_ATIVAS.includes(l.status), quando: l.atualizadoEm || l.criadoEm || '', no: cartaoSolicitacao(l) }));
-    ((estado.avisos && estado.avisos.meus) || []).forEach((l) => itens.push({ tipo: 'avisos', ativo: l.status !== 'resolvido', quando: l.atualizadoEm || l.criadoEm || '', no: cartaoAviso(l) }));
-    (SV ? SV.todas() : []).forEach((l) => itens.push({ tipo: 'solic', ativo: root.SolComum.ATIVOS.includes(l.status), quando: l.atualizadoEm || l.criadoEm || '', no: SV.cartao(l) }));
+    const novos = new Set(novosMinhas()), com = (chave, no) => (novos.has(chave) ? h('div', { class: 'minha-nova' }, h('span', { class: 'selo laranja', text: 'Resposta nova' }), no) : no);
+    ((estado.prio && estado.prio.meus) || []).forEach((l) => itens.push({ tipo: 'prioridades', chave: 'p:' + l.id, ativo: PRIO_ATIVAS.includes(l.status), quando: l.atualizadoEm || l.criadoEm || '', no: com('p:' + l.id, cartaoSolicitacao(l)) }));
+    ((estado.avisos && estado.avisos.meus) || []).forEach((l) => itens.push({ tipo: 'avisos', chave: 'a:' + l.id, ativo: l.status !== 'resolvido', quando: l.atualizadoEm || l.criadoEm || '', no: com('a:' + l.id, cartaoAviso(l)) }));
+    (SV ? SV.todas() : []).forEach((l) => itens.push({ tipo: 'solic', chave: 's:' + l.id, ativo: root.SolComum.ATIVOS.includes(l.status), quando: l.atualizadoEm || l.criadoEm || '', no: com('s:' + l.id, SV.cartao(l)) }));
     return itens.sort((a, b) => String(b.quando).localeCompare(String(a.quando)));
   }
   function telaMinhas() {
@@ -543,6 +582,8 @@
     const blocos = [faixaProcesso('minhas', true), C.cabecalho('lista', 'Minhas solicitações', 'Tudo o que é seu em uma lista só: prioridades, avisos à expedição e pedidos à logística. A resposta aparece aqui, sem precisar mandar mensagem.'),
       h('div', { class: 'abas-pequenas abas-3', role: 'group', 'aria-label': 'Mostrar' }, filtro('abertas', 'Abertas', abertas.length), filtro('concluidas', 'Concluídas', fechadas.length), filtro('acompanho', 'Acompanho', estado.seguindo.length)),
       f !== 'acompanho' ? h('div', { class: 'sol-tipos-minhas', role: 'group', 'aria-label': 'Tipo de solicitação' }, TIPOS_MINHAS.map(([id, nome]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(tipo === id), onclick: () => { estado.tipoMinhas = id; desenhar(); } }, nome))) : null];
+    const nNovos = novosMinhas().length;
+    if (nNovos) blocos.push(h('div', { class: 'aviso', role: 'status' }, ic('comentario'), h('div', null, h('b', { text: nNovos === 1 ? '1 resposta nova da logística. ' : nNovos + ' respostas novas da logística. ' }), 'Elas estão marcadas na lista.', h('div', { class: 'acoes', style: 'margin-top:8px' }, h('button', { class: 'btn peq', type: 'button', onclick: () => { marcarVistos(todos.map((x) => x.chave)); desenhar(); } }, ic('ok'), 'Marcar tudo como visto')))));
     erros.forEach((m) => blocos.push(h('div', { class: 'erro', role: 'alert' }, ic('alerta'), m)));
     if (f === 'acompanho') blocos.push(cartaoSeguindo() || h('section', { class: 'card' }, C.vazio('relogio', 'Você ainda não acompanha nenhum pedido', 'Consulte um pedido e toque em "Acompanhar este pedido". Aqui aparece a situação de cada um e o que mudou desde a última vez.')));
     else if (carregando && !todos.length) blocos.push(C.esqueleto(2));
@@ -553,16 +594,21 @@
         h('p', { class: 'dica', style: 'margin-top:12px', text: (estado.conta ? 'Lista do seu login, em qualquer aparelho.' : 'Esta lista é deste aparelho. Crie seu acesso para vê-la em qualquer aparelho.') + ' Atualiza sozinha a cada minuto.' })));
     }
     const pAberta = estado.aberta && ((estado.prio && estado.prio.meus) || []).find((x) => x.id === estado.aberta), aAberto = estado.abertoAviso && ((estado.avisos && estado.avisos.meus) || []).find((x) => x.id === estado.abertoAviso);
-    if (pAberta) blocos.push(...gavetaSolicitacao(pAberta));
-    if (aAberto) blocos.push(...gavetaAviso(aAberto));
-    if (SV) blocos.push(...SV.gavetaAberta());
+    if (pAberta) { blocos.push(...gavetaSolicitacao(pAberta)); marcarVistos(['p:' + pAberta.id]); }
+    if (aAberto) { blocos.push(...gavetaAviso(aAberto)); marcarVistos(['a:' + aAberto.id]); }
+    if (SV) { blocos.push(...SV.gavetaAberta()); if (SV.abertaId()) marcarVistos(['s:' + SV.abertaId()]); }
     blocos.push(h('p', { class: 'dica' }, 'Prefere ver separado? ', h('button', { class: 'btn peq fantasma', type: 'button', onclick: () => { estado.minhasAntiga = true; desenhar(); root.scrollTo(0, 0); } }, 'Abrir no formato antigo (abas separadas)')));
     return blocos;
   }
 
   /* ---------- Central de solicitações (solicitacoes-vend.js): aba "Solicitar" ---------- */
-  const cfgSolic = { api, conta: () => estado.conta, redesenhar: () => desenhar(), faixa: (modo) => faixaProcesso(modo) };
+  const cfgSolic = {
+    api, conta: () => estado.conta, redesenhar: () => desenhar(), faixa: (modo) => faixaProcesso(modo), aoCarregar: () => { atualizarSelo(); return ['minhas', 'exportar'].includes(estado.tela); },
+    irPara: (tela, sub) => { if (sub && root.SolicitacoesVend) root.SolicitacoesVend.abrirSub(sub); estado.tela = tela; estado.aberta = null; if (tela === 'minhas') { carregarAvisos(true); if (!estado.prio) carregarPrioridades(true); } desenhar(); root.scrollTo(0, 0); },
+    repetir: (l) => { const guiado = root.VendInicio && root.VendInicio.guiado(l.tipo); estado.tela = guiado ? 'inicio' : 'solicitar'; if (guiado) root.VendInicio.repetir(l); else root.SolicitacoesVend.repetir(l); desenhar(); root.scrollTo(0, 0); }
+  };
   if (root.SolicitacoesVend) root.SolicitacoesVend.ligar(cfgSolic);
+  if (root.VendInicio) root.VendInicio.ligar(cfgSolic);
   function telaSolicitar() {
     if (!root.SolicitacoesVend) return [h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'Não consegui carregar esta aba. Recarregue a página.')];
     root.SolicitacoesVend.ligar(cfgSolic);
@@ -570,22 +616,23 @@
   }
 
   /* ---------- tela ---------- */
-  const NAV = [['rastrear', 'busca', 'Acompanhar pedidos', 'Acompanhar'], ['prioridade', 'raio', 'Solicitar prioridade', 'Prioridade'], ['avisar', 'comentario', 'Avisar a expedição', 'Avisar'], ['solicitar', 'enviar', 'Solicitar à logística', 'Solicitar'], ['minhas', 'lista', 'Minhas solicitações', 'Minhas'], ['exportar', 'baixar', 'Exportar', 'Exportar']];
+  const NAV = [['inicio', 'enviar', 'O que você precisa?', 'Início'], ['rastrear', 'busca', 'Acompanhar pedidos', 'Acompanhar'], ['minhas', 'lista', 'Minhas solicitações', 'Minhas'], ['exportar', 'baixar', 'Exportar', 'Exportar']];
+  const DO_INICIO = ['inicio', 'prioridade', 'avisar', 'solicitar']; // os formulários antigos contam como "Início" na barra
   function desenhar() {
     const foco = root.document.activeElement && root.document.activeElement.id ? root.document.activeElement.id : '';
     const y = root.scrollY;
     const topo = h('header', { class: 'topo' }, h('div', { class: 'topo-in' }, C.marca('Acompanhamento de pedidos'),
-      chaveLink ? h('nav', { class: 'nav', 'aria-label': 'Principal' }, NAV.map(([id, i, nome, curto]) => h('button', { type: 'button', 'aria-label': nome, 'aria-current': estado.tela === id ? 'page' : null, onclick: () => { estado.tela = id; estado.aberta = null; if (root.SolicitacoesVend) root.SolicitacoesVend.fechar(); if ((id === 'minhas' || id === 'exportar') && !estado.prio) carregarPrioridades(); if (id === 'minhas' || id === 'exportar') { carregarAvisos(true); if (root.SolicitacoesVend) root.SolicitacoesVend.carregar(true); } desenhar(); root.scrollTo(0, 0); } }, ic(i), h('span', { class: 'longo', text: nome }), h('span', { class: 'curto', text: curto })))) : null,
+      chaveLink ? h('nav', { class: 'nav', 'aria-label': 'Principal' }, NAV.map(([id, i, nome, curto]) => h('button', { type: 'button', 'aria-label': nome, 'aria-current': (id === 'inicio' ? DO_INICIO.includes(estado.tela) : estado.tela === id) ? 'page' : null, onclick: () => { estado.tela = id; estado.aberta = null; if (root.SolicitacoesVend) root.SolicitacoesVend.fechar(); if ((id === 'minhas' || id === 'exportar') && !estado.prio) carregarPrioridades(); if (id === 'minhas' || id === 'exportar') { carregarAvisos(true); if (root.SolicitacoesVend) root.SolicitacoesVend.carregar(true); } desenhar(); root.scrollTo(0, 0); } }, ic(i), h('span', { class: 'longo', text: nome }), h('span', { class: 'curto', text: curto }), id === 'minhas' ? h('span', { class: 'selo-nav', id: 'selo-minhas', hidden: !novosMinhas().length, role: 'status', 'aria-label': 'respostas novas', text: String(novosMinhas().length) }) : null))) : null,
       chaveLink ? h('div', { class: 'topo-lado' }, estado.atualizadoEm ? h('span', { class: 'atualizado' + (idadeBaseH() > LIMITE_BASE_VELHA_H ? ' velha' : ''), title: 'Base do SC9 atualizada em ' + C.dataHora(estado.atualizadoEm) }, h('i', { class: 'ponto' }), h('span', { class: 'rotulo-hora', text: 'Atualizado às ' }), C.horaBR(estado.atualizadoEm)) : null,
         h('button', { class: 'btn peq conta-botao' + (estado.tela === 'conta' ? ' ativo' : ''), type: 'button', 'aria-label': estado.conta ? 'Seu acesso: ' + estado.conta.nome : 'Criar acesso ou entrar', onclick: () => { estado.tela = 'conta'; estado.aberta = null; desenhar(); root.scrollTo(0, 0); } }, ic(estado.conta ? 'usuarioCheck' : 'usuario'), h('span', { class: 'conta-nome', text: estado.conta ? estado.conta.nome.split(' ')[0] : 'Entrar' }))) : null));
     let corpo;
     if (!chaveLink) corpo = [h('div', { class: 'erro', role: 'alert' }, ic('alerta'), 'Este link está incompleto. Peça o link das vendedoras ao administrador do SC9.')];
-    else corpo = estado.tela === 'solicitar' ? telaSolicitar() : estado.tela === 'avisar' ? telaAvisar() : estado.tela === 'prioridade' ? telaPrioridade() : estado.tela === 'minhas' ? telaMinhas() : estado.tela === 'exportar' ? telaExportar() : estado.tela === 'conta' ? telaConta() : telaRastrear();
+    else corpo = estado.tela === 'inicio' && root.VendInicio ? [root.VendInicio.tela()] : estado.tela === 'solicitar' ? telaSolicitar() : estado.tela === 'avisar' ? telaAvisar() : estado.tela === 'prioridade' ? telaPrioridade() : estado.tela === 'minhas' ? telaMinhas() : estado.tela === 'exportar' ? telaExportar() : estado.tela === 'conta' ? telaConta() : telaRastrear();
     const velha = chaveLink && estado.atualizadoEm && idadeBaseH() > LIMITE_BASE_VELHA_H;
     $raiz.replaceChildren(topo, h('main', { class: 'pagina estreita' + (estado.animada !== estado.tela ? ' anima' : '') },
       velha ? h('div', { class: 'aviso', role: 'status' }, ic('relogio'), 'A base do SC9 foi atualizada em ' + C.dataHora(estado.atualizadoEm) + ' (há ' + C.duracao(estado.atualizadoEm) + '). O andamento pode estar atrasado.') : null, ...corpo));
     estado.animada = estado.tela;
-    root.document.title = ({ solicitar: 'Solicitar à logística', prioridade: 'Solicitar prioridade', avisar: 'Avisar a expedição', minhas: 'Minhas solicitações', exportar: 'Exportar', conta: 'Seu acesso' }[estado.tela] || 'Acompanhe seus pedidos') + ' · ' + C.NOME;
+    root.document.title = (novosMinhas().length ? '(' + novosMinhas().length + ') ' : '') + ({ inicio: 'O que você precisa?', solicitar: 'Solicitar à logística', prioridade: 'Solicitar prioridade', avisar: 'Avisar a expedição', minhas: 'Minhas solicitações', exportar: 'Exportar', conta: 'Seu acesso' }[estado.tela] || 'Acompanhe seus pedidos') + ' · ' + C.NOME;
     root.scrollTo(0, y);
     if (foco) { const e = root.document.getElementById(foco); if (e && e.focus) { e.focus({ preventScroll: true }); if (e.setSelectionRange && e.type === 'text') { try { e.setSelectionRange(e.value.length, e.value.length); } catch (x) { /* ok */ } } } }
   }
@@ -615,5 +662,6 @@
   if (chaveLink && pedidoDaUrl) { estado.digitado = pedidoDaUrl; consultar(pedidoDaUrl); }
   if (chaveLink && (lerLS(LS.avisos, []).length || estado.conta)) carregarAvisos(true);
   if (chaveLink && estado.seguindo.length) carregarSeguindo(true);
+  if (chaveLink && root.SolicitacoesVend) root.SolicitacoesVend.carregar(true); // solicitações da Central: alimentam Minhas, Exportar e o selo de respostas novas
   if (chaveLink) carregarPrioridades(true); // traz também a hora da última carga do SC9 e confere a sessão do acesso
 })(window);

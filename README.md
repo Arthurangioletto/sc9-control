@@ -431,6 +431,19 @@ Pedido de ajuda das vendedoras à logística, no mesmo link delas (aba **Solicit
 - **Consultar antes de enviar:** em cancelar, segurar, alterar e nota fiscal a tela consulta o pedido (`etapa` e `avisoEtapa` ficaram acrescentados em `/api/vendedoras/pedido` e `/pedidos`) e mostra "ainda dá tempo" ou "já foi separado"; se já andou, pede um segundo toque ("Enviar mesmo assim").
 - Testes: `tests/vendedoras-onda1.test.cjs` (servidor) e `tests/vendedoras-onda1-ui.test.cjs` (front).
 
+### Vendedoras · onda 2 (entrada única "O que você precisa?")
+
+- **Aba "Início"** (`vendedoras-inicio.js`): campo de pedido(s) (aceita colar uma lista; até 20), 6 cartões (sair hoje, saída especial, corrigir pedido, nota fiscal, subir pedido, estoque/transferência) e "Outro assunto". Barra: Início · Acompanhar · Minhas · Exportar. Prioridade, Avisar, Solicitar e Transferência continuam acessíveis por link (`?aba=`) e por "Outros caminhos"; `?pedido=` abre o Acompanhar.
+- **Fluxo guiado pelo pedido:** o front consulta o pedido (`/api/vendedoras/pedidos`) e só deixa enviar o que cabe na etapa (`etapa` / `avisoEtapa`); o que não cabe fica desabilitado com o motivo. As regras de etapa (tabela `REGRAS`) são do front, exceto pedido já despachado, que o servidor também recusa.
+- **Tipos novos na Central** (com área, SLA, caixa de entrada, dashboard e CSV): `sair_hoje`, `saida_especial`, `subir_pedido`, `falta_item` (com itens), `erro_pedido` e subtipos de `nota_fiscal`. Os tipos antigos e os 3 endpoints continuam como estavam.
+- **Lote:** até 20 pedidos num protocolo só (`pedidos[]`; o servidor limpa, remove repetidos e recusa mais de 20); a equipe conclui (e reabre) pedido por pedido e a vendedora vê "x de y atendidos".
+- **Motoboy urgente** entra como `aguardando_aprovacao`; a equipe aprova ou nega na caixa de entrada.
+- **"Pedir de novo" e modelos rápidos:** com login, modelos guardados no servidor (`GET/POST /api/vendedoras/modelos`, `vendedoras-modelos.js`: máx. 20 por conta, nome único, só campos do tipo, sem pedidos, "Para quando" por data é descartado); sem login, `localStorage` (`sc9v_modelos`).
+- **Aviso de resposta nova:** selo em "Minhas" e `(n)` no título da aba, atualizado a cada minuto também fora da aba Minhas. O que já existia na primeira carga de cada aparelho conta como visto (`sc9v_vistos`); há "Marcar tudo como visto".
+- **Fica para a onda 3:** anexos (foto/arquivo) nas solicitações, por exigir armazenamento e limites próprios.
+- **SC9 · colunas de bloqueio (verificado, não implementado):** o parser (`bundle.js`) lê `BLOQ.CREDITO` (coluna 18) e `BLOQ.ESTOQUE` (coluna 27) só para filtrar (descarta linha com valor diferente de vazio/10). O snapshot não guarda campo de bloqueio, então a tela não mostra "pedido bloqueado"; para isso seria preciso o parser guardar o valor.
+- Testes: `tests/vendedoras-onda2.test.cjs` (servidor) e `tests/vendedoras-onda2-ui.test.cjs` (front).
+
 ## Revisão do Histórico de Atraso e do link das meninas
 
 Revisão feita por agentes (back-end, front-end, design, dados e Power BI). Só acrescentou; nada que já existia foi removido.

@@ -70,10 +70,12 @@ test('frase de revisão e resumos em português simples', () => {
   assert.equal(S.etapaTom({ aTempo: true }), 'ok'); assert.equal(S.etapaTom({ etapa: 'nao_achado' }), 'info'); assert.equal(S.etapaTom({ etapa: 'separado' }), 'tarde');
 });
 
-test('tabela de tipos igual à do servidor (prazos e pedido obrigatório)', () => {
-  const esperado = { cancelar_pedido: [true, 30], segurar_pedido: [true, 60], transferencia_peca: [false, 240], consulta_estoque: [false, 60], alterar_pedido: [true, 120], nota_fiscal: [true, 120], outro: [false, 240] };
-  for (const [k, [pedido, sla]] of Object.entries(esperado)) { assert.equal(S.TIPOS[k].pedido, pedido, k); assert.equal(S.TIPOS[k].sla, sla, k); }
-  assert.deepEqual(Object.keys(S.TIPOS).sort(), Object.keys(esperado).sort());
+test('tabela de tipos igual à do servidor (prazos, área e pedido obrigatório), inclusive os tipos novos', () => {
+  const SS = require('../solicitacoes-store.js');
+  const antigos = { cancelar_pedido: [true, 30], segurar_pedido: [true, 60], transferencia_peca: [false, 240], consulta_estoque: [false, 60], alterar_pedido: [true, 120], nota_fiscal: [true, 120], outro: [false, 240] };
+  for (const [k, [pedido, sla]] of Object.entries(antigos)) { assert.equal(S.TIPOS[k].pedido, pedido, k); assert.equal(S.TIPOS[k].sla, sla, k); }
+  assert.deepEqual(Object.keys(S.TIPOS).sort(), SS.TIPOS_IDS.slice().sort(), 'a tela conhece exatamente os tipos do servidor');
+  for (const k of SS.TIPOS_IDS) { assert.equal(S.TIPOS[k].sla, SS.TIPOS[k].sla, k + ' sla'); assert.equal(S.TIPOS[k].area, SS.TIPOS[k].area, k + ' área'); assert.equal(S.TIPOS[k].pedido, SS.TIPOS[k].pedido, k + ' pedido'); assert.equal(Boolean(S.TIPOS[k].lote), Boolean(SS.TIPOS[k].lote), k + ' lote'); }
 });
 
 test('ganchos nas páginas existentes são só aditivos e os arquivos novos entram na ordem certa', () => {
