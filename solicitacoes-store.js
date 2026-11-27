@@ -42,7 +42,7 @@ const ATIVOS = ['recebida', 'em_analise', 'em_andamento', 'aguardando_aprovacao'
 const FINAIS = ['concluida', 'negada'];
 const PRIORIDADES = ['normal', 'alta', 'urgente'];
 const PESO_PRIORIDADE = { normal: 0, alta: 1, urgente: 2 };
-const ETAPAS = ['nao_separado', 'em_separacao', 'separado', 'conferido', 'faturado', 'despachado', 'nao_achado'];
+const ETAPAS = ['nao_separado', 'em_separacao', 'separado', 'conferido', 'faturado', 'despachado', 'nao_achado', 'bloqueado'];
 const ACOES_HIST = ['criado', 'status', 'assumir', 'interno', 'prioridade', 'area', 'pedido_concluido'];
 // Filiais: a chave é o mesmo nome de armazém que o resto do SC9 usa (ARMAZENS_GERAL em server.js: "Tambore" sem acento).
 // codigo = código da filial no Protheus (Cambuci = 01, Tamboré = 03); BH, CE, DF e RJ o app só conhece pela sigla, então a sigla é o código.
@@ -286,8 +286,8 @@ function listaDePedidos(corpo, def) {
 }
 // A etapa mais adiantada de um conjunto de pedidos (a que manda no aviso: basta um já separado para "pode não dar tempo"). Pedido não achado não conta.
 function etapaMaisAdiantada(etapas) {
-  const ordem = ETAPAS.filter((e) => e !== 'nao_achado'), achadas = etapas.filter((e) => ordem.includes(e));
-  if (!achadas.length) return etapas.length && etapas.every((e) => e === 'nao_achado') ? 'nao_achado' : '';
+  const ordem = ETAPAS.filter((e) => e !== 'nao_achado' && e !== 'bloqueado'), achadas = etapas.filter((e) => ordem.includes(e));
+  if (!achadas.length) return etapas.length && etapas.every((e) => e === 'nao_achado' || e === 'bloqueado') ? (etapas.includes('bloqueado') ? 'bloqueado' : 'nao_achado') : '';
   return achadas.reduce((a, b) => (ordem.indexOf(b) > ordem.indexOf(a) ? b : a));
 }
 // O que não dá para pedir quando o pedido já está nessa etapa (só nos tipos novos; os antigos continuam aceitando tudo, como sempre).
@@ -338,7 +338,7 @@ const add = (l, h) => { l.historico = l.historico.concat([Object.assign({ texto:
 // ---- cancelamento esperto --------------------------------------------------------------------------------------------------------------
 // Em que ponto está o pedido, a partir do rastreio (rastreio.js montarRastreio). Pedido fora do SC9 = nao_achado.
 function etapaDoRastreio(r) {
-  if (!r || !r.achado) return 'nao_achado';
+  if (!r || !r.achado) return r && r.bloqueio ? 'bloqueado' : 'nao_achado'; // bloqueado = está no Protheus, mas com bloqueio de crédito/estoque (não é separado)
   const feita = (cod) => (r.etapas || []).some((e) => e.cod === cod && e.estado === 'feita');
   if (feita('desp') || (r.detalhes && r.detalhes.despachadoEm)) return 'despachado';
   if (feita('fat')) return 'faturado';
@@ -347,7 +347,7 @@ function etapaDoRastreio(r) {
   const sep = (r.etapas || []).find((e) => e.cod === 'sep');
   return sep && sep.estado === 'atual' && /^Em separa/.test(sep.titulo || '') ? 'em_separacao' : 'nao_separado';
 }
-const aTempoDaEtapa = (etapa) => etapa === 'nao_separado';
+const aTempoDaEtapa = (etapa) => etapa === 'nao_separado' || etapa === 'bloqueado';
 const AVISO_ETAPA = {
   nao_separado: 'O pedido ainda não começou a ser separado: a logística foi avisada com urgência e deve conseguir parar a tempo.',
   em_separacao: 'O pedido já está em separação: a logística vai avaliar com urgência, mas pode não dar tempo.',
@@ -355,6 +355,7 @@ const AVISO_ETAPA = {
   conferido: 'O pedido já foi separado e conferido: a logística vai avaliar; pode não dar tempo.',
   faturado: 'O pedido já tem nota fiscal emitida: a logística vai avaliar; provavelmente será preciso cancelar a nota.',
   despachado: 'O pedido já foi despachado: não dá mais para parar na logística. A equipe vai avaliar o que pode ser feito.',
+  bloqueado: 'O pedido está bloqueado (crédito ou estoque) e por isso não está sendo separado: a logística foi avisada e deve conseguir parar a tempo.',
   nao_achado: 'Não encontramos este pedido na base do SC9 (talvez ainda não tenha sido carregado). A equipe vai conferir; confira o número do pedido.'
 };
 const avisoDaEtapa = (etapa) => AVISO_ETAPA[etapa] || '';

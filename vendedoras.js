@@ -107,8 +107,8 @@
       h('div', { class: 'card-titulo' }, h('h2', { text: 'Pedidos que você acompanha' }), h('span', { class: 'mudo peq', text: mudaram ? mudaram + (mudaram === 1 ? ' mudou' : ' mudaram') + ' desde a última vez' : 'nada mudou desde a última vez' })),
       h('div', { class: 'seg-lista' }, estado.seguindo.map((s) => { const r = estado.seguindoEstado[s.pedido], mdd = mudou(s.pedido);
         return h('div', { class: 'seg-card tilt ' + tomDe(r) + (mdd ? ' mudou' : '') },
-          h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + s.pedido }), r ? (r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Fora do SC9', 'alta')) : C.selo('Carregando…', 'normal'), mdd ? C.selo('Mudou', 'laranja mudou') : null),
-          h('p', { class: 'quem', text: (s.cliente ? s.cliente + ' · ' : '') + (r ? (r.achado ? r.resumo.texto : 'Ainda não está no SC9.') : 'Buscando a situação…') }),
+          h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + s.pedido }), r ? (r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : r.bloqueio ? C.selo('Bloqueado', 'alta') : C.selo('Fora do SC9', 'alta')) : C.selo('Carregando…', 'normal'), mdd ? C.selo('Mudou', 'laranja mudou') : null),
+          h('p', { class: 'quem', text: (s.cliente ? s.cliente + ' · ' : '') + (r ? (r.achado ? r.resumo.texto : r.bloqueio ? r.bloqueio.texto : 'Ainda não está no SC9.') : 'Buscando a situação…') }),
           r && r.achado ? miniProgresso(r) : null,
           h('div', { class: 'acoes' },
             h('button', { class: 'btn peq' + (mdd ? '' : ' primario'), type: 'button', onclick: () => { marcarVisto(s.pedido); estado.tela = 'rastrear'; estado.digitado = s.pedido; consultar(s.pedido); root.scrollTo(0, 0); } }, ic('busca'), 'Ver o andamento'),
@@ -166,6 +166,7 @@
             h('div', { class: 'trilha-leg' }, h('span', { text: 'Etapas do pedido' }), h('span', { text: feitas + ' de ' + et.length + ' concluídas' }))) : null,
           h('div', { class: 'fatos' }, C.fato('predio', 'Filial', d.armazem), C.fato('pacote', 'Itens', (d.pecas ? d.pecas + (d.pecas === 1 ? ' peça' : ' peças') : '') + (d.linhas ? ' · ' + d.linhas + (d.linhas === 1 ? ' item' : ' itens') : '')), C.fato('calendario', 'Liberado em', d.liberadoEm ? C.dataHora(d.liberadoEm) : ''), C.fato('caminhao', 'Transportadora', d.transportadora),
             C.fato('pessoa', 'Cliente', d.cliente), C.fato('nota', 'Nota fiscal', d.nf || 'ainda não emitida'), C.fato('relogio', 'Dias desde a liberação', d.diasDesdeLiberacao != null ? String(d.diasDesdeLiberacao) : ''), C.fato('okCirculo', 'Despachado em', d.despachadoEm ? C.dataBR(d.despachadoEm) : 'ainda não')),
+          r.bloqueio ? h('div', { class: 'ocorrencia', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Parte do pedido está bloqueada. ' }), h('span', { style: 'display:block', text: r.bloqueio.texto + ' Só as linhas liberadas aparecem acima; o que está bloqueado não anda até o bloqueio sair.' }))) : null,
           r.ocorrencia ? h('div', { class: 'ocorrencia', role: 'note' }, ic('alerta'), h('div', null, h('b', { text: 'Ocorrência da expedição: ' + r.ocorrencia.status + (r.ocorrencia.tipoTexto ? ' · ' + r.ocorrencia.tipoTexto : '') }), r.ocorrencia.quem && !r.ocorrencia.resolvida ? h('span', { style: 'display:block', text: r.ocorrencia.quem }) : null, r.ocorrencia.detalhes ? h('span', { text: r.ocorrencia.detalhes }) : null, r.ocorrencia.solucao ? h('span', { style: 'display:block;margin-top:4px', text: 'Solução: ' + r.ocorrencia.solucao + (r.ocorrencia.dataSolucao ? ' (' + C.dataBR(r.ocorrencia.dataSolucao + 'T12:00:00Z') + ')' : '') }) : null)) : null,
           h('div', { class: 'acoes' },
             nv !== 'concluido' ? h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaPrioridade(r.pedido, r) }, ic('raio'), 'Pedir prioridade') : null,
@@ -307,9 +308,10 @@
     else if (estado.erro) blocos.push(h('div', { class: 'erro erro-bloco', role: 'alert' }, h('div', { class: 'linha-erro' }, ic('alerta'), estado.erro), soNumeros(estado.digitado).length >= 4 ? h('button', { class: 'btn peq', type: 'button', onclick: () => consultar(estado.digitado) }, ic('atualizar'), 'Tentar de novo') : null));
     else if (estado.varios) blocos.push(h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Seus pedidos' }), h('span', { class: 'mudo peq', text: estado.varios.length + ' consultados' })),
       estado.varios.map((r) => h('button', { class: 'cartao-lista ' + (r.achado ? (r.resumo.nivel === 'atraso' ? 'nv-urgente' : r.resumo.nivel === 'andamento' ? 'nv-media' : 'st-resolvido') : 'nv-alta') + (r.achado ? ' ' + tomDe(r) : ''), type: 'button', disabled: !r.achado, onclick: () => { estado.digitado = r.pedido; consultar(r.pedido); } },
-        h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + r.pedido }), r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : C.selo('Fora do SC9', 'alta')),
-        h('div', { class: 'l2' }, h('span', { text: r.achado ? r.resumo.texto : (r.erro || 'Ainda não está no SC9. Se o número está certo, peça prioridade: a equipe é avisada para recarregar.') })), r.achado ? h('div', { style: 'margin-top:10px' }, miniProgresso(r)) : null))));
+        h('div', { class: 'l1' }, h('b', { class: 'num', text: 'Pedido ' + r.pedido }), r.achado ? C.selo(rotuloResumo(r), r.resumo.nivel) : r.bloqueio ? C.selo('Bloqueado', 'alta') : C.selo('Fora do SC9', 'alta')),
+        h('div', { class: 'l2' }, h('span', { text: r.achado ? r.resumo.texto : (r.bloqueio ? r.bloqueio.texto : r.erro || 'Ainda não está no SC9. Se o número está certo, peça prioridade: a equipe é avisada para recarregar.') })), r.achado ? h('div', { style: 'margin-top:10px' }, miniProgresso(r)) : null))));
     else if (estado.consulta && estado.consulta.achado) blocos.push(cartaoResultado(estado.consulta));
+    else if (estado.consulta && estado.consulta.bloqueio) blocos.push(cartaoBloqueado(estado.consulta));
     else if (estado.consulta) blocos.push(h('section', { class: 'card' }, C.vazio('atualizar', 'O pedido ' + estado.consulta.pedido + ' ainda não está no SC9', 'Confira o número. Se o pedido é de hoje, ele pode ainda não ter chegado: a base só atualiza a cada carga do SC9. Se o número está certo, peça prioridade mesmo assim: a equipe é avisada para recarregar o SC9.' + (estado.consulta.atualizadoEm ? ' Última atualização: ' + C.dataHora(estado.consulta.atualizadoEm) + '.' : '')),
       h('div', { class: 'acoes', style: 'justify-content:center' }, h('button', { class: 'btn peq primario', type: 'button', onclick: () => { estado.consulta = null; estado.digitado = ''; desenhar(); const e = root.document.getElementById('q-pedido'); if (e) e.focus(); } }, ic('busca'), 'Digitar outro número'), h('button', { class: 'btn peq', type: 'button', onclick: () => consultar(estado.digitado) }, ic('atualizar'), 'Tentar de novo'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaAviso(estado.consulta.pedido) }, ic('comentario'), 'Avisar a expedição'), h('button', { class: 'btn peq', type: 'button', onclick: () => irParaPrioridade(estado.consulta.pedido) }, ic('raio'), 'Pedir prioridade mesmo assim'))));
     else { if (estado.seguindo.length) blocos.push(cartaoSeguindo()); blocos.push(dicas()); }
@@ -357,8 +359,19 @@
   }
   const campoNivel = () => h('div', null, h('span', { class: 'rotulo', text: '2. Nível de prioridade' }), h('div', { class: 'niveis', role: 'radiogroup', 'aria-label': 'Nível de prioridade' },
     ['normal', 'media', 'alta', 'urgente'].map((n) => h('label', null, h('input', { type: 'radio', name: 'nivel', value: n, checked: estado.f.nivel === n, onchange: () => { estado.f.nivel = n; } }), h('span', { class: 'op' }, C.NIVEL[n], h('small', { text: C.NIVEL_DICA[n] }))))));
+  // pedido que está no Protheus mas bloqueado (as linhas bloqueadas não entram no SC9 analisado): mostra por quê, sem prometer andamento
+  function cartaoBloqueado(r) {
+    const b = r.bloqueio;
+    return h('section', { class: 'card res-card nv-atraso', 'aria-label': 'Pedido ' + r.pedido },
+      h('div', { class: 'res-faixa' }, h('div', null, h('p', { class: 'res-numero', text: 'Pedido' }), h('h2', { class: 'num', text: r.pedido })), C.selo('Bloqueado', 'atraso')),
+      h('div', { class: 'res-corpo' },
+        h('div', { class: 'status-destaque' }, h('div', { class: 'bola' }, ic('alerta')), h('div', null, h('b', { text: b.texto }), h('span', { text: 'Pedido bloqueado: a logística não consegue separar até o bloqueio sair. Crédito: fale com o financeiro. Estoque: fale com o estoque. Os códigos são os do Protheus.' }))),
+        h('div', { class: 'fatos' }, C.fato('pacote', 'Linhas bloqueadas', String(b.linhas || '')), C.fato('relogio', 'Base atualizada em', r.atualizadoEm ? C.dataHora(r.atualizadoEm) : '')),
+        h('div', { class: 'acoes' }, h('button', { class: 'btn peq primario', type: 'button', onclick: () => irParaAviso(r.pedido) }, ic('comentario'), 'Avisar a expedição'), h('button', { class: 'btn peq', type: 'button', onclick: () => { estado.consulta = null; estado.digitado = ''; desenhar(); } }, ic('busca'), 'Digitar outro número'))));
+  }
   function previaPedido(r) {
     const d = r.detalhes || {};
+    if (!r.achado && r.bloqueio) return h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'O pedido ' + r.pedido + ' está bloqueado. ' }), r.bloqueio.texto + ' Pedir prioridade não adianta até o bloqueio sair.'));
     if (!r.achado) return h('div', { class: 'aviso' }, ic('alerta'), h('div', null, h('b', { text: 'O pedido ' + r.pedido + ' ainda não está no SC9. ' }), 'Ele (a base só atualiza a cada carga). Se o número está certo, você pode enviar a solicitação mesmo assim: a equipe é avisada para recarregar o SC9 e mostrar as informações.'));
     return h('div', { class: 'previa', role: 'group', 'aria-label': 'Dados do pedido ' + r.pedido },
       r.resumo.nivel === 'pronto' ? h('div', { class: 'aviso', style: 'margin-bottom:10px' }, ic('caminhao'), h('div', null, h('b', { text: 'Este pedido já está pronto para despacho. ' }), 'Ele sai na coleta (após as 18h). Peça prioridade só se ele precisa sair antes.')) : null,

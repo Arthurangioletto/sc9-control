@@ -97,7 +97,7 @@
   const ATIVOS = ['recebida', 'em_analise', 'em_andamento', 'aguardando_aprovacao'];
   const PRIORIDADE = { normal: 'Normal', alta: 'Alta', urgente: 'Urgente' };
   const PESO = { urgente: 2, alta: 1, normal: 0 };
-  const ETAPA = { nao_separado: 'Ainda não separado', em_separacao: 'Em separação', separado: 'Já separado', conferido: 'Já conferido', faturado: 'Já faturado', despachado: 'Já despachado', nao_achado: 'Não encontrado no SC9' };
+  const ETAPA = { nao_separado: 'Ainda não separado', em_separacao: 'Em separação', separado: 'Já separado', conferido: 'Já conferido', faturado: 'Já faturado', despachado: 'Já despachado', nao_achado: 'Não encontrado no SC9', bloqueado: 'Bloqueado (crédito/estoque)' };
   const ACAO = { criar: 'Solicitação enviada', status: 'Status', assumir: 'Assumiu', interno: 'Comentário interno', prioridade: 'Prioridade', area: 'Área' };
 
   /* ---------- "Para quando?" (opcional; Prioridade e Solicitar usam o mesmo campo) ---------- */

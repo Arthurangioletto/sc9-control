@@ -527,13 +527,20 @@ test('compatibilidade: perfis antigos (recebimento, despacho) seguem como antes 
   } finally { server.close(); }
 });
 
-test('bundle.js: só entraram os 3 perfis novos (cadastro, botões da lista e aba Recebimento Expedição); o resto ficou byte a byte igual', () => {
+test('bundle.js: só entraram os 3 perfis novos (cadastro, botões da lista e aba Recebimento Expedição); o resto ficou byte a byte igual (mais o bloqueio guardado à parte)', () => {
   const crypto2 = require('node:crypto');
   const atual = fs.readFileSync(path.join(__dirname, '..', 'bundle.js'), 'utf8');
   const trocas = [
     ['et.includes("recebimento")||et.includes("despacho"),Ae=', 'et.includes("recebimento")||et.includes("despacho")||et.includes("exp_bipar")||et.includes("exp_planilha")||et.includes("exp_pod"),Ae='],
     ['["ocorrencias","Ocorrências da expedição (digitar e acompanhar)"]]', '["ocorrencias","Ocorrências da expedição (digitar e acompanhar)"],["exp_bipar","Expedição: só bipar o pedido recebido"],["exp_planilha","Expedição: planilha de entrega (ver, filtrar, imprimir)"],["exp_pod","Expedição: conferir entregas (POD)"]]'],
     ['["ocorrencias","Ocorr."]]', '["ocorrencias","Ocorr."],["exp_bipar","Exp. bipar"],["exp_planilha","Exp. planilha"],["exp_pod","Exp. POD"]]'],
+    // bloqueio de crédito/estoque do SC9 guardado À PARTE (linhas bloqueadas continuam fora de todas as contas)
+    ["if(!(f(p)&&f(E)))continue;let b=Le(", "if(!(f(p)&&f(E))){let sc9K=String(m).trim(),sc9B=(s.bloq||(s.bloq=new Map)).get(sc9K)||{c:[],e:[],n:0};f(p)||sc9B.c.includes(String(p).trim())||sc9B.c.length>=5||sc9B.c.push(String(p).trim()),f(E)||sc9B.e.includes(String(E).trim())||sc9B.e.length>=5||sc9B.e.push(String(E).trim()),sc9B.n++,s.bloq.set(sc9K,sc9B);continue}let b=Le("],
+    ["let ue=tn(re,null),Se=Cl(re)", "let ue=tn(re,null),sc9Bq=new Map(ue.bloq||[]),Se=Cl(re)"],
+    ["ue=ue.concat(tn(Rt,\"Tambore\"));", "let sc9Tb=tn(Rt,\"Tambore\");ue=ue.concat(sc9Tb);for(let[sc9A,sc9V]of sc9Tb.bloq||[])sc9Bq.has(sc9A)||sc9Bq.set(sc9A,sc9V);"],
+    ["sc5PorPedido:tl.size?tl:null};", "sc5PorPedido:tl.size?tl:null,bloqueioPorPedido:sc9Bq.size?sc9Bq:null};"],
+    ["sc5PorPedido:t.sc5PorPedido?Array.from(t.sc5PorPedido.entries()):null,trendHistory", "sc5PorPedido:t.sc5PorPedido?Array.from(t.sc5PorPedido.entries()):null,bloqueioPorPedido:t.bloqueioPorPedido?Array.from(t.bloqueioPorPedido.entries()):null,trendHistory"],
+    ["sc5PorPedido:f,trendHistory:t.trendHistory||[],controleTransferencia:x}}", "sc5PorPedido:f,bloqueioPorPedido:t.bloqueioPorPedido?new Map(t.bloqueioPorPedido):null,trendHistory:t.trendHistory||[],controleTransferencia:x}}"],
   ];
   let original = atual;
   for (const [antes, depois] of trocas) {
