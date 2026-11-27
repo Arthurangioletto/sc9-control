@@ -2,7 +2,7 @@
  * armazens-vendedoras.json. Cada item: { filial, codigo, rotulo, origem, destino, vendavel, nota }.
  *  - origem / destino: a vendedora pode escolher esse armazém como origem / destino de uma transferência (o servidor RECUSA o que estiver fora).
  *  - vendavel: o saldo entra no "Total em todas as filiais" da busca de produtos; os que não são vendáveis aparecem à parte, como "saldo separado".
- * ATENÇÃO: a lista inicial (PADRAO) é PROVISÓRIA: foi montada só com o que o README e o código do SC9 já documentam. A logística precisa conferir.
+ * A lista inicial (PADRAO) foi CONFIRMADA pelo Arthur em 27/11/2026 (PADRAO_CONFIRMADO). Continua editável pela equipe na aba "Armazéns"; o significado de 30, 20, 25 e do sufixo T ainda não está documentado.
  * Puro: sem disco e sem rede. */
 'use strict';
 const S = require('./solicitacoes-store.js');
@@ -12,7 +12,7 @@ const MAX_HISTORICO = 50;
 const texto = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const item = (filial, codigo, rotulo, origem, destino, vendavel, nota) => ({ filial, codigo, rotulo, origem, destino, vendavel, nota: nota || '' });
 
-// Padrão inicial CONSERVADOR (provisório). Cambuci: 01 e 02. Tamboré: 01. 59 (TDC) e 26 (Retem) existem mas não são estoque de venda e não se pedem.
+// Padrão inicial CONSERVADOR, confirmado em 27/11/2026. Cambuci: 01 e 02. Tamboré: 01. 59 (TDC) e 26 (Retem) existem mas não são estoque de venda e não se pedem.
 // BH, CE, DF e RJ: o armazém da própria filial (no índice de saldo o app guarda o armazém "com a sigla da filial" como "01" daquela filial).
 const PADRAO = [
   item('Cambuci', '01', 'Estoque principal', true, true, true),
@@ -26,6 +26,7 @@ const PADRAO = [
   item('RJ', '01', 'Armazém da filial', true, true, true)
 ];
 
+const PADRAO_CONFIRMADO = true; // a tela da equipe só mostra o aviso "lista provisória" quando for false
 const chave = (filial, codigo) => filial + '|' + codigo;
 const bool = (v) => v === true || v === 'true' || v === 1;
 
@@ -92,7 +93,7 @@ function visaoVendedora(lista, indice) {
 function visaoEquipe(efetivaLista, indice) {
   const com = locaisComSaldo(indice), conhecidos = new Set(efetivaLista.lista.map((x) => chave(x.filial, x.codigo)));
   const naoClassificados = [...com].filter((k) => !conhecidos.has(k)).sort().map((k) => { const [filial, codigo] = k.split('|'); return { filial, codigo }; });
-  return { armazens: efetivaLista.lista.map((x) => Object.assign({}, x, { comSaldo: com.has(chave(x.filial, x.codigo)) })), padrao: efetivaLista.padrao, provisoria: efetivaLista.padrao, naoClassificados, atualizadoEm: efetivaLista.atualizadoEm, atualizadoPor: efetivaLista.atualizadoPor };
+  return { armazens: efetivaLista.lista.map((x) => Object.assign({}, x, { comSaldo: com.has(chave(x.filial, x.codigo)) })), padrao: efetivaLista.padrao, provisoria: efetivaLista.padrao && !PADRAO_CONFIRMADO, naoClassificados, atualizadoEm: efetivaLista.atualizadoEm, atualizadoPor: efetivaLista.atualizadoPor };
 }
 // Histórico de quem mudou a lista (só cresce; guarda os últimos MAX_HISTORICO): [{ em, por, resumo }].
 const limparHistorico = (bruto) => (Array.isArray(bruto) ? bruto : []).slice(-MAX_HISTORICO).map((h) => ({ em: texto(h && h.em, 30), por: texto(h && h.por, 60), resumo: texto(h && h.resumo, 400) }));

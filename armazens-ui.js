@@ -1,5 +1,5 @@
 /* Painel da logística · aba "Armazéns das vendedoras": a lista de armazéns que as vendedoras podem escolher em "Transferência de peça", por filial.
- * Só a equipe edita (mesma permissão da Central). O servidor RECUSA qualquer armazém fora da lista. A lista inicial é PROVISÓRIA: a logística confere.
+ * Só a equipe edita (mesma permissão da Central). O servidor RECUSA qualquer armazém fora da lista. A lista inicial foi confirmada em 27/11/2026; o aviso "provisória" só aparece se o servidor disser que a lista não foi confirmada.
  * JavaScript puro; tudo que vem do servidor entra como textContent. Plugado em prioridades.js (ArmazensUI.tela). */
 (function (root) {
   'use strict';
@@ -61,7 +61,7 @@
         a.aviso ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), a.aviso) : null, a.ok ? h('div', { class: 'ok', role: 'status' }, ic('ok'), a.ok) : null,
         h('div', { class: 'acoes' }, h('button', { class: 'btn primario', type: 'button', disabled: a.salvando || !a.sujo, onclick: salvar }, ic('ok'), a.salvando ? 'Salvando…' : a.sujo ? 'Salvar lista' : 'Sem mudanças para salvar'),
           h('button', { class: 'btn', type: 'button', disabled: a.salvando || !a.sujo, onclick: () => { a.lista = copia(a.dados.armazens); a.sujo = false; a.aviso = ''; redesenhar(); } }, ic('voltar'), 'Desfazer o que mudei'),
-          h('button', { class: 'btn', type: 'button', disabled: a.salvando, onclick: () => { if (root.confirm('Voltar à lista padrão provisória? A lista atual será substituída.')) enviar({ acao: 'restaurar' }, 'Voltou ao padrão provisório.'); } }, ic('atualizar'), 'Restaurar o padrão'))),
+          h('button', { class: 'btn', type: 'button', disabled: a.salvando, onclick: () => { if (root.confirm('Voltar à lista padrão (a confirmada)? A lista atual será substituída.')) enviar({ acao: 'restaurar' }, 'Voltou ao padrão provisório.'); } }, ic('atualizar'), 'Restaurar o padrão'))),
       d.naoClassificados && d.naoClassificados.length ? h('section', { class: 'card' }, h('div', { class: 'card-titulo' }, h('h2', { text: 'Com saldo, mas fora da lista' })),
         h('p', { class: 'mudo', text: 'Estes armazéns têm saldo no SC9 e ainda não foram classificados. Enquanto não entrarem na lista, as vendedoras não podem pedi-los e o saldo deles não entra no total.' }),
         h('div', { class: 'chips', style: 'justify-content:flex-start;margin-top:10px' }, d.naoClassificados.map((x) => h('button', { class: 'chip', type: 'button', onclick: () => { if (!a.lista.some((y) => y.filial === x.filial && y.codigo === x.codigo)) { a.lista.push({ filial: x.filial, codigo: x.codigo, rotulo: '', origem: false, destino: false, vendavel: false, nota: '', comSaldo: true }); mexeu(); redesenhar(); } } }, nomeFilial(x.filial) + ' · ' + x.codigo + ' (incluir)')))) : null,
