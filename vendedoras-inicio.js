@@ -125,6 +125,8 @@
     const nome = st.mod.nome.trim(); if (nome.length < 2) { st.erro = 'Dê um nome ao modelo (mínimo 2 letras).'; return redesenhar(); }
     const pq = st.f.pq.tipo && st.f.pq.tipo !== 'data' ? { tipo: st.f.pq.tipo } : null;
     const modelo = { nome, tipo: st.opcao, dados: dadosParaEnvio(), texto: st.f.recado.trim(), paraQuando: pq };
+    // datas ficam de fora do modelo: amanhã elas seriam "no passado" e travariam o envio
+    for (const k of Object.keys(modelo.dados)) if (/^(dia|ate|data|retirada_dia)$/.test(k)) delete modelo.dados[k];
     if (st.opcao === 'falta_item') modelo.dados.itens = st.f.itens.filter((x) => x.codigo).map((x) => ({ produto: x.codigo, qt: Number(x.qt) || 1 }));
     st.mod.salvando = true; st.erro = ''; redesenhar();
     try {
@@ -229,8 +231,15 @@
     if (!conta() && f.nome.trim().length < 2) return 'Diga seu nome para a logística saber quem pediu.';
     return '';
   }
+  // trava já no primeiro toque (a consulta do pedido demora): sem isso um segundo toque criava outro protocolo
+  let travaEnvio = false;
   async function enviar() {
-    const tipo = st.opcao, c = conta(); if (!tipo || st.enviando) return;
+    if (travaEnvio || st.enviando || !st.opcao) return;
+    travaEnvio = true;
+    try { await enviarSolicitacao(); } finally { travaEnvio = false; }
+  }
+  async function enviarSolicitacao() {
+    const tipo = st.opcao, c = conta(); if (!tipo) return;
     const l = pedidos(); await consultar(l);
     const { cabem, fora } = particao(tipo), erro = validar(tipo, cabem);
     if (erro) { st.erro = erro; return redesenhar(); }
@@ -278,7 +287,7 @@
           const pt = lista.length ? particao(o) : { cabem: [], fora: [], marc: [] }, desabilitada = Boolean(lista.length && !st.consultando && pt.marc.length && !pt.cabem.length), motivo = desabilitada ? (pt.fora[0] && pt.fora[0].motivo) || '' : '';
           const [rot, sub] = OPCAO_ROTULO[o];
           return h('button', { class: 'sol-op tom-' + S.TIPOS[o].tom + (desabilitada ? ' desabilitada' : ''), type: 'button', role: 'radio', 'aria-checked': String(tipo === o), 'aria-disabled': desabilitada ? 'true' : null, 'aria-describedby': desabilitada ? 'ini-mot-' + o : null,
-            onclick: () => { if (desabilitada) return; st.opcao = o; st.erro = ''; st.f.dados = {}; redesenhar(); foco('ini-form'); } },
+            onclick: () => { if (desabilitada) return; st.opcao = o; st.erro = ''; st.f.dados = {}; st.f.pq = { tipo: '', data: '' }; redesenhar(); foco('ini-form'); } },
             h('span', { class: 'sol-orbe tom-' + S.TIPOS[o].tom }, ic(S.TIPOS[o].icone)), h('span', null, h('b', { text: rot }), h('small', { id: 'ini-mot-' + o, text: desabilitada ? 'Não disponível: ' + motivo : sub })));
         }))));
     }

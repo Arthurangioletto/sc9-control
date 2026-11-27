@@ -551,7 +551,10 @@
     if (el) { el.textContent = String(n); el.hidden = !n; }
     const sem = root.document.title.replace(/^\(\d+\) /, ''); root.document.title = (n ? '(' + n + ') ' : '') + sem;
   }
+  let tiquesOculta = 0;
   async function atualizarEmSilencio() {
+    // aba em segundo plano: o título é o aviso, mas só consulta de 3 em 3 minutos (3 GETs por minuto por aba pesam no limite do IP do escritório)
+    if (root.document && root.document.hidden && (tiquesOculta = (tiquesOculta + 1) % 3) !== 0) return;
     if (!chaveLink || estado.f.enviando || !(estado.conta || lerLS(LS.meus, []).length || lerLS(LS.avisos, []).length || lerLS('sc9v_solic', []).length)) return;
     await Promise.all([carregarPrioridades(true), carregarAvisos(true), root.SolicitacoesVend ? root.SolicitacoesVend.carregar(true) : null]);
     atualizarSelo();

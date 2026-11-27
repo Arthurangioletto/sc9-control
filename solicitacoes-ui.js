@@ -76,7 +76,7 @@
     const f = u.filtro, ate = S.ATIVOS, q = S.norm(f.q).split(/\s+/).filter(Boolean);
     let lista = f.vista === 'ativas' ? u.dados.ativos : f.vista === 'encerradas' ? u.dados.demais : todas();
     lista = lista.filter((l) => (!f.tipo || l.tipo === f.tipo) && (!f.status || l.status === f.status) && (!f.area || l.area === f.area) && (!f.atrasadas || l.atrasada)
-      && (f.kpi !== 'novas' || l.status === 'recebida') && (f.kpi !== 'urgentes' || (l.prioridade === 'urgente' && ate.includes(l.status))) && (f.kpi !== 'tempo' || (cancelaOuSegura(l) && l.aTempo && ate.includes(l.status))));
+      && (f.kpi !== 'novas' || (l.status === 'recebida' || l.status === 'aguardando_aprovacao')) && (f.kpi !== 'urgentes' || (l.prioridade === 'urgente' && ate.includes(l.status))) && (f.kpi !== 'tempo' || (cancelaOuSegura(l) && l.aTempo && ate.includes(l.status))));
     if (q.length) { lista = lista.filter((l) => { const t = haystack(l); return q.every((p) => t.includes(p)); }); }
     return lista;
   }
@@ -84,7 +84,7 @@
 
   /* ---------- Caixa de entrada ---------- */
   function kpisCaixa() {
-    const at = u.dados.ativos, n = { novas: at.filter((l) => l.status === 'recebida').length, urgentes: at.filter((l) => l.prioridade === 'urgente').length, atras: at.filter((l) => l.atrasada).length, tempo: at.filter((l) => cancelaOuSegura(l) && l.aTempo).length };
+    const at = u.dados.ativos, n = { novas: at.filter((l) => l.status === 'recebida' || l.status === 'aguardando_aprovacao').length, urgentes: at.filter((l) => l.prioridade === 'urgente').length, atras: at.filter((l) => l.atrasada).length, tempo: at.filter((l) => cancelaOuSegura(l) && l.aTempo).length };
     const k = (id, icone, rot, valor, urg) => h('button', { class: 'kpi' + (urg && valor ? ' urg' : '') + (u.filtro.kpi === id ? ' ativo' : ''), type: 'button', 'aria-pressed': String(u.filtro.kpi === id), onclick: () => { u.filtro.kpi = u.filtro.kpi === id ? '' : id; if (id === 'atras') u.filtro.atrasadas = !u.filtro.atrasadas; u.filtro.vista = 'ativas'; redesenhar(); } }, ic(icone), h('b', { text: String(valor) }), h('span', { text: rot }));
     return h('div', { class: 'kpis sol-kpis4' },
       k('novas', 'caixaEntrada', 'Novas (ninguém viu)', n.novas, true), k('urgentes', 'raio', 'Urgentes', n.urgentes, true),
@@ -124,7 +124,7 @@
   const contagemTxt = () => { const n = filtradas().length; return n + (algumFiltro() ? ' de ' + (u.filtro.vista === 'ativas' ? u.dados.ativos.length : todas().length) : '') + (n === 1 ? ' solicitação' : ' solicitações'); };
   function telaCaixa() {
     if (!u.dados) return u.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), u.erro) : C.esqueleto(3);
-    const novas = u.dados.ativos.filter((l) => l.status === 'recebida').length;
+    const novas = u.dados.ativos.filter((l) => l.status === 'recebida' || l.status === 'aguardando_aprovacao').length;
     return [u.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), u.erro) : null,
       novas ? h('section', { class: 'alerta-sc9', role: 'status' }, h('div', { class: 'bola' }, ic('caixaEntrada')), h('div', { class: 'meio' }, h('h2', { text: novas === 1 ? '1 solicitação nova das vendedoras' : novas + ' solicitações novas das vendedoras' }), h('p', { text: 'Ninguém da logística olhou ainda. Cancelar e segurar pedido têm prazo curto.' })), h('button', { class: 'btn peq', type: 'button', onclick: () => { u.filtro = Object.assign({}, VAZIO, { kpi: 'novas' }); redesenhar(); } }, ic('lista'), 'Ver as novas')) : null,
       kpisCaixa(),
@@ -251,6 +251,6 @@
     return aba === 'solic' ? telaCaixa() : telaDash();
   }
   const gavetaAberta = () => (u.aberta && u.dados ? todas().find((x) => x.id === u.aberta) : null);
-  const contagem = () => (u.dados ? u.dados.ativos.filter((l) => l.status === 'recebida').length : 0);
+  const contagem = () => (u.dados ? u.dados.ativos.filter((l) => l.status === 'recebida' || l.status === 'aguardando_aprovacao').length : 0);
   root.SolicitacoesUI = { tela, gaveta: () => { const l = gavetaAberta(); return l && (u.aba === 'solic' || u.aba === 'dash') ? gaveta(l) : []; }, contagem, abrir: (id) => { u.aberta = id; u.gavAnim = null; } };
 })(window);

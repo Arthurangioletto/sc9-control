@@ -61,11 +61,23 @@ test('respostas novas: selo em Minhas, título da aba e atualização de 1 minut
   const v = ler('vendedoras.js');
   assert.match(v, /id: 'selo-minhas'/); assert.match(v, /root\.document\.title = \(novosMinhas\(\)\.length \? '\(' \+ novosMinhas\(\)\.length \+ '\) ' : ''\)/);
   assert.match(v, /root\.setInterval\(atualizarEmSilencio, 60000\)/);
-  assert.ok(!/function atualizarEmSilencio[\s\S]{0,200}document\.hidden/.test(v), 'atualiza também com a aba em segundo plano (o título é o aviso)');
+  assert.match(v, /document\.hidden && \(tiquesOculta = \(tiquesOculta \+ 1\) % 3\) !== 0/, 'em segundo plano atualiza, só que de 3 em 3 minutos (o título é o aviso)');
   assert.match(v, /repetir: \(l\) =>/); assert.match(ler('solicitacoes-vend.js'), /Pedir de novo/); assert.match(ler('vendedoras-inicio.js'), /\/api\/vendedoras\/modelos/);
   assert.match(ler('vendedoras-inicio.js'), /LS_MOD = 'sc9v_modelos'/, 'sem login o modelo fica no aparelho');
 });
 
 test('segurança do front novo: nada de HTML cru; textos do servidor entram por textContent', () => {
   for (const f of ['vendedoras-inicio.js', 'vendedoras.js', 'solicitacoes-vend.js', 'solicitacoes-ui.js', 'armazens-ui.js', 'solicitacoes-comum.js']) assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(ler(f)), f);
+});
+
+// regressões da revisão: duplo toque, "para quando" preso, aprovação de motoboy visível, aba oculta
+test('revisão: enviar trava no primeiro toque e o selo da equipe conta a aprovação do motoboy', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const ini = fs.readFileSync(path.join(__dirname, '..', 'vendedoras-inicio.js'), 'utf8');
+  assert.match(ini, /let travaEnvio = false;[\s\S]*async function enviar\(\) \{\s*if \(travaEnvio/);
+  assert.match(ini, /st\.f\.pq = \{ tipo: '', data: '' \}; redesenhar\(\); foco\('ini-form'\)/);
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'solicitacoes-ui.js'), 'utf8');
+  assert.ok((ui.match(/l\.status === 'aguardando_aprovacao'/g) || []).length >= 4);
+  const v = fs.readFileSync(path.join(__dirname, '..', 'vendedoras.js'), 'utf8');
+  assert.match(v, /tiquesOculta/);
 });

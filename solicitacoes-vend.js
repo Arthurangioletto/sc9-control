@@ -179,7 +179,7 @@
       h('div', { class: 'sol-campo' }, h('label', { class: 'rotulo', for: id + '-a', text: 'Armazém' }),
         h('select', { id: id + '-a', class: 'entrada', disabled: !loc.filial || !arms.length, onchange: (ev) => { loc.armazem = ev.target.value; aoMudar(); } },
           h('option', { value: '', text: !loc.filial ? 'Escolha a filial primeiro' : arms.length ? 'Escolha o armazém' : 'Nenhum armazém liberado', selected: !loc.armazem }),
-          arms.map((a) => h('option', { value: a.codigo, text: a.rotulo + (papel === 'origem' && a.comSaldo === false ? ' (sem saldo no momento)' : ''), selected: loc.armazem === a.codigo })))),
+          arms.map((a) => h('option', { value: a.codigo, text: (a.rotulo || 'Armazém ' + a.codigo) + (papel === 'origem' && a.comSaldo === false ? ' (sem saldo no momento)' : ''), selected: loc.armazem === a.codigo })))),
       loc.filial && !arms.length ? h('p', { class: 'dica', text: 'A logística não liberou nenhum armazém desta filial para ' + (papel === 'origem' ? 'sair' : 'receber') + ' transferência.' }) : null,
       atual && atual.nota ? h('p', { class: 'dica', text: atual.nota }) : null,
       e.arm.erro && !e.arm.dados ? h('p', { class: 'dica', role: 'status' }, 'Não consegui carregar a lista de armazéns (' + e.arm.erro + '). Mostrando só 01 e 02; o servidor confere ao enviar. ', h('button', { class: 'btn peq fantasma', type: 'button', onclick: carregarArmazens }, 'Tentar de novo')) : null);
