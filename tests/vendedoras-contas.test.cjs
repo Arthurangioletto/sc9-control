@@ -59,7 +59,7 @@ test('exportar: CSV com ; BOM-friendly, aspas escapadas e texto digitado nunca v
 
 test('servidor: acesso opcional (criar/entrar/trocar), solicitações ligadas ao login em qualquer aparelho, painel do admin sem segredos', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-contas-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'para-quando.js', 'solicitacoes-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   const data = path.join(dir, 'data'); fs.mkdirSync(data);
   const linha = (o) => Object.assign({ pedido: '0355386', armazem: 'Cambuci', nf: '', nome: 'CLIENTE ALFA', cliente: '001', dt: '2026-11-18', dtLiberacaoHora: '2026-11-18T12:10:00.000Z', qt: 5, itens: 2, status: 'Liberado', separador: '', conferente: '' }, o);
   fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify({ savedAt: '2026-11-24T14:00:00.000Z', orders: [linha({ pedido: '355386' }), linha({ pedido: '355400' }), linha({ pedido: '355401' })], faturamento: [], entregaInfo: [], valores: [] }));
@@ -164,7 +164,7 @@ test('servidor: acesso opcional (criar/entrar/trocar), solicitações ligadas ao
 
 test('servidor: cada vendedora vê só o que é dela (solicitações e consultas gravadas no servidor); o administrador vê tudo', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-priv-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'para-quando.js', 'solicitacoes-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   const data = path.join(dir, 'data'); fs.mkdirSync(data);
   const linha = (o) => Object.assign({ pedido: '0355386', armazem: 'Cambuci', nf: '', nome: 'CLIENTE ALFA', cliente: '001', dt: '2026-11-18', dtLiberacaoHora: '2026-11-18T12:10:00.000Z', qt: 5, itens: 2, status: 'Liberado', separador: '', conferente: '' }, o);
   fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify({ savedAt: '2026-11-24T14:00:00.000Z', orders: [linha({ pedido: '355386' }), linha({ pedido: '355400' })], faturamento: [], entregaInfo: [], valores: [] }));
@@ -235,7 +235,7 @@ test('servidor: cada vendedora vê só o que é dela (solicitações e consultas
 
 test('servidor: pedido que ainda não está no SC9 pode ser incluído; a equipe é sinalizada e o aviso some quando o SC9 é recarregado', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc9-fora-'));
-  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
+  for (const name of ['server.js', 'stock-position.js', 'inventory-integrity.js', 'atraso-historico.js', 'ocorrencias-store.js', 'ocorrencias-lookup.js', 'ocorrencias.js', 'consolidado.js', 'rastreio.js', 'prioridades-store.js', 'para-quando.js', 'solicitacoes-store.js', 'vendedoras-contas.js', 'central.css', 'central-ui.js', 'vendedoras.html', 'vendedoras.js', 'prioridades.html', 'prioridades.js']) fs.copyFileSync(path.join(__dirname, '..', name), path.join(dir, name));
   const data = path.join(dir, 'data'); fs.mkdirSync(data);
   const linha = (o) => Object.assign({ pedido: '0355386', armazem: 'Cambuci', nf: '', nome: 'CLIENTE ALFA', cliente: '001', dt: '2026-11-18', dtLiberacaoHora: '2026-11-18T12:10:00.000Z', qt: 5, itens: 2, status: 'Liberado', separador: '', conferente: '' }, o);
   const gravarSnap = (orders, savedAt) => fs.writeFileSync(path.join(data, 'latest.json'), JSON.stringify({ savedAt, orders, faturamento: [], entregaInfo: [], valores: [] }));

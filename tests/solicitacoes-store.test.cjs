@@ -12,11 +12,12 @@ const criar = (linhas, corpo, agora, ctx) => { const r = S.aplicar(linhas, corpo
 const transf = (dados) => Object.assign({ itens: [{ produto: 'P-100', qt: 5 }], origem: { filial: 'Cambuci', armazem: '01' }, destino: { filial: 'Tambore', armazem: '01' } }, dados);
 
 test('tipos, prazos (SLA) e áreas seguem o contrato', () => {
-  assert.deepEqual(S.TIPOS_IDS, ['cancelar_pedido', 'segurar_pedido', 'transferencia_peca', 'consulta_estoque', 'alterar_pedido', 'nota_fiscal', 'outro']);
-  assert.deepEqual(S.TIPOS_IDS.map((t) => S.TIPOS[t].sla), [30, 60, 240, 60, 120, 120, 240]);
-  assert.deepEqual(S.TIPOS_IDS.map((t) => S.TIPOS[t].area), ['estoque', 'estoque', 'estoque', 'estoque', 'expedicao', 'faturamento', 'expedicao']);
-  assert.deepEqual(S.TIPOS_IDS.map((t) => S.TIPOS[t].pedido), [true, true, false, false, true, true, false]);
-  assert.deepEqual(S.ATIVOS, ['recebida', 'em_analise', 'em_andamento']);
+  // os 7 tipos originais continuam na mesma ordem e com os mesmos prazos; os da entrada única vêm depois (ver o teste dos tipos novos)
+  assert.deepEqual(S.TIPOS_IDS.slice(0, 7), ['cancelar_pedido', 'segurar_pedido', 'transferencia_peca', 'consulta_estoque', 'alterar_pedido', 'nota_fiscal', 'outro']);
+  assert.deepEqual(S.TIPOS_IDS.slice(0, 7).map((t) => S.TIPOS[t].sla), [30, 60, 240, 60, 120, 120, 240]);
+  assert.deepEqual(S.TIPOS_IDS.slice(0, 7).map((t) => S.TIPOS[t].area), ['estoque', 'estoque', 'estoque', 'estoque', 'expedicao', 'faturamento', 'expedicao']);
+  assert.deepEqual(S.TIPOS_IDS.slice(0, 7).map((t) => S.TIPOS[t].pedido), [true, true, false, false, true, true, false]);
+  assert.deepEqual(S.ATIVOS, ['recebida', 'em_analise', 'em_andamento', 'aguardando_aprovacao'], 'aguardando_aprovacao (motoboy) foi acrescentado no fim');
 });
 
 test('criar: protocolo S-AAMMDD-NNN, validações rígidas e limite por vendedora/dia', () => {
@@ -192,7 +193,7 @@ test('filtros e busca (inclui itens da transferência) e CSV seguro', () => {
   assert.equal(S.filtrar(linhas, { de: '2026-11-24', ate: '2026-11-24' }).length, 2);
   assert.deepEqual(S.ordenarFila(linhas).map((l) => l.tipo), ['cancelar_pedido', 'transferencia_peca'], 'alta antes de normal');
   const csv = S.paraCsv(linhas);
-  assert.ok(csv.startsWith('﻿id;protocolo;tipo;pedido;vendedora;filial;status;prioridade;criada;1ª resposta;concluída;minutos até resposta;minutos até conclusão\r\n'));
+  assert.ok(csv.startsWith('﻿id;protocolo;tipo;pedido;vendedora;filial;status;prioridade;criada;1ª resposta;concluída;minutos até resposta;minutos até conclusão;para quando;pedidos do lote;pedidos atendidos\r\n'), 'as colunas antigas seguem na ordem; as novas ficam no fim');
   assert.equal(csv.trim().split('\r\n').length, 3);
   assert.ok(csv.includes('Transferência de peça') && csv.includes('Tamboré') === false && csv.includes('Cambuci'));
 });
@@ -218,7 +219,7 @@ test('dashboard: números por tipo, dia, vendedora, filial, cancelamentos a temp
   assert.equal(d.kpis.tempoMedio1aRespostaMin, 10); assert.equal(d.kpis.tempoMedioResolucaoMin, 40);
   assert.ok(d.kpis.atrasadasSla >= 1, 'o cancelamento de 2 dias atrás sem resposta (o outro) já passou de 30 min');
   assert.deepEqual(d.fontes, { solicitacoes: 5, prioridades: 1, avisos: 1 });
-  assert.equal(d.porTipo.length, 7); assert.equal(d.porTipo.find((x) => x.tipo === 'cancelar_pedido').total, 2);
+  assert.equal(d.porTipo.length, S.TIPOS_IDS.length); assert.equal(d.porTipo.find((x) => x.tipo === 'cancelar_pedido').total, 2);
   assert.equal(d.porTipo.find((x) => x.tipo === 'cancelar_pedido').medResp, 10);
   assert.equal(d.porDia.length, 7); assert.equal(d.porDia[6].dia, '2026-11-24'); assert.equal(d.porDia[6].prioridades, 1); assert.equal(d.porDia[6].avisos, 1);
   assert.equal(d.porDia.reduce((a, x) => a + x.solicitacoes, 0), 5);

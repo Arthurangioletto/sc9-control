@@ -4,6 +4,7 @@
  * o índice quando o snapshot/saldo mudar (ver `chave`). Nunca expõe custo, valor, fornecedor nem dados de cliente. */
 'use strict';
 const S = require('./solicitacoes-store.js');
+const A = require('./armazens-vendedoras.js');
 
 const MAX_RESULTADOS = 10, MAX_LOTES = 40, MIN_BUSCA = 2, MAX_BUSCA = 60;
 const semAcento = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
@@ -81,21 +82,25 @@ function consultarProduto(indice, codigo, { filial, armazem, lote } = {}) {
   return { codigo: c.codigo, descricao: c.descricao, saldoOrigem };
 }
 
-function visaoProduto(indice, c, filtro) {
-  const m = indice.saldos.get(c.codigo), saldoDisponivel = Boolean(m);
-  if (!m) return { codigo: c.codigo, descricao: c.descricao, saldoTotal: null, saldoOrigem: null, saldos: [], lotes: [], saldoDisponivel: false };
+// vendavel(filial, armazem) -> boolean: só o saldo vendável entra no total; o resto (59, 26...) vem à parte em saldoSeparado. Sem função: a lista padrão de armazens-vendedoras.js.
+const vendavelPadrao = (filial, armazem) => A.vendavel(A.PADRAO, filial, armazem);
+function visaoProduto(indice, c, filtro, vendavel) {
+  const m = indice.saldos.get(c.codigo), saldoDisponivel = Boolean(m), ehVendavel = typeof vendavel === 'function' ? vendavel : vendavelPadrao;
+  if (!m) return { codigo: c.codigo, descricao: c.descricao, saldoTotal: null, saldoSeparado: [], saldoSeparadoTotal: 0, saldoOrigem: null, saldos: [], lotes: [], saldoDisponivel: false };
   const porLocal = new Map();
   for (const l of m.values()) { const k = l.filial + '|' + l.armazem; porLocal.set(k, (porLocal.get(k) || { filial: l.filial, armazem: l.armazem, saldo: 0 })); porLocal.get(k).saldo += l.saldo; }
   const saldos = [...porLocal.values()].map((x) => ({ filial: x.filial, armazem: x.armazem, saldo: arredonda(x.saldo) })).sort((a, b) => b.saldo - a.saldo || a.filial.localeCompare(b.filial) || a.armazem.localeCompare(b.armazem));
   // com filial/armazém na busca, os lotes mostrados são os daquela origem (é o que dá para transferir)
   const lotes = [...m.values()].filter((l) => l.saldo > 0 && casaLocal(l, filtro)).sort((a, b) => (a.validade || '9999').localeCompare(b.validade || '9999') || b.saldo - a.saldo || a.lote.localeCompare(b.lote))
     .slice(0, MAX_LOTES).map((l) => { const o = { lote: l.lote, saldo: arredonda(l.saldo), filial: l.filial, armazem: l.armazem }; if (l.validade) o.validade = l.validade; return o; });
-  return { codigo: c.codigo, descricao: c.descricao, saldoTotal: saldoDo(indice, c.codigo, null), saldoOrigem: filtro && filtro.filial ? saldoDo(indice, c.codigo, filtro) : null, saldos, lotes, saldoDisponivel };
+  // total = só o que é vendável; 59/26 e o que ainda não foi classificado pela logística ficam à parte ("saldo separado"), fora do total
+  const separado = saldos.filter((x) => x.saldo > 0 && !ehVendavel(x.filial, x.armazem)), totalVendavel = arredonda(saldos.filter((x) => ehVendavel(x.filial, x.armazem)).reduce((s, x) => s + x.saldo, 0));
+  return { codigo: c.codigo, descricao: c.descricao, saldoTotal: totalVendavel, saldoSeparado: separado.map((x) => ({ filial: x.filial, armazem: x.armazem, saldo: x.saldo })), saldoSeparadoTotal: arredonda(separado.reduce((s, x) => s + x.saldo, 0)), saldoOrigem: filtro && filtro.filial ? saldoDo(indice, c.codigo, filtro) : null, saldos, lotes, saldoDisponivel };
 }
 
 // Busca por código (igual ou começando com o digitado) e por trecho da descrição (sem acento, sem diferença de caixa, todas as palavras).
 // Ordem: código igual, código começando com, descrição começando com a 1ª palavra, demais; empate pelo código.
-function buscar(indice, consulta, { filial, armazem } = {}) {
+function buscar(indice, consulta, { filial, armazem, vendavel } = {}) {
   if (!indice) return [];
   const q = semAcento(String(consulta == null ? '' : consulta).replace(/[\u0000-\u001f\u007f]/g, ' ')).replace(/\s+/g, ' ').slice(0, MAX_BUSCA).trim();
   if (q.length < MIN_BUSCA) return [];
@@ -110,7 +115,7 @@ function buscar(indice, consulta, { filial, armazem } = {}) {
     if (rank >= 0) achados.push({ c, rank });
   }
   achados.sort((x, y) => x.rank - y.rank || (indice.saldos.has(y.c.codigo) - indice.saldos.has(x.c.codigo)) || (x.c.codigo < y.c.codigo ? -1 : x.c.codigo > y.c.codigo ? 1 : 0));
-  return achados.slice(0, MAX_RESULTADOS).map((x) => visaoProduto(indice, x.c, filtro));
+  return achados.slice(0, MAX_RESULTADOS).map((x) => visaoProduto(indice, x.c, filtro, vendavel));
 }
 
 module.exports = { montarIndice, buscar, consultarProduto, saldoDo, localDaLinha, MAX_RESULTADOS, MAX_LOTES, MIN_BUSCA };

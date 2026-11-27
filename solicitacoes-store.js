@@ -6,34 +6,44 @@
  * O histórico só cresce (quem, quando, o quê). Só validação e mesclagem, sem acesso a disco. */
 'use strict';
 const { numeroDoPedido } = require('./prioridades-store.js');
+const PQ = require('./para-quando.js');
 
 const MAX_LINHAS = 5000;
 const MAX_HISTORICO = 60;
 const LIMITE_POR_DIA = 15; // solicitações por vendedora (login ou nome) em 24 h
+const MAX_PEDIDOS_LOTE = 20; // pedidos numa mesma solicitação (um protocolo só)
+const MAX_LISTA_BRUTA = 200; // acima disso a lista nem é lida: é recusada antes de normalizar
 const DIAS_PARA_LIMPAR = 120; // só as concluídas/negadas; as ativas nunca somem
 const FUSO = 'America/Sao_Paulo';
 
 // tipo -> rótulo, se exige número de pedido, área padrão e prazo (minutos) para a 1ª resposta da equipe
 const TIPOS = {
-  cancelar_pedido: { rotulo: 'Cancelar pedido (não separar)', pedido: true, area: 'estoque', sla: 30 },
-  segurar_pedido: { rotulo: 'Segurar pedido (não separar/despachar)', pedido: true, area: 'estoque', sla: 60 },
+  cancelar_pedido: { rotulo: 'Cancelar pedido (não separar)', pedido: true, lote: true, area: 'estoque', sla: 30 },
+  segurar_pedido: { rotulo: 'Segurar pedido (não separar/despachar)', pedido: true, lote: true, area: 'estoque', sla: 60 },
   transferencia_peca: { rotulo: 'Transferência de peça', pedido: false, area: 'estoque', sla: 240 },
   consulta_estoque: { rotulo: 'Consulta de estoque', pedido: false, area: 'estoque', sla: 60 },
-  alterar_pedido: { rotulo: 'Alterar pedido (itens/quantidade/endereço)', pedido: true, area: 'expedicao', sla: 120 },
-  nota_fiscal: { rotulo: 'Nota fiscal (reemitir/enviar/corrigir)', pedido: true, area: 'faturamento', sla: 120 },
-  outro: { rotulo: 'Outro assunto', pedido: false, area: 'expedicao', sla: 240 }
+  alterar_pedido: { rotulo: 'Alterar pedido (itens/quantidade/endereço)', pedido: true, lote: true, area: 'expedicao', sla: 120 },
+  nota_fiscal: { rotulo: 'Nota fiscal (reemitir/enviar/corrigir)', pedido: true, lote: true, area: 'faturamento', sla: 120 },
+  outro: { rotulo: 'Outro assunto', pedido: false, area: 'expedicao', sla: 240 },
+  // Entrada única "O que você precisa?" (ondas 1 e 2): acrescentados sem mexer nos tipos acima. lote = aceita vários pedidos (pedidos[]) num protocolo só.
+  sair_hoje: { rotulo: 'Sair hoje (pressa, liberar, prioridade)', pedido: true, lote: true, area: 'estoque', sla: 60 },
+  saida_especial: { rotulo: 'Saída especial (retirada, Sedex, motoboy, outra transportadora, saída pela filial)', pedido: true, lote: true, area: 'expedicao', sla: 60 },
+  subir_pedido: { rotulo: 'Subir um pedido (PV)', pedido: false, area: 'faturamento', sla: 120 },
+  falta_item: { rotulo: 'Falta de item', pedido: true, lote: true, area: 'estoque', sla: 60 },
+  erro_pedido: { rotulo: 'Erro ou revisão do pedido', pedido: true, lote: true, area: 'expedicao', sla: 120 }
 };
 Object.setPrototypeOf(TIPOS, null); // "constructor", "__proto__" etc. não contam como tipo
 const TIPOS_IDS = Object.keys(TIPOS);
 const AREAS = ['estoque', 'expedicao', 'faturamento'];
 const AREAS_ROTULO = { estoque: 'Estoque', expedicao: 'Expedição', faturamento: 'Faturamento' };
-const STATUS = ['recebida', 'em_analise', 'em_andamento', 'concluida', 'negada'];
-const ATIVOS = ['recebida', 'em_analise', 'em_andamento'];
+// aguardando_aprovacao: só a saída por motoboy urgente nasce assim (a equipe aprova mudando para em andamento, ou nega).
+const STATUS = ['recebida', 'em_analise', 'em_andamento', 'concluida', 'negada', 'aguardando_aprovacao'];
+const ATIVOS = ['recebida', 'em_analise', 'em_andamento', 'aguardando_aprovacao'];
 const FINAIS = ['concluida', 'negada'];
 const PRIORIDADES = ['normal', 'alta', 'urgente'];
 const PESO_PRIORIDADE = { normal: 0, alta: 1, urgente: 2 };
 const ETAPAS = ['nao_separado', 'em_separacao', 'separado', 'conferido', 'faturado', 'despachado', 'nao_achado'];
-const ACOES_HIST = ['criado', 'status', 'assumir', 'interno', 'prioridade', 'area'];
+const ACOES_HIST = ['criado', 'status', 'assumir', 'interno', 'prioridade', 'area', 'pedido_concluido'];
 // Filiais: a chave é o mesmo nome de armazém que o resto do SC9 usa (ARMAZENS_GERAL em server.js: "Tambore" sem acento).
 // codigo = código da filial no Protheus (Cambuci = 01, Tamboré = 03); BH, CE, DF e RJ o app só conhece pela sigla, então a sigla é o código.
 const FILIAIS_INFO = [
@@ -59,18 +69,38 @@ const C = {
   qt: { k: 'qt', t: 'int', obrig: true, nome: 'a quantidade' },
   data: (k, nome) => ({ k, t: 'data', obrig: false, nome }),
   filial: (k, obrig, nome) => ({ k, t: 'filial', obrig, nome }),
-  oque: { k: 'o_que', t: 'texto', max: 500, obrig: true, nome: 'o que precisa ser feito' }
+  oque: { k: 'o_que', t: 'texto', max: 500, obrig: true, nome: 'o que precisa ser feito' },
+  // campos dos tipos novos. quando(d): só vale (e só é exigido) se a condição sobre os campos já lidos for verdadeira; obrig pode ser função.
+  enum: (k, opcoes, obrig, nome) => ({ k, t: 'enum', opcoes, obrig, nome }),
+  texto: (k, max, obrig, nome, quando) => ({ k, t: 'texto', max, obrig, nome, quando })
 };
+const MOTIVOS_SAIR = ['cliente_aguardando', 'prazo_combinado', 'cliente_importante', 'erro_nosso', 'retirada', 'outro'];
+const MODOS_SAIDA = ['retirada', 'sedex', 'motoboy', 'outra_transportadora', 'saida_filial'];
+const SUBTIPOS_NF = ['cancelada', 'corrigir', 'segunda_via', 'enviar_cliente'];
+const ACOES_FALTA = ['esperar', 'cortar', 'substituir'];
+const MODOS_ERRO = ['erro', 'revisao'];
 const CAMPOS = {
   cancelar_pedido: [C.motivo(true)],
   segurar_pedido: [C.motivo(true), C.data('ate', 'a data (até quando segurar)')],
   transferencia_peca: [], // formato próprio (itens, origem, destino): ver dadosTransferencia
   consulta_estoque: [C.produto, C.qt, C.filial('filial', false, 'a filial')],
   alterar_pedido: [C.oque],
-  nota_fiscal: [C.oque],
-  outro: []
+  nota_fiscal: [C.enum('subtipo', SUBTIPOS_NF, false, 'o tipo de pedido sobre a nota'), Object.assign({}, C.oque, { obrig: (d) => !['segunda_via', 'enviar_cliente'].includes(d.subtipo) })],
+  outro: [],
+  sair_hoje: [C.enum('motivo', MOTIVOS_SAIR, true, 'o motivo')],
+  saida_especial: [C.enum('modo', MODOS_SAIDA, true, 'como o pedido vai sair'),
+    C.texto('quem', 80, true, 'quem vai retirar', (d) => d.modo === 'retirada'),
+    { k: 'dia', t: 'data', obrig: true, nome: 'o dia da retirada', quando: (d) => d.modo === 'retirada' },
+    { k: 'hora', t: 'hora', obrig: false, nome: 'a hora da retirada', quando: (d) => d.modo === 'retirada' },
+    C.texto('transportadora', 60, true, 'a transportadora', (d) => d.modo === 'outra_transportadora'),
+    { k: 'filial', t: 'filial', obrig: true, nome: 'a filial de saída', quando: (d) => d.modo === 'saida_filial' },
+    C.texto('detalhe', 300, false, 'o detalhe')],
+  subir_pedido: [C.texto('pv', 30, true, 'o número do PV'), C.filial('filial', false, 'a filial'), C.texto('onde', 300, true, 'onde está o PV (e-mail, pasta, link...)')],
+  falta_item: [C.enum('acao', ACOES_FALTA, true, 'o que fazer com o item (esperar, cortar ou substituir)'), C.texto('detalhe', 300, (d) => d.acao === 'substituir', 'por qual produto substituir')],
+  erro_pedido: [C.enum('modo', MODOS_ERRO, true, 'se é erro ou revisão'), Object.assign({}, C.oque, { nome: 'o que está errado ou precisa ser revisado' })]
 };
 
+Object.setPrototypeOf(CAMPOS, null);
 const semZeros = (v) => (/^\d+$/.test(v) ? String(Number(v)) : v);
 // Aceita a chave, o nome ou o código da filial ("Tambore", "Tamboré", "03", "3", "bh").
 function filialDe(v) {
@@ -79,7 +109,7 @@ function filialDe(v) {
   const f = FILIAIS_INFO.find((x) => semAcento(x.chave) === q || semAcento(x.nome) === q || semZeros(x.codigo.toLowerCase()) === semZeros(q));
   return f ? f.chave : '';
 }
-// Armazém: "1" e "01" são o mesmo lugar; letras ficam em maiúsculas (ex.: "ZZ2"). Até 6 caracteres.
+// Armazém: "1" e "01" são o mesmo lugar; letras ficam em maiúsculas. Até 6 caracteres.
 function armazemDe(v) {
   const s = texto(typeof v === 'number' ? String(v) : v, 10).toUpperCase().replace(/\s+/g, '');
   if (!/^[0-9A-Z]{1,6}$/.test(s)) return '';
@@ -125,6 +155,11 @@ function dadosTransferencia(bruto, estrito, agora, ctx) {
   const org = localDe(o.origem, 'origem', estrito); if (org.erro) return { erro: org.erro };
   const dst = localDe(o.destino, 'destino', estrito); if (dst.erro) return { erro: dst.erro };
   if (estrito && org.local.filial === dst.local.filial && org.local.armazem === dst.local.armazem) return { erro: 'A origem e o destino precisam ser diferentes (mude a filial ou o armazém).' };
+  // lista de armazéns da logística (armazens-vendedoras.js): o servidor recusa código fora da lista ou não liberado para esse papel
+  if (estrito && ctx && typeof ctx.armazemPermitido === 'function') {
+    const eo = ctx.armazemPermitido(org.local.filial, org.local.armazem, 'origem'); if (eo) return { erro: eo };
+    const ed = ctx.armazemPermitido(dst.local.filial, dst.local.armazem, 'destino'); if (ed) return { erro: ed };
+  }
   const itens = [], vistos = new Set();
   for (let i = 0; i < Math.min(brutos.length, MAX_ITENS_TRANSFERENCIA); i++) {
     const b = brutos[i] && typeof brutos[i] === 'object' ? brutos[i] : {};
@@ -164,23 +199,49 @@ function dadosTransferencia(bruto, estrito, agora, ctx) {
   return { dados };
 }
 
+// Itens em falta (falta_item): { produto, descricao, qt }; a descrição vem do catálogo do servidor (ctx.produto), nunca do aparelho.
+function itensFalta(bruto, estrito, ctx) {
+  const o = bruto && typeof bruto === 'object' && !Array.isArray(bruto) ? bruto : {};
+  const brutos = Array.isArray(o.itens) ? o.itens : [];
+  if (estrito) {
+    if (!brutos.length) return { erro: 'Inclua pelo menos um produto que está em falta.' };
+    if (brutos.length > MAX_ITENS_TRANSFERENCIA) return { erro: 'No máximo ' + MAX_ITENS_TRANSFERENCIA + ' produtos por solicitação.' };
+  }
+  const itens = [], vistos = new Set();
+  for (let i = 0; i < Math.min(brutos.length, MAX_ITENS_TRANSFERENCIA); i++) {
+    const b = brutos[i] && typeof brutos[i] === 'object' ? brutos[i] : {};
+    const produto = texto(b.produto, 40), qt = inteiro(b.qt), n = i + 1;
+    if (!produto || qt == null || qt < 1 || qt > 99999) { if (estrito) return { erro: !produto ? 'Produto ' + n + ': informe o código do produto.' : 'Produto ' + n + ' (' + produto + '): a quantidade deve ser um número inteiro de 1 a 99999.' }; continue; }
+    if (vistos.has(produto.toLowerCase())) { if (estrito) return { erro: 'O produto ' + produto + ' aparece mais de uma vez. Some as quantidades em uma linha só.' }; continue; }
+    vistos.add(produto.toLowerCase());
+    let descricao = texto(b.descricao, 200);
+    if (estrito) { const achou = ctx && typeof ctx.produto === 'function' ? ctx.produto(produto, { filial: '', armazem: '', lote: '' }) : null; descricao = achou && achou.descricao ? texto(achou.descricao, 200) : ''; }
+    itens.push({ produto, descricao, qt });
+  }
+  return { itens };
+}
+const HORA_OK = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 // Normaliza os dados do tipo. estrito (criação): devolve { erro } no primeiro problema; senão (leitura do arquivo) só limpa, sem reclamar.
 function dadosDoTipo(tipo, bruto, estrito, agora, ctx) {
   if (tipo === 'transferencia_peca') return dadosTransferencia(bruto, estrito, agora, ctx);
   const campos = CAMPOS[tipo] || [], origem = bruto && typeof bruto === 'object' && !Array.isArray(bruto) ? bruto : {}, dados = {};
   const hoje = diaSP(agora || Date.now());
   for (const c of campos) {
-    const v = origem[c.k];
+    if (c.quando && !c.quando(dados)) continue; // campo que só vale em certos casos (ex.: "quem retira" só na retirada)
+    const v = origem[c.k], obrig = typeof c.obrig === 'function' ? Boolean(c.obrig(dados)) : c.obrig;
     let limpo = '';
     if (c.t === 'texto') limpo = texto(v, c.max);
     else if (c.t === 'int') { const n = inteiro(v); limpo = n != null && n >= 1 && n <= 99999 ? n : ''; }
     else if (c.t === 'filial') limpo = filialDe(v);
     else if (c.t === 'data') limpo = dataValida(v);
+    else if (c.t === 'enum') limpo = typeof v === 'string' && c.opcoes.includes(v) ? v : '';
+    else if (c.t === 'hora') limpo = typeof v === 'string' && HORA_OK.test(v.trim()) ? v.trim() : '';
     const informado = v != null && String(v).trim() !== '';
     if (estrito) {
-      if (c.obrig && limpo === '') return { erro: c.t === 'int' ? 'Quantidade: informe um número inteiro de 1 a 99999.' : c.t === 'filial' ? 'Escolha ' + c.nome + ' da lista.' : 'Informe ' + c.nome + '.' };
-      if (c.obrig && c.t === 'texto' && limpo.length < 3) return { erro: 'Informe ' + c.nome + ' (mínimo 3 letras).' };
-      if (!c.obrig && informado && limpo === '') return { erro: c.t === 'filial' ? 'Escolha ' + c.nome + ' da lista.' : c.t === 'data' ? 'Data inválida em ' + c.nome + ' (use o calendário).' : 'Valor inválido em ' + c.nome + '.' };
+      if (obrig && limpo === '') return { erro: c.t === 'int' ? 'Quantidade: informe um número inteiro de 1 a 99999.' : c.t === 'filial' || c.t === 'enum' ? 'Escolha ' + c.nome + ' da lista.' : 'Informe ' + c.nome + '.' };
+      if (obrig && c.t === 'texto' && limpo.length < 3) return { erro: 'Informe ' + c.nome + ' (mínimo 3 letras).' };
+      if (!obrig && informado && limpo === '') return { erro: c.t === 'filial' || c.t === 'enum' ? 'Escolha ' + c.nome + ' da lista.' : c.t === 'data' ? 'Data inválida em ' + c.nome + ' (use o calendário).' : c.t === 'hora' ? 'Hora inválida em ' + c.nome + ' (use HH:MM).' : 'Valor inválido em ' + c.nome + '.' };
       if (c.t === 'data' && limpo) {
         if (limpo < hoje) return { erro: 'A data não pode ser no passado.' };
         if (limpo > somaDias(hoje, 366)) return { erro: 'A data está muito distante (no máximo 1 ano).' };
@@ -188,10 +249,51 @@ function dadosDoTipo(tipo, bruto, estrito, agora, ctx) {
     }
     if (limpo !== '') dados[c.k] = limpo;
   }
+  if (tipo === 'falta_item') { const f = itensFalta(bruto, estrito, ctx); if (f.erro) return f; if (f.itens.length) dados.itens = f.itens; }
   return { dados };
 }
 
 // ---- linha -----------------------------------------------------------------------------------------------------------------------------
+// Lote de pedidos de uma solicitação: [{ pedido, etapa, naoAchado, concluido, concluidoEm, concluidoPor }]. Linhas antigas não têm: lista vazia.
+function pedidosDaLinha(bruto) {
+  const saida = [], vistos = new Set();
+  for (const p of (Array.isArray(bruto) ? bruto : []).slice(0, MAX_PEDIDOS_LOTE)) {
+    const num = numeroDoPedido(p && p.pedido);
+    if (!num || vistos.has(num)) continue;
+    vistos.add(num);
+    saida.push({ pedido: num, etapa: ETAPAS.includes(p.etapa) ? p.etapa : '', naoAchado: Boolean(p.naoAchado), concluido: Boolean(p.concluido), concluidoEm: dataHora(p.concluidoEm), concluidoPor: texto(p.concluidoPor, 60) });
+  }
+  return saida;
+}
+// Lista de pedidos pedida pelo aparelho: { lista, lote, erro? }. Sem `pedidos` vale só o `pedido` (comportamento de sempre).
+function listaDePedidos(corpo, def) {
+  const unico = corpo && corpo.pedido != null && String(corpo.pedido).trim() !== '' ? numeroDoPedido(corpo.pedido) : null;
+  const bruto = corpo ? corpo.pedidos : undefined;
+  if (bruto == null || (Array.isArray(bruto) && !bruto.length)) return { lista: unico ? [unico] : [], lote: false };
+  if (!Array.isArray(bruto)) return { erro: 'A lista de pedidos é inválida.' };
+  if (!def || !def.lote) return { erro: 'Este assunto aceita um pedido por vez.' };
+  if (bruto.length > MAX_LISTA_BRUTA) return { erro: 'No máximo ' + MAX_PEDIDOS_LOTE + ' pedidos por solicitação. Faça outra solicitação para o restante.' };
+  const lista = [], vistos = new Set();
+  for (const b of unico ? [unico].concat(bruto) : bruto) {
+    if (typeof b !== 'string' && typeof b !== 'number') return { erro: 'A lista de pedidos é inválida.' };
+    const num = typeof b === 'string' && b.length > 24 ? null : numeroDoPedido(b);
+    if (!num) return { erro: 'O número "' + texto(String(b), 14) + '" não é um pedido válido (só números, de 4 a 10 dígitos).' };
+    if (vistos.has(num)) continue;
+    vistos.add(num); lista.push(num);
+    if (lista.length > MAX_PEDIDOS_LOTE) return { erro: 'No máximo ' + MAX_PEDIDOS_LOTE + ' pedidos por solicitação. Faça outra solicitação para o restante.' };
+  }
+  return { lista, lote: true };
+}
+// A etapa mais adiantada de um conjunto de pedidos (a que manda no aviso: basta um já separado para "pode não dar tempo"). Pedido não achado não conta.
+function etapaMaisAdiantada(etapas) {
+  const ordem = ETAPAS.filter((e) => e !== 'nao_achado'), achadas = etapas.filter((e) => ordem.includes(e));
+  if (!achadas.length) return etapas.length && etapas.every((e) => e === 'nao_achado') ? 'nao_achado' : '';
+  return achadas.reduce((a, b) => (ordem.indexOf(b) > ordem.indexOf(a) ? b : a));
+}
+// O que não dá para pedir quando o pedido já está nessa etapa (só nos tipos novos; os antigos continuam aceitando tudo, como sempre).
+const ETAPAS_RECUSADAS = { sair_hoje: ['despachado'], saida_especial: ['despachado'], falta_item: ['despachado'], erro_pedido: ['despachado'] };
+Object.setPrototypeOf(ETAPAS_RECUSADAS, null);
+
 function normalizarLinha(x) {
   if (!x || typeof x !== 'object') return null;
   const id = texto(x.id, 40);
@@ -203,6 +305,7 @@ function normalizarLinha(x) {
     pedidoPor: texto(x.pedidoPor, 60), conta: texto(x.conta, 24), filial: texto(x.filial, 40), area: AREAS.includes(x.area) ? x.area : TIPOS[tipo].area,
     status: STATUS.includes(x.status) ? x.status : 'recebida', resposta: texto(x.resposta, 300), responsavel: texto(x.responsavel, 60), respondidoPor: texto(x.respondidoPor, 60),
     naoAchado: Boolean(x.naoAchado), criadoEm: dataHora(x.criadoEm), primeiraRespostaEm: dataHora(x.primeiraRespostaEm), concluidaEm: dataHora(x.concluidaEm), atualizadoEm: dataHora(x.atualizadoEm),
+    paraQuando: PQ.normalizar(x.paraQuando), pedidos: pedidosDaLinha(x.pedidos),
     historico: (Array.isArray(x.historico) ? x.historico : []).slice(-MAX_HISTORICO).map((h) => ({
       em: dataHora(h && h.em), acao: ACOES_HIST.includes(h && h.acao) ? h.acao : 'status', por: texto(h && h.por, 60), texto: texto(h && h.texto, 500),
       status: STATUS.includes(h && h.status) ? h.status : '', prioridade: PRIORIDADES.includes(h && h.prioridade) ? h.prioridade : '', area: AREAS.includes(h && h.area) ? h.area : ''
@@ -257,10 +360,13 @@ const AVISO_ETAPA = {
 const avisoDaEtapa = (etapa) => AVISO_ETAPA[etapa] || '';
 
 // Prioridade calculada pelo servidor (a equipe pode mudar depois).
-function prioridadeInicial(tipo, etapa, dados, agora) {
+function prioridadeInicial(tipo, etapa, dados, agora, paraQuando) {
   if (tipo === 'cancelar_pedido' || tipo === 'segurar_pedido') return aTempoDaEtapa(etapa) ? 'urgente' : 'alta';
+  const hoje = PQ.ehHoje(paraQuando, agora);
+  if (tipo === 'sair_hoje') return hoje ? 'urgente' : 'alta';
+  if (tipo === 'saida_especial' && dados && dados.modo === 'motoboy') return 'alta';
   if (tipo === 'transferencia_peca' && dados && dados.prazo && dados.prazo <= somaDias(diaSP(agora || Date.now()), 1)) return 'alta';
-  return 'normal';
+  return hoje ? 'alta' : 'normal'; // "para quando" é hoje: sobe de normal para alta
 }
 
 // ---- SLA -------------------------------------------------------------------------------------------------------------------------------
@@ -287,35 +393,51 @@ function aplicar(linhasAtuais, corpo, quem, agora, ctx) {
     const tipo = corpo.tipo, def = TIPOS[tipo];
     if (!def) return { linhas, erro: 'Escolha o tipo de solicitação.' };
     const pedidoInformado = corpo.pedido != null && String(corpo.pedido).trim() !== '';
-    const pedido = numeroDoPedido(corpo.pedido) || '';
+    const listaP = listaDePedidos(corpo, def);
+    if (listaP.erro) return { linhas, erro: listaP.erro };
+    const pedido = listaP.lote ? listaP.lista[0] || '' : numeroDoPedido(corpo.pedido) || '';
     if ((def.pedido || pedidoInformado) && !pedido) return { linhas, erro: 'Número do pedido inválido (só números, de 4 a 10 dígitos).' };
     const pedidoPor = texto(corpo.pedidoPor, 60);
     if (pedidoPor.length < 2) return { linhas, erro: 'Diga seu nome para a equipe saber quem pediu.' };
     const feitoDados = dadosDoTipo(tipo, corpo.dados, true, now, ctx);
     if (feitoDados.erro) return { linhas, erro: feitoDados.erro };
+    const pq = PQ.validar(corpo.paraQuando, now);
+    if (pq.erro) return { linhas, erro: pq.erro };
     const msg = texto(corpo.texto != null ? corpo.texto : (corpo.dados && corpo.dados.texto), 500);
     if (tipo === 'outro' && msg.length < 5) return { linhas, erro: 'Escreva o que você precisa (mínimo 5 letras).' };
+    if (tipo === 'sair_hoje' && feitoDados.dados.motivo === 'outro' && msg.length < 5) return { linhas, erro: 'Explique o motivo no recado (mínimo 5 letras).' };
+    // situação de cada pedido no SC9, calculada pelo servidor (corpo.pedidosInfo = [{ pedido, etapa, naoAchado }])
+    const info = new Map((Array.isArray(corpo.pedidosInfo) ? corpo.pedidosInfo : []).filter((i) => i && typeof i === 'object').map((i) => [numeroDoPedido(i.pedido), i]));
+    const infoDe = (p) => info.get(p) || (listaP.lista.length === 1 && p === pedido && corpo.etapa ? { etapa: corpo.etapa, naoAchado: corpo.naoAchado } : {});
+    const recusa = ETAPAS_RECUSADAS[tipo];
+    if (recusa) for (const p of listaP.lista) if (recusa.includes(infoDe(p).etapa)) return { linhas, erro: 'O pedido ' + p + ' já foi despachado: não dá mais para pedir isso por aqui. Se precisar, use "Outro assunto".' };
     const conta = texto(corpo.conta, 24), nome = pedidoPor.toLowerCase(), desde = now - 864e5;
     const dela = (l) => (conta && l.conta === conta) || l.pedidoPor.toLowerCase() === nome;
     if (linhas.filter((l) => dela(l) && Date.parse(l.criadoEm) >= desde).length >= LIMITE_POR_DIA) return { linhas, erro: 'Você já enviou ' + LIMITE_POR_DIA + ' solicitações hoje. Fale direto com a logística.' };
     if ((tipo === 'cancelar_pedido' || tipo === 'segurar_pedido')) {
-      const igual = linhas.find((l) => l.tipo === tipo && l.pedido === pedido && ATIVOS.includes(l.status) && dela(l));
-      if (igual) return { linhas, erro: 'Você já pediu isso para o pedido ' + pedido + ' (protocolo ' + igual.protocolo + '). Acompanhe em "Minhas solicitações".' };
+      for (const p of listaP.lista) {
+        const igual = linhas.find((l) => l.tipo === tipo && ATIVOS.includes(l.status) && dela(l) && (l.pedido === p || l.pedidos.some((x) => x.pedido === p && !x.concluido)));
+        if (igual) return { linhas, erro: 'Você já pediu isso para o pedido ' + p + ' (protocolo ' + igual.protocolo + '). Acompanhe em "Minhas".' };
+      }
     }
     if (linhas.length >= MAX_LINHAS) return { linhas, erro: 'A lista de solicitações está cheia no momento. Fale com a logística.' };
     const cancela = tipo === 'cancelar_pedido' || tipo === 'segurar_pedido';
-    const etapa = cancela && ETAPAS.includes(corpo.etapa) ? corpo.etapa : '';
+    const etapas = listaP.lista.map((p) => (ETAPAS.includes(infoDe(p).etapa) ? infoDe(p).etapa : ''));
+    const etapa = cancela ? (listaP.lote ? etapaMaisAdiantada(etapas.filter(Boolean)) : ETAPAS.includes(corpo.etapa) ? corpo.etapa : '') : '';
+    const pedidos = listaP.lote ? listaP.lista.map((p, i) => ({ pedido: p, etapa: etapas[i], naoAchado: Boolean(infoDe(p).naoAchado), concluido: false, concluidoEm: '', concluidoPor: '' })) : [];
+    const aguarda = tipo === 'saida_especial' && feitoDados.dados.modo === 'motoboy'; // motoboy urgente precisa de aprovação da equipe
+    const status = aguarda ? 'aguardando_aprovacao' : 'recebida';
     const nova = {
-      id: novoId(now), protocolo: novoProtocolo(linhas, now), tipo, pedido, dados: feitoDados.dados, texto: msg, prioridade: prioridadeInicial(tipo, etapa, feitoDados.dados, now),
-      etapa, aTempo: aTempoDaEtapa(etapa), pedidoPor, conta, filial: texto(corpo.filial, 40) || (feitoDados.dados.origem && feitoDados.dados.origem.filial) || feitoDados.dados.filial || '', area: def.area, status: 'recebida',
-      resposta: '', responsavel: '', respondidoPor: '', naoAchado: Boolean(corpo.naoAchado), criadoEm: quando, primeiraRespostaEm: '', concluidaEm: '', atualizadoEm: quando, historico: []
+      id: novoId(now), protocolo: novoProtocolo(linhas, now), tipo, pedido, dados: feitoDados.dados, texto: msg, prioridade: prioridadeInicial(tipo, etapa, feitoDados.dados, now, pq.valor),
+      etapa, aTempo: aTempoDaEtapa(etapa), pedidoPor, conta, filial: texto(corpo.filial, 40) || (feitoDados.dados.origem && feitoDados.dados.origem.filial) || feitoDados.dados.filial || '', area: def.area, status,
+      resposta: '', responsavel: '', respondidoPor: '', naoAchado: listaP.lote ? pedidos.some((x) => x.naoAchado) : Boolean(corpo.naoAchado), criadoEm: quando, primeiraRespostaEm: '', concluidaEm: '', atualizadoEm: quando, paraQuando: pq.valor, pedidos, historico: []
     };
-    add(nova, { em: quando, acao: 'criado', por: pedidoPor, texto: msg, status: 'recebida' });
+    add(nova, { em: quando, acao: 'criado', por: pedidoPor, texto: msg, status });
     linhas.unshift(nova);
     return { linhas, resultado: { id: nova.id, protocolo: nova.protocolo } };
   }
   const l = linhas.find((x) => x.id === texto(corpo && corpo.id, 40));
-  if (['status', 'assumir', 'interno', 'prioridade', 'area'].includes(acao) && !l) return { linhas, erro: 'Solicitação não encontrada.' };
+  if (['status', 'assumir', 'interno', 'prioridade', 'area', 'concluir_pedido'].includes(acao) && !l) return { linhas, erro: 'Solicitação não encontrada.' };
   if (acao === 'status') {
     if (!STATUS.includes(corpo.status)) return { linhas, erro: 'Status inválido.' };
     const resposta = texto(corpo.resposta, 300);
@@ -354,6 +476,31 @@ function aplicar(linhasAtuais, corpo, quem, agora, ctx) {
     if (l.area !== corpo.area) { l.area = corpo.area; l.atualizadoEm = quando; add(l, { em: quando, acao: 'area', por, area: corpo.area }); }
     return { linhas, resultado: { id: l.id } };
   }
+  if (acao === 'concluir_pedido') {
+    // Lote: a equipe conclui um pedido de cada vez; quando todos estiverem atendidos a solicitação conclui sozinha.
+    const p = numeroDoPedido(corpo.pedido), alvo = p ? l.pedidos.find((x) => x.pedido === p) : null;
+    if (!alvo) return { linhas, erro: 'Este pedido não faz parte da solicitação.' };
+    if (corpo.desfazer === true) {
+      if (!alvo.concluido) return { linhas, resultado: { id: l.id } };
+      alvo.concluido = false; alvo.concluidoEm = ''; alvo.concluidoPor = ''; l.atualizadoEm = quando;
+      add(l, { em: quando, acao: 'pedido_concluido', por, texto: 'Pedido ' + p + ' reaberto' });
+      if (FINAIS.includes(l.status)) { l.status = 'em_andamento'; l.concluidaEm = ''; add(l, { em: quando, acao: 'status', por, texto: 'Voltou para andamento: o pedido ' + p + ' foi reaberto.', status: 'em_andamento' }); }
+      return { linhas, resultado: { id: l.id } };
+    }
+    if (!ATIVOS.includes(l.status)) return { linhas, erro: 'Esta solicitação já foi encerrada.' };
+    if (alvo.concluido) return { linhas, resultado: { id: l.id } };
+    alvo.concluido = true; alvo.concluidoEm = quando; alvo.concluidoPor = por;
+    if (!l.responsavel && por) l.responsavel = por;
+    if (!l.primeiraRespostaEm) l.primeiraRespostaEm = quando;
+    l.respondidoPor = por; l.atualizadoEm = quando;
+    add(l, { em: quando, acao: 'pedido_concluido', por, texto: 'Pedido ' + p + ' atendido' });
+    if (l.pedidos.every((x) => x.concluido)) {
+      const resposta = texto(corpo.resposta, 300) || 'Todos os pedidos foram atendidos.';
+      l.status = 'concluida'; l.concluidaEm = quando; l.resposta = resposta;
+      add(l, { em: quando, acao: 'status', por, texto: resposta, status: 'concluida' });
+    }
+    return { linhas, resultado: { id: l.id } };
+  }
   return { linhas, erro: 'ação inválida' };
 }
 
@@ -362,7 +509,8 @@ function aplicar(linhasAtuais, corpo, quem, agora, ctx) {
 function historicoPublico(l) {
   const saida = [];
   for (const h of l.historico) {
-    if (h.acao === 'criado') saida.push({ em: h.em, status: 'recebida', texto: '' });
+    if (h.acao === 'criado') saida.push({ em: h.em, status: h.status || 'recebida', texto: '' });
+    else if (h.acao === 'pedido_concluido') saida.push({ em: h.em, status: '', texto: h.texto });
     else if (h.acao === 'status') saida.push({ em: h.em, status: h.status, texto: h.texto });
     else if (h.acao === 'assumir' && h.status) saida.push({ em: h.em, status: h.status, texto: '' });
   }
@@ -370,7 +518,8 @@ function historicoPublico(l) {
 }
 const visaoMeu = (l) => ({
   id: l.id, protocolo: l.protocolo, tipo: l.tipo, rotulo: (TIPOS[l.tipo] || TIPOS.outro).rotulo, pedido: l.pedido, dados: l.dados, texto: l.texto, status: l.status, resposta: l.resposta,
-  etapa: l.etapa, aTempo: l.aTempo, aviso: l.etapa ? avisoDaEtapa(l.etapa) : '', criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l)
+  etapa: l.etapa, aTempo: l.aTempo, aviso: l.etapa ? avisoDaEtapa(l.etapa) : '', criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l),
+  paraQuando: l.paraQuando, pedidos: l.pedidos.map((p) => ({ pedido: p.pedido, etapa: p.etapa, naoAchado: p.naoAchado, concluido: p.concluido, concluidoEm: p.concluidoEm }))
 });
 // Cada vendedora só enxerga o que ela mesma enviou: pelo login, ou pelo nome quando não tem login (junto com o id guardado no aparelho).
 const ehDela = (l, login) => Boolean(login) && l.conta === login;
@@ -406,13 +555,14 @@ function filtrar(linhas, f) {
     if (TIPOS[p.tipo] && l.tipo !== p.tipo) return false;
     if (AREAS.includes(p.area) && l.area !== p.area) return false;
     if (de || ate) { const dia = l.criadoEm ? diaSP(Date.parse(l.criadoEm)) : ''; if (!dia || (de && dia < de) || (ate && dia > ate)) return false; }
-    if (palavras.length) { const feno = semAcento([l.protocolo, l.pedido, l.pedidoPor, l.texto, l.filial, (TIPOS[l.tipo] || {}).rotulo, textoBusca(l.dados)].join(' ')); if (!palavras.every((w) => feno.includes(w))) return false; }
+    if (palavras.length) { const feno = semAcento([l.protocolo, l.pedido, (l.pedidos || []).map((x) => x.pedido).join(' '), l.pedidoPor, l.texto, l.filial, (TIPOS[l.tipo] || {}).rotulo, textoBusca(l.dados)].join(' ')); if (!palavras.every((w) => feno.includes(w))) return false; }
     return true;
   });
 }
 
 // ---- CSV ------------------------------------------------------------------------------------------------------------------------------
-const CABECALHO_CSV = ['id', 'protocolo', 'tipo', 'pedido', 'vendedora', 'filial', 'status', 'prioridade', 'criada', '1ª resposta', 'concluída', 'minutos até resposta', 'minutos até conclusão'];
+// as 3 últimas colunas foram acrescentadas depois (para quando, pedidos do lote, quantos já atendidos): as anteriores continuam na mesma ordem
+const CABECALHO_CSV = ['id', 'protocolo', 'tipo', 'pedido', 'vendedora', 'filial', 'status', 'prioridade', 'criada', '1ª resposta', 'concluída', 'minutos até resposta', 'minutos até conclusão', 'para quando', 'pedidos do lote', 'pedidos atendidos'];
 const celula = (v) => {
   let s = v == null ? '' : String(v);
   if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // não deixa a planilha executar fórmula vinda de texto digitado
@@ -421,12 +571,13 @@ const celula = (v) => {
 function paraCsv(linhas) {
   const dt = (v) => (v ? new Date(v).toLocaleString('sv-SE', { timeZone: FUSO }) : '');
   const corpo = linhas.map((l) => [l.id, l.protocolo, (TIPOS[l.tipo] || TIPOS.outro).rotulo, l.pedido, l.pedidoPor, FILIAIS_ROTULO[l.filial] || l.filial, l.status, l.prioridade, dt(l.criadoEm), dt(l.primeiraRespostaEm), dt(l.concluidaEm),
-    l.primeiraRespostaEm ? minutos(l.criadoEm, l.primeiraRespostaEm) : '', l.concluidaEm ? minutos(l.criadoEm, l.concluidaEm) : ''].map(celula).join(';'));
+    l.primeiraRespostaEm ? minutos(l.criadoEm, l.primeiraRespostaEm) : '', l.concluidaEm ? minutos(l.criadoEm, l.concluidaEm) : '', PQ.rotulo(l.paraQuando), l.pedidos.map((p) => p.pedido).join(' '), l.pedidos.length ? l.pedidos.filter((p) => p.concluido).length + ' de ' + l.pedidos.length : ''].map(celula).join(';'));
   return '﻿' + [CABECALHO_CSV.map(celula).join(';')].concat(corpo).join('\r\n') + '\r\n';
 }
 
 module.exports = {
-  MAX_LINHAS, MAX_HISTORICO, LIMITE_POR_DIA, DIAS_PARA_LIMPAR, TIPOS, TIPOS_IDS, AREAS, AREAS_ROTULO, STATUS, ATIVOS, FINAIS, PRIORIDADES, ETAPAS, FILIAIS, FILIAIS_INFO, FILIAIS_ROTULO, MAX_ITENS_TRANSFERENCIA,
+  MAX_LINHAS, MAX_HISTORICO, LIMITE_POR_DIA, MAX_PEDIDOS_LOTE, DIAS_PARA_LIMPAR, TIPOS, TIPOS_IDS, AREAS, AREAS_ROTULO, STATUS, ATIVOS, FINAIS, PRIORIDADES, ETAPAS, FILIAIS, FILIAIS_INFO, FILIAIS_ROTULO, MAX_ITENS_TRANSFERENCIA,
   armazemDe, rotuloLocal, textoBusca, normalizarLinha, normalizarLista, limpar, novoProtocolo, aplicar, dadosDoTipo, filialDe, etapaDoRastreio, avisoDaEtapa, aTempoDaEtapa, prioridadeInicial, slaDe, minutos,
-  historicoPublico, visaoMeu, ehDela, ehDonoPorNome, vincularConta, ordenarFila, filtrar, paraCsv, diaSP
+  historicoPublico, visaoMeu, ehDela, ehDonoPorNome, vincularConta, ordenarFila, filtrar, paraCsv, diaSP,
+  listaDePedidos, etapaMaisAdiantada, ETAPAS_RECUSADAS, MOTIVOS_SAIR, MODOS_SAIDA, SUBTIPOS_NF, ACOES_FALTA, MODOS_ERRO
 };

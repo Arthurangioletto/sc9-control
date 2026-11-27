@@ -178,7 +178,7 @@ test('equipe: permissões, assumir/responder/comentar/prioridade/área, a vended
     const logi = await equipe('logi', ['ocorrencias']);
     const r1 = await call('/api/solicitacoes', null, { cookie: logi });
     assert.equal(r1.status, 200); assert.equal(r1.headers.get('cache-control'), 'no-store');
-    assert.deepEqual(Object.keys(r1.data.tipos), ['cancelar_pedido', 'segurar_pedido', 'transferencia_peca', 'consulta_estoque', 'alterar_pedido', 'nota_fiscal', 'outro']);
+    assert.deepEqual(Object.keys(r1.data.tipos).slice(0, 7), ['cancelar_pedido', 'segurar_pedido', 'transferencia_peca', 'consulta_estoque', 'alterar_pedido', 'nota_fiscal', 'outro']);
     // ações
     const agir = (corpo, cookie) => call('/api/solicitacoes', corpo, { cookie: cookie || logi });
     assert.equal((await agir({ acao: 'apagar', id })).status, 400);
@@ -215,7 +215,7 @@ test('equipe: permissões, assumir/responder/comentar/prioridade/área, a vended
     // CSV: UTF-8 com BOM e sem fórmula solta
     const csv = await call('/api/solicitacoes/exportar', null, { cookie: logi });
     assert.equal(csv.status, 200); assert.match(csv.headers.get('content-type'), /text\/csv; charset=utf-8/);
-    assert.ok(csv.texto.startsWith('﻿id;protocolo;tipo;pedido;vendedora;filial;status;prioridade;criada;1ª resposta;concluída;minutos até resposta;minutos até conclusão'));
+    assert.ok(csv.texto.startsWith('﻿id;protocolo;tipo;pedido;vendedora;filial;status;prioridade;criada;1ª resposta;concluída;minutos até resposta;minutos até conclusão;para quando;pedidos do lote;pedidos atendidos'));
     assert.equal(csv.texto.trim().split('\r\n').length, 3);
     assert.ok(!/(^|;)=HYPERLINK/.test(csv.texto));
     // nada apagado: o arquivo guarda as duas, com histórico

@@ -174,3 +174,66 @@
 .sol-filtros .sol-check { align-self: end; }
 @media (max-width: 640px) { .sol-bloco .tabela-rolagem { margin: 0 -16px; padding: 0 16px; } }
 .sol-dupla > * { min-width: 0; }
+
+/* ---------- Onda 1: "Como funciona" recolhido, "Para quando", saldo separado, lista única em Minhas, consulta do pedido ---------- */
+.processo.como-recolhido { display: block; padding: 4px 14px; border-radius: var(--raio-md); background: linear-gradient(180deg, #f3f7ff, var(--azul-claro)); box-shadow: var(--anel); font-size: 13.5px; }
+.processo.como-recolhido > summary { list-style: none; display: flex; align-items: center; gap: 10px; cursor: pointer; min-height: 44px; padding: 4px 0; }
+.processo.como-recolhido > summary::-webkit-details-marker { display: none; }
+.processo.como-recolhido > summary > .ic { width: 28px; height: 28px; padding: 5px; flex: 0 0 auto; color: var(--azul); background: #fff; border-radius: 50%; box-shadow: 0 2px 6px -1px rgba(29, 78, 216, .3); }
+.processo.como-recolhido > summary::after { content: ""; margin-left: auto; flex: 0 0 auto; width: 9px; height: 9px; border-right: 2px solid var(--azul); border-bottom: 2px solid var(--azul); transform: rotate(45deg); transition: transform .15s; }
+.processo.como-recolhido[open] > summary::after { transform: rotate(-135deg); }
+.processo.como-recolhido > summary:focus-visible { outline: 3px solid #93b2ff; outline-offset: 2px; border-radius: 10px; }
+.processo.como-recolhido .como-resumo { min-width: 0; line-height: 1.35; } .processo.como-recolhido .como-resumo .mudo { color: var(--tinta-2); }
+.processo.como-recolhido .como-lista { margin: 4px 0 12px; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.45; }
+.processo.como-recolhido.velha .como-resumo .mudo { color: #8a3a05; font-weight: 700; }
+.sol-pq { display: flex; flex-direction: column; gap: 8px; }
+.sol-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.sol-chips .chip, .sol-tipos-minhas .chip { min-height: 44px; padding: 8px 16px; font-size: 14px; }
+.chip[aria-pressed="true"] { background: var(--azul); border-color: var(--azul); color: #fff; box-shadow: 0 6px 14px -6px rgba(29, 78, 216, .7); }
+.chip:focus-visible { outline: 3px solid #93b2ff; outline-offset: 2px; }
+.sol-tipos-minhas { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
+.sol-saldo.sep { background: #f3eefb; color: #4a2aa0; font-weight: 600; white-space: normal; }
+.sol-etapa .btn { margin-top: 8px; }
+/* aba Armazéns (equipe) */
+.arm-filial .arm-linha { display: grid; grid-template-columns: 90px minmax(200px, 1.4fr) auto minmax(200px, 1.4fr) auto; gap: 10px 14px; align-items: end; padding: 12px 0; border-top: 1px solid var(--linha); }
+.arm-filial .arm-linha.separado { background: linear-gradient(90deg, #f7f3fd, transparent 40%); }
+.arm-cod { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; } .arm-cod b { font-size: 20px; }
+.arm-marcas { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.arm-marcas .sol-check { min-height: 44px; }
+.arm-novo { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; margin-top: 10px; padding-top: 12px; border-top: 1px dashed var(--linha); } .arm-novo .sol-campo { flex: 0 1 220px; }
+@media (max-width: 900px) { .arm-filial .arm-linha { grid-template-columns: 1fr; } }
+.sol-pq-tag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; background: var(--laranja-claro); color: #8a4207; font-weight: 700; font-size: 12px; } .sol-pq-tag .ic { width: 13px; height: 13px; }
+.selo.aguardando_aprovacao { background: var(--laranja-claro); color: #8a4207; }
+.sol-lote-lista { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sol-lote-lista li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--linha); border-radius: var(--raio-sm); background: #fff; } .sol-lote-lista li.feito { background: var(--verde-claro); border-color: #bfe6d1; }
+
+/* ---------- Onda 2: tela "Início" (entrada única), lote de pedidos, modelos, selo de respostas novas ---------- */
+.ini-raiz { display: flex; flex-direction: column; gap: 16px; }
+.ini-pedidos textarea { min-height: 76px; resize: vertical; font-size: 16px; }
+.ini-fichas { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.ini-ficha { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; min-height: 36px; border-radius: 999px; border: 1px solid var(--linha); background: var(--suave); font-size: 13px; max-width: 100%; }
+.ini-ficha span { overflow-wrap: anywhere; } .ini-ficha.ok { background: var(--verde-claro); border-color: #bfe6d1; color: #0b6b42; } .ini-ficha.fora { background: var(--laranja-claro); border-color: #f5cf93; color: #7a3a04; } .ini-ficha.erro { background: var(--vermelho-claro); border-color: #f3b7b1; color: #9e2217; }
+.ini-cartoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.ini-cartao { display: flex; align-items: center; gap: 12px; text-align: left; min-height: 72px; padding: 12px 14px; border: 1.5px solid var(--linha); border-radius: var(--raio-md); background: #fff; color: var(--tinta); cursor: pointer; font: inherit; box-shadow: var(--sombra); transition: border-color .15s, box-shadow .15s, transform .1s; }
+.ini-cartao:hover { border-color: var(--azul-borda); box-shadow: var(--sombra-2); } .ini-cartao:active { transform: scale(.99); } .ini-cartao:focus-visible { outline: 3px solid #93b2ff; outline-offset: 2px; }
+.ini-cartao-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; } .ini-cartao-txt b { font-size: 16px; line-height: 1.2; } .ini-cartao-txt small { font-size: 13px; color: var(--mudo); font-weight: 500; line-height: 1.3; }
+.ini-outro { border-style: dashed; box-shadow: none; }
+.sol-op.desabilitada { opacity: .62; cursor: not-allowed; background: var(--suave); } .sol-op.desabilitada small { color: #7a3a04; font-weight: 700; }
+.ini-lote { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ini-lote li { padding: 6px 12px; border: 1px solid var(--linha); border-radius: var(--raio-sm); background: #fff; } .ini-lote li.nao-cabe { background: var(--laranja-claro); border-color: #f5cf93; }
+.ini-lote .sol-check { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 44px; } .ini-lote input[type="checkbox"] { width: 22px; height: 22px; }
+.ini-lote-nota { display: block; font-size: 13px; padding: 0 0 6px 32px; color: var(--tinta-2); } .ini-lote-nota.motivo { color: #7a3a04; font-weight: 700; }
+.ini-achados { position: static; margin-top: 6px; max-height: 260px; } .ini-achados:empty { display: none; }
+.ini-achados .sol-sug-item { width: 100%; border: 0; background: transparent; text-align: left; font: inherit; min-height: 44px; }
+.ini-itens { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ini-itens li { display: grid; grid-template-columns: 1fr 90px auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--linha); border-radius: var(--raio-sm); background: #fff; }
+.ini-item-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.ini-modelos { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; } .ini-modelos li { display: inline-flex; align-items: center; gap: 2px; }
+.ini-modelos .chip { display: inline-flex; align-items: center; gap: 6px; } .ini-modelos .chip svg { width: 16px; height: 16px; }
+.ini-modelo-form { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px dashed var(--azul-borda); border-radius: var(--raio-md); background: var(--azul-claro); }
+.selo-nav { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--laranja); color: #fff; font-size: 12px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px #fff; } .selo-nav[hidden] { display: none; }
+.vend .nav button { position: relative; }
+@media (max-width: 900px) { .vend .nav .selo-nav { position: absolute; top: 4px; left: 50%; margin-left: 6px; } }
+.minha-nova { position: relative; } .minha-nova > .selo { position: absolute; z-index: 2; top: -8px; right: 10px; box-shadow: 0 4px 10px -3px rgba(217, 105, 10, .55); } .minha-nova + .cartao-lista, .minha-nova + .minha-nova { margin-top: 14px; }
+.minha-nova .cartao-lista { margin-top: 0; } .minha-nova { margin-top: 10px; }
+@media (max-width: 640px) { .ini-itens li { grid-template-columns: 1fr 72px auto; } .sol-escolha { grid-template-columns: 1fr; } }

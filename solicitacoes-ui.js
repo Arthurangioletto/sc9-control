@@ -76,7 +76,7 @@
     const f = u.filtro, ate = S.ATIVOS, q = S.norm(f.q).split(/\s+/).filter(Boolean);
     let lista = f.vista === 'ativas' ? u.dados.ativos : f.vista === 'encerradas' ? u.dados.demais : todas();
     lista = lista.filter((l) => (!f.tipo || l.tipo === f.tipo) && (!f.status || l.status === f.status) && (!f.area || l.area === f.area) && (!f.atrasadas || l.atrasada)
-      && (f.kpi !== 'novas' || l.status === 'recebida') && (f.kpi !== 'urgentes' || (l.prioridade === 'urgente' && ate.includes(l.status))) && (f.kpi !== 'tempo' || (cancelaOuSegura(l) && l.aTempo && ate.includes(l.status))));
+      && (f.kpi !== 'novas' || (l.status === 'recebida' || l.status === 'aguardando_aprovacao')) && (f.kpi !== 'urgentes' || (l.prioridade === 'urgente' && ate.includes(l.status))) && (f.kpi !== 'tempo' || (cancelaOuSegura(l) && l.aTempo && ate.includes(l.status))));
     if (q.length) { lista = lista.filter((l) => { const t = haystack(l); return q.every((p) => t.includes(p)); }); }
     return lista;
   }
@@ -84,7 +84,7 @@
 
   /* ---------- Caixa de entrada ---------- */
   function kpisCaixa() {
-    const at = u.dados.ativos, n = { novas: at.filter((l) => l.status === 'recebida').length, urgentes: at.filter((l) => l.prioridade === 'urgente').length, atras: at.filter((l) => l.atrasada).length, tempo: at.filter((l) => cancelaOuSegura(l) && l.aTempo).length };
+    const at = u.dados.ativos, n = { novas: at.filter((l) => l.status === 'recebida' || l.status === 'aguardando_aprovacao').length, urgentes: at.filter((l) => l.prioridade === 'urgente').length, atras: at.filter((l) => l.atrasada).length, tempo: at.filter((l) => cancelaOuSegura(l) && l.aTempo).length };
     const k = (id, icone, rot, valor, urg) => h('button', { class: 'kpi' + (urg && valor ? ' urg' : '') + (u.filtro.kpi === id ? ' ativo' : ''), type: 'button', 'aria-pressed': String(u.filtro.kpi === id), onclick: () => { u.filtro.kpi = u.filtro.kpi === id ? '' : id; if (id === 'atras') u.filtro.atrasadas = !u.filtro.atrasadas; u.filtro.vista = 'ativas'; redesenhar(); } }, ic(icone), h('b', { text: String(valor) }), h('span', { text: rot }));
     return h('div', { class: 'kpis sol-kpis4' },
       k('novas', 'caixaEntrada', 'Novas (ninguém viu)', n.novas, true), k('urgentes', 'raio', 'Urgentes', n.urgentes, true),
@@ -109,7 +109,7 @@
       h('span', { class: 'sol-l-corpo' },
         h('span', { class: 'sol-l-topo' }, h('b', { text: t.rotulo }), seloPrio(l.prioridade), C.selo(S.STATUS[l.status] || l.status, l.status), seloTempo(l), tr ? h('span', { class: 'sol-selo-tipo tipo-' + (l.dados.tipoTransferencia || S.tipoDaTransf(l.dados.origem, l.dados.destino)), text: S.ROTULO_TRANSF[l.dados.tipoTransferencia || S.tipoDaTransf(l.dados.origem, l.dados.destino)] }) : null),
         resumoTxt ? h('span', { class: 'sol-l-resumo', text: resumoTxt }) : null,
-        h('span', { class: 'sol-l-meta' }, l.pedido ? h('span', { class: 'num', text: 'Pedido ' + l.pedido }) : null, h('span', { text: l.pedidoPor || '—' }), l.filial ? h('span', { text: S.nomeFilial(l.filial) }) : null, h('span', { text: S.AREAS[l.area] || l.area }), h('span', { class: 'mudo', text: l.protocolo || '' }))),
+        h('span', { class: 'sol-l-meta' }, l.pedido ? h('span', { class: 'num', text: 'Pedido ' + l.pedido + (l.pedidos && l.pedidos.length > 1 ? ' +' + (l.pedidos.length - 1) + ' (' + S.progressoLote(l) + ')' : '') }) : null, l.paraQuando ? h('span', { class: 'sol-pq-tag', title: 'Para quando a vendedora precisa' }, ic('relogio'), S.paraQuandoTxt(l.paraQuando)) : null, h('span', { text: l.pedidoPor || '—' }), l.filial ? h('span', { text: S.nomeFilial(l.filial) }) : null, h('span', { text: S.AREAS[l.area] || l.area }), h('span', { class: 'mudo', text: l.protocolo || '' }))),
       h('span', { class: 'sol-l-lado' }, ativa ? seloSla(l) : h('span', { class: 'mudo peq', text: 'Encerrada ' + (l.concluidaEm ? 'há ' + C.duracao(l.concluidaEm) : '') }), h('span', { class: 'mudo peq', text: 'Pedida há ' + C.duracao(l.criadoEm) }), l.responsavel ? h('span', { class: 'mudo peq', text: 'Com ' + l.responsavel }) : ativa ? h('span', { class: 'peq sem-dono', text: 'Sem responsável' }) : null));
   }
   const corpoLista = () => {
@@ -124,7 +124,7 @@
   const contagemTxt = () => { const n = filtradas().length; return n + (algumFiltro() ? ' de ' + (u.filtro.vista === 'ativas' ? u.dados.ativos.length : todas().length) : '') + (n === 1 ? ' solicitação' : ' solicitações'); };
   function telaCaixa() {
     if (!u.dados) return u.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), u.erro) : C.esqueleto(3);
-    const novas = u.dados.ativos.filter((l) => l.status === 'recebida').length;
+    const novas = u.dados.ativos.filter((l) => l.status === 'recebida' || l.status === 'aguardando_aprovacao').length;
     return [u.erro ? h('div', { class: 'erro', role: 'alert' }, ic('alerta'), u.erro) : null,
       novas ? h('section', { class: 'alerta-sc9', role: 'status' }, h('div', { class: 'bola' }, ic('caixaEntrada')), h('div', { class: 'meio' }, h('h2', { text: novas === 1 ? '1 solicitação nova das vendedoras' : novas + ' solicitações novas das vendedoras' }), h('p', { text: 'Ninguém da logística olhou ainda. Cancelar e segurar pedido têm prazo curto.' })), h('button', { class: 'btn peq', type: 'button', onclick: () => { u.filtro = Object.assign({}, VAZIO, { kpi: 'novas' }); redesenhar(); } }, ic('lista'), 'Ver as novas')) : null,
       kpisCaixa(),
@@ -140,7 +140,7 @@
     const abre = u.gavAnim !== l.id ? ' abre' : ''; u.gavAnim = l.id;
     const bt = (st, texto, cls) => h('button', { class: 'btn peq ' + (cls || ''), type: 'button', disabled: ocupado, onclick: () => mudarStatus(l, st) }, texto);
     const dados = S.dadosLegiveis(l), sl = sla(l);
-    const infos = [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', l.filial ? S.nomeFilial(l.filial) : '—'], ['Pedida', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Área', S.AREAS[l.area] || l.area],
+    const infos = [['Vendedora', (l.pedidoPor || '—') + (l.conta ? ' (login ' + l.conta + ')' : ' (só informou o nome)')], ['Filial', l.filial ? S.nomeFilial(l.filial) : '—'], ['Pedida', C.dataHora(l.criadoEm) + ' (há ' + C.duracao(l.criadoEm) + ')'], ['Para quando', l.paraQuando ? S.paraQuandoTxt(l.paraQuando) : 'Não informado'], ['Responsável', l.responsavel || 'ninguém assumiu'], ['Área', S.AREAS[l.area] || l.area],
       ['Prazo da 1ª resposta', S.minTxt(l.slaMin)], ['1ª resposta', l.primeiraRespostaEm ? C.dataHora(l.primeiraRespostaEm) : 'ainda não']];
     return [h('div', { class: 'gaveta-fundo' + abre, onclick: fecha }),
       h('aside', { class: 'gaveta' + abre, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Solicitação ' + (l.protocolo || t.rotulo) },
@@ -152,6 +152,11 @@
           l.tipo === 'transferencia_peca' && d.itens ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Transferência pedida' }), S.rotaTransf(d), S.tabelaItens(d, { saldo: true }),
             d.acimaDoSaldo ? h('div', { class: 'aviso', style: 'margin-top:10px' }, ic('alerta'), h('div', null, h('b', { text: 'Algum item passa do saldo da origem. ' }), 'O saldo é o de quando ela pediu.')) : null,
             h('div', { class: 'resumo-lista' }, [['Total', S.plural(d.totalProdutos || d.itens.length, 'produto', 'produtos') + ', ' + S.plural(d.totalPecas != null ? d.totalPecas : S.totaisTransf(d.itens).pecas, 'peça', 'peças')], ['Prazo', d.prazo ? S.dataCurtaISO(d.prazo) : 'sem prazo'], d.motivo ? ['Motivo', d.motivo] : null].filter(Boolean).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v }))))) : null,
+          l.status === 'aguardando_aprovacao' ? h('div', { class: 'aviso', role: 'note' }, ic('relogio'), h('div', null, h('b', { text: 'Motoboy urgente: aguardando a aprovação da equipe. ' }), 'Aprove para a logística providenciar ou negue explicando o motivo.', h('div', { class: 'botoes-status', style: 'margin-top:8px' }, bt('em_andamento', 'Aprovar o motoboy', 'primario'), bt('negada', 'Negar', 'perigo')))) : null,
+          l.pedidos && l.pedidos.length > 1 ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Pedidos desta solicitação · ' + S.progressoLote(l) }), h('ul', { class: 'sol-lote-lista' }, l.pedidos.map((x) => h('li', { class: x.concluido ? 'feito' : '' },
+            h('b', { class: 'num', text: x.pedido }), h('span', { class: 'mudo', text: x.naoAchado ? 'Fora do SC9 quando pediu' : x.etapa ? S.ETAPA[x.etapa] || '' : '' }), x.concluido ? h('span', { class: 'peq', text: 'Atendido' + (x.concluidoPor ? ' por ' + x.concluidoPor : '') }) : null,
+            ativa || x.concluido ? h('button', { class: 'btn peq' + (x.concluido ? '' : ' primario'), type: 'button', disabled: ocupado, style: 'margin-left:auto', onclick: () => agir(l, { acao: 'concluir_pedido', pedido: x.pedido, desfazer: x.concluido || undefined }, x.concluido ? 'Pedido ' + x.pedido + ' reaberto.' : 'Pedido ' + x.pedido + ' concluído.') }, x.concluido ? 'Reabrir' : 'Concluir este pedido') : null)))) : null,
+          l.tipo === 'falta_item' && d.itens ? h('div', null, h('p', { class: 'bloco-titulo', text: 'Produtos em falta' }), S.tabelaItens(d, { semLote: true })) : null,
           h('div', null, h('p', { class: 'bloco-titulo', text: 'Pedido da vendedora' }), h('div', { class: 'resumo-lista', style: 'margin-top:0' }, dados.concat(infos).map(([a, v]) => h('div', null, h('span', { text: a }), h('b', { text: v }))))),
           h('p', { class: 'sol-sla-linha' }, seloSla(l), h('span', { class: 'mudo peq', text: sl.dica })),
           l.resposta ? h('div', { class: 'cx-situacao', style: 'background:var(--azul-claro);color:var(--azul-escuro)' }, h('b', { text: 'Última resposta para a vendedora: ' }), l.resposta) : null,
@@ -246,6 +251,6 @@
     return aba === 'solic' ? telaCaixa() : telaDash();
   }
   const gavetaAberta = () => (u.aberta && u.dados ? todas().find((x) => x.id === u.aberta) : null);
-  const contagem = () => (u.dados ? u.dados.ativos.filter((l) => l.status === 'recebida').length : 0);
+  const contagem = () => (u.dados ? u.dados.ativos.filter((l) => l.status === 'recebida' || l.status === 'aguardando_aprovacao').length : 0);
   root.SolicitacoesUI = { tela, gaveta: () => { const l = gavetaAberta(); return l && (u.aba === 'solic' || u.aba === 'dash') ? gaveta(l) : []; }, contagem, abrir: (id) => { u.aberta = id; u.gavAnim = null; } };
 })(window);

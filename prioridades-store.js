@@ -4,6 +4,7 @@
  *               conta (login da vendedora, quando ela criou acesso; vazio se enviou só com o nome), criadoEm, atualizadoEm, historico[] }. O histórico só cresce (cada mudança: quem, quando, o quê).
  * Só validação e mesclagem, sem acesso a disco. */
 'use strict';
+const PQ = require('./para-quando.js');
 
 const MAX_LINHAS = 3000;
 const MAX_HISTORICO = 60;
@@ -43,7 +44,7 @@ function normalizarLinha(x) {
     observacao: texto(x.observacao, 300), pedidoPor: texto(x.pedidoPor, 60), conta: texto(x.conta, 24), filial: texto(x.filial, 40),
     status: statusDe(x.status) || 'recebida',
     resposta: texto(x.resposta, 300), responsavel: texto(x.responsavel, 60), respondidoPor: texto(x.respondidoPor, 60),
-    naoAchado: Boolean(x.naoAchado),
+    naoAchado: Boolean(x.naoAchado), paraQuando: PQ.normalizar(x.paraQuando),
     criadoEm: dataHora(x.criadoEm), atualizadoEm: dataHora(x.atualizadoEm),
     historico: (Array.isArray(x.historico) ? x.historico : []).slice(-MAX_HISTORICO).map((h) => ({
       em: dataHora(h && h.em), acao: ACOES_HIST.includes(h && h.acao) ? h.acao : 'status', por: texto(h && h.por, 60), conta: texto(h && h.conta, 24), texto: texto(h && h.texto, 300),
@@ -101,11 +102,14 @@ function aplicar(linhasAtuais, corpo, quem, agora) {
     if (pedidoPor.length < 2) return { linhas, erro: 'Diga seu nome para a equipe saber quem pediu.' };
     const observacao = texto(corpo.observacao, 300);
     if (motivo === 'outro' && observacao.length < 5) return { linhas, erro: 'Explique o motivo na observação.' };
+    const pq = PQ.validar(corpo.paraQuando, agora); // "Para quando": opcional, mas se vier tem que ser válido
+    if (pq.erro) return { linhas, erro: pq.erro };
     const ativa = linhas.find((l) => l.pedido === pedido && ATIVOS.includes(l.status));
     if (ativa) {
       // já está na fila: não cria outro, reforça o existente (sobe o nível se for maior) e registra a observação
       if (PESO_NIVEL[nivel] > PESO_NIVEL[ativa.nivel]) ativa.nivel = nivel;
       add(ativa, { em: quando, acao: 'reforco', por: pedidoPor, conta: texto(corpo.conta, 24), texto: observacao, nivel, status: '' });
+      if (pq.valor && !ativa.paraQuando) ativa.paraQuando = pq.valor;
       ativa.atualizadoEm = quando;
       return { linhas, resultado: { id: ativa.id, duplicado: true } };
     }
@@ -113,7 +117,7 @@ function aplicar(linhasAtuais, corpo, quem, agora) {
     if (linhas.filter((l) => l.pedidoPor.toLowerCase() === quemPediu && Date.parse(l.criadoEm) >= desde).length >= LIMITE_POR_DIA) return { linhas, erro: 'Você já fez ' + LIMITE_POR_DIA + ' pedidos de prioridade hoje. Fale direto com a equipe da expedição.' };
     if (linhas.length >= MAX_LINHAS) return { linhas, erro: 'A fila está cheia no momento. Fale com a equipe da expedição.' };
     const nova = {
-      id: novoId(agora), protocolo: novoProtocolo(linhas, agora), pedido, nivel, motivo, observacao, pedidoPor, conta: texto(corpo.conta, 24), filial: texto(corpo.filial, 40), status: 'recebida', resposta: '', responsavel: '', respondidoPor: '', naoAchado: Boolean(corpo.naoAchado),
+      id: novoId(agora), protocolo: novoProtocolo(linhas, agora), pedido, nivel, motivo, observacao, pedidoPor, conta: texto(corpo.conta, 24), filial: texto(corpo.filial, 40), status: 'recebida', resposta: '', responsavel: '', respondidoPor: '', naoAchado: Boolean(corpo.naoAchado), paraQuando: pq.valor,
       criadoEm: quando, atualizadoEm: quando, historico: [{ em: quando, acao: 'criado', por: pedidoPor, texto: observacao, nivel, status: 'recebida' }]
     };
     linhas.unshift(nova);
@@ -196,7 +200,7 @@ const reforcou = (l, login) => Boolean(login) && l.historico.some((h) => h.acao 
 const ehDela = (l, login) => Boolean(login) && (l.conta === login || reforcou(l, login));
 // Quem só reforçou o pedido de outra pessoa recebe um id DIFERENTE (idReforco(id), que não dá para desfazer): o id verdadeiro só fica com quem criou.
 // Assim ninguém consegue pedir a linha de outra pessoa pelo id e ler a observação dela.
-const visaoMeu = (l, dono, idReforco) => ({ id: dono === false && typeof idReforco === 'function' ? idReforco(l.id) : l.id, protocolo: l.protocolo, pedido: l.pedido, nivel: l.nivel, motivo: dono === false ? '' : l.motivo, status: l.status, observacao: dono === false ? '' : l.observacao, pedidoPor: dono === false ? '' : l.pedidoPor, resposta: l.resposta, reforco: dono === false, criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l) });
+const visaoMeu = (l, dono, idReforco) => ({ id: dono === false && typeof idReforco === 'function' ? idReforco(l.id) : l.id, protocolo: l.protocolo, pedido: l.pedido, nivel: l.nivel, motivo: dono === false ? '' : l.motivo, status: l.status, observacao: dono === false ? '' : l.observacao, pedidoPor: dono === false ? '' : l.pedidoPor, resposta: l.resposta, reforco: dono === false, criadoEm: l.criadoEm, atualizadoEm: l.atualizadoEm, historico: historicoPublico(l), paraQuando: dono === false ? null : l.paraQuando });
 const visaoFila = (l) => ({ pedido: l.pedido, nivel: l.nivel, status: l.status, criadoEm: l.criadoEm });
 
 // Fila ordenada: urgente primeiro, depois a mais antiga.
