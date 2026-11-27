@@ -29,7 +29,10 @@
     nota_fiscal: { nao_separado: [0, 'Ainda não tem nota fiscal: o pedido não foi faturado.'], em_separacao: [0, 'Ainda não tem nota fiscal: o pedido não foi faturado.'], separado: [0, 'Ainda não tem nota fiscal: o pedido não foi faturado.'], conferido: [0, 'Ainda não tem nota fiscal: o pedido não foi faturado.'], faturado: [1, ''], despachado: [1, ''], nao_achado: [0, NAO_ACHADO] }
   };
   Object.setPrototypeOf(REGRAS, null);
-  const regra = (tipo, etapa) => { const r = (REGRAS[tipo] || {})[etapa || 'nao_achado'] || [1, '']; return { ok: Boolean(r[0]), texto: r[1] }; };
+  const regra = (tipo, etapa) => {
+    // bloqueado = o pedido existe, mas está parado por crédito/estoque: não dá para pedir nota nem "subir" (ele já existe); o resto a logística trata
+    if (etapa === 'bloqueado') return { ok: !['nota_fiscal', 'subir_pedido'].includes(tipo), texto: 'Pedido bloqueado por crédito/estoque: não está sendo separado. A logística avisa o financeiro ou o estoque.' };
+    const r = (REGRAS[tipo] || {})[etapa || 'nao_achado'] || [1, '']; return { ok: Boolean(r[0]), texto: r[1] }; };
   const CARTOES = [
     { id: 'sair', icone: 'raio', tom: 'urg', titulo: 'Sair hoje', frase: 'Pressa, liberar, prioridade', opcoes: ['sair_hoje'], pedidos: true },
     { id: 'saida', icone: 'caminhao', tom: 'alta', titulo: 'Como vai sair', frase: 'Retirada, Sedex, motoboy, outra transportadora, saída pela filial', opcoes: ['saida_especial'], pedidos: true },
@@ -79,7 +82,7 @@
     return { lista, ruins, excesso };
   }
   const pedidos = () => lerPedidos(st.texto).lista;
-  const etapaDe = (p) => { const i = st.info[p]; return i && i.estado === 'ok' ? (i.r.achado ? i.r.etapa || '' : 'nao_achado') : ''; };
+  const etapaDe = (p) => { const i = st.info[p]; return i && i.estado === 'ok' ? (i.r.achado ? i.r.etapa || '' : i.r.bloqueio ? 'bloqueado' : 'nao_achado') : ''; };
   async function consultar(lista) {
     const faltam = lista.filter((p) => !st.info[p] || st.info[p].estado !== 'ok' || Date.now() - st.info[p].em > 120000);
     if (!faltam.length || !cfg) return;
@@ -104,8 +107,8 @@
         onchange: conferir, onpaste: () => root.setTimeout(() => { const t = root.document.getElementById('ini-pedidos'); if (t) { st.texto = t.value; conferir(); } }, 30) }, st.texto),
       h('p', { class: 'dica', id: 'ini-contagem', role: 'status', text: nota() }),
       l.lista.length ? h('ul', { class: 'ini-fichas', 'aria-label': 'Pedidos digitados' }, l.lista.map((p) => { const i = st.info[p], e = etapaDe(p);
-        return h('li', { class: 'ini-ficha ' + (!i ? '' : i.estado === 'carregando' ? 'carregando' : i.estado === 'erro' ? 'erro' : e === 'nao_achado' ? 'fora' : 'ok') },
-          h('b', { class: 'num', text: p }), h('span', { text: !i ? 'Toque em "Conferir" para ver a situação' : i.estado === 'carregando' ? 'Consultando…' : i.estado === 'erro' ? 'Não consegui consultar' : e === 'nao_achado' ? 'Não está no SC9' : (S.ETAPA[e] || (i.r.resumo && i.r.resumo.texto) || '') + (i.r.detalhes && i.r.detalhes.cliente ? ' · ' + i.r.detalhes.cliente : '') })); })) : null,
+        return h('li', { class: 'ini-ficha ' + (!i ? '' : i.estado === 'carregando' ? 'carregando' : i.estado === 'erro' ? 'erro' : e === 'nao_achado' || e === 'bloqueado' ? 'fora' : 'ok') },
+          h('b', { class: 'num', text: p }), h('span', { text: !i ? 'Toque em "Conferir" para ver a situação' : i.estado === 'carregando' ? 'Consultando…' : i.estado === 'erro' ? 'Não consegui consultar' : e === 'bloqueado' ? i.r.bloqueio.texto : e === 'nao_achado' ? 'Não está no SC9' : (S.ETAPA[e] || (i.r.resumo && i.r.resumo.texto) || '') + (i.r.detalhes && i.r.detalhes.cliente ? ' · ' + i.r.detalhes.cliente : '') })); })) : null,
       l.lista.length ? h('div', { class: 'acoes', style: 'margin:0' }, h('button', { class: 'btn peq', type: 'button', disabled: st.consultando, onclick: () => { l.lista.forEach((p) => { delete st.info[p]; }); conferir(); } }, ic('atualizar'), st.consultando ? 'Consultando…' : 'Conferir a situação')) : null);
   }
   const OUTROS = [['prioridade', 'raio', 'Pedir prioridade (formulário antigo)'], ['avisar', 'comentario', 'Avisar a expedição (formulário antigo)'], ['solicitar', 'enviar', 'Solicitar à logística (formulário antigo)']];

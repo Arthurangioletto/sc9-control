@@ -68,6 +68,28 @@
 
   /* Monta o rastreio. snapshot = base salva do SC9; opcoes = { saidaIso, ocorrencias, agora, nomeTransportadora }.
    * Devolve { achado:false, atualizadoEm } quando o pedido não está na base. */
+  // Pedidos com linha BLOQUEADA no SC9 (crédito/estoque). Essas linhas continuam FORA de todas as contas e análises (o parser as descarta como sempre);
+  // o snapshot só guarda à parte o código do bloqueio para a vendedora ver por que o pedido não anda. { c: [códigos de crédito], e: [códigos de estoque], n: linhas }
+  const cacheBloqueios = new WeakMap();
+  function bloqueioDoPedido(snapshot, pedido) {
+    if (!snapshot || !snapshot.bloqueioPorPedido) return null;
+    let m = cacheBloqueios.get(snapshot);
+    if (!m) {
+      m = new Map();
+      for (const [k, v] of mapa(snapshot.bloqueioPorPedido)) { const n = normalizarPedido(k); if (n && v && typeof v === 'object') m.set(n, v); }
+      cacheBloqueios.set(snapshot, m);
+    }
+    const v = m.get(pedido);
+    if (!v) return null;
+    const cods = (l) => (Array.isArray(l) ? l : []).map((x) => texto(x, 6)).filter(Boolean).slice(0, 5);
+    const credito = cods(v.c), estoque = cods(v.e), linhas = Math.max(0, Math.floor(Number(v.n) || 0));
+    if (!credito.length && !estoque.length) return null;
+    const partes = [];
+    if (credito.length) partes.push('crédito (código ' + credito.join(', ') + ')');
+    if (estoque.length) partes.push('estoque (código ' + estoque.join(', ') + ')');
+    return { credito, estoque, linhas, texto: 'Bloqueado no Protheus por ' + partes.join(' e ') + '.' };
+  }
+
   function montarRastreio(snapshot, pedidoDigitado, opcoes) {
     const opc = opcoes || {};
     const agora = opc.agora instanceof Date ? opc.agora : new Date();
@@ -75,7 +97,7 @@
     const atualizadoEm = snapshot ? iso(snapshot.savedAt) : '';
     if (!pedido || !snapshot) return { achado: false, pedido: pedido || '', atualizadoEm };
     const linhas = (snapshot.orders || []).filter((o) => o && normalizarPedido(o.pedido) === pedido);
-    if (!linhas.length) return { achado: false, pedido, atualizadoEm };
+    if (!linhas.length) { const bq = bloqueioDoPedido(snapshot, pedido); return bq ? { achado: false, pedido, atualizadoEm, bloqueio: Object.assign(bq, { parcial: false }) } : { achado: false, pedido, atualizadoEm }; }
 
     const v = juntarLinhas(linhas);
     const entrega = mapa(snapshot.entregaInfo), sc5 = mapa(snapshot.sc5PorPedido), faturamento = mapa(snapshot.faturamento);
@@ -152,6 +174,7 @@
     const espera = maiorEspera(etapas, paradoDesde, atual, agora, Boolean(despachadoEm));
     const resultado = {
       achado: true, pedido, atualizadoEm,
+      bloqueio: (() => { const bq = bloqueioDoPedido(snapshot, pedido); return bq ? Object.assign(bq, { parcial: true }) : null; })(),
       resumo: Object.assign(resumo, { atrasado, dias }),
       etapas, paradoDesde, espera,
       detalhes: {

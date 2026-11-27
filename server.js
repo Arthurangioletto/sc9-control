@@ -2307,7 +2307,7 @@ async function handleApi(req, res, pathname) {
         if (!Rastreio.normalizarPedido(consulta.get("pedido"))) return sendJson(res, 400, { error: "Digite o número do pedido (só números)." });
         const r = await rastrearPedido(consulta.get("pedido"), await ocorrenciasParaRastreio().catch(() => []));
         if (req.headers["x-vend-token"] && consulta.get("auto") !== "1") { const contaConsulta = await contaDoToken(req); if (contaConsulta) registrarConsultaVendedora(contaConsulta, r); } // só com acesso; a atualização automática não conta
-        if (!r.achado && limiteVendedoras("vn|" + ip, 40, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas sem resultado. Confira os números e tente de novo em alguns minutos." });
+        if (!r.achado && !r.bloqueio && limiteVendedoras("vn|" + ip, 40, 10 * 60 * 1000)) return sendJson(res, 429, { error: "Muitas buscas sem resultado. Confira os números e tente de novo em alguns minutos." });
         return sendJson(res, 200, comEtapa(r));
       }
       if (pathname === "/api/vendedoras/pedidos" && method === "GET") {
@@ -2416,13 +2416,13 @@ async function handleApi(req, res, pathname) {
         let resultado, linhas;
         await comFila("avisos-vendedoras", async () => {
           const atual = await objLoadParaGravar("avisos-vendedoras.json");
-          const feito = A.aplicar(A.normalizarLista(atual), { acao: "criar", pedido, tipo: corpo.tipo, texto: corpo.texto, pedidoPor: contaAviso ? contaAviso.nome : corpo.pedidoPor, conta: contaAviso ? contaAviso.login : "", filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, "", Date.now());
+          const feito = A.aplicar(A.normalizarLista(atual), { acao: "criar", pedido, tipo: corpo.tipo, texto: corpo.texto, pedidoPor: contaAviso ? contaAviso.nome : corpo.pedidoPor, conta: contaAviso ? contaAviso.login : "", filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado && !r.bloqueio }, "", Date.now());
           if (feito.erro) { resultado = { erro: feito.erro }; return; }
           resultado = feito.resultado; linhas = feito.linhas;
           await objSave("avisos-vendedoras.json", { linhas });
         });
         if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
-        return sendJson(res, 200, { ok: true, naoAchado: !r.achado, linha: Object.assign(A.visaoMeu(linhas.find((l) => l.id === resultado.id)), { foraDoSc9: !r.achado }) });
+        return sendJson(res, 200, { ok: true, naoAchado: !r.achado && !r.bloqueio, linha: Object.assign(A.visaoMeu(linhas.find((l) => l.id === resultado.id)), { foraDoSc9: !r.achado && !r.bloqueio }) });
       }
       if (pathname === "/api/vendedoras/avisos" && method === "GET") {
         if (limiteVendedoras("vc|" + ip, 120, 60 * 1000)) return sendJson(res, 429, { error: "Muitas consultas seguidas. Aguarde um instante." });
@@ -2460,9 +2460,9 @@ async function handleApi(req, res, pathname) {
         // onde cada pedido está agora (cancelamento esperto, etapa de cada pedido do lote) e a filial dele
         if (listaP.lista.length > 1) await saidasEmCache(listaP.lista);
         const pedidosInfo = [], rs = [];
-        for (const p of listaP.lista) { const rr = await rastrearPedido(p, []); rs.push(rr); pedidosInfo.push({ pedido: p, etapa: SS.etapaDoRastreio(rr), naoAchado: !rr.achado }); }
+        for (const p of listaP.lista) { const rr = await rastrearPedido(p, []); rs.push(rr); pedidosInfo.push({ pedido: p, etapa: SS.etapaDoRastreio(rr), naoAchado: !rr.achado && !rr.bloqueio }); }
         const r = rs[0] || null, rFilial = rs.find((x) => x.achado) || r;
-        const naoAchado = listaP.lote ? pedidosInfo.some((x) => x.naoAchado) : Boolean(r && !r.achado);
+        const naoAchado = listaP.lote ? pedidosInfo.some((x) => x.naoAchado) : Boolean(r && !r.achado && !r.bloqueio);
         const contaSol = await contaDoToken(req); // com acesso, o nome e o login vêm da conta
         const cancela = corpo.tipo === "cancelar_pedido" || corpo.tipo === "segurar_pedido";
         const indice = corpo.tipo === "transferencia_peca" || corpo.tipo === "falta_item" ? await indiceProdutos() : null; // descrição e saldo na origem vêm do servidor, não do aparelho
@@ -2572,7 +2572,7 @@ async function handleApi(req, res, pathname) {
         let resultado, linhas;
         await comFila("prioridades-vendedoras", async () => {
           const atual = await objLoadParaGravar("prioridades-vendedoras.json");
-          const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: contaPedido ? contaPedido.nome : corpo.pedidoPor, conta: contaPedido ? contaPedido.login : "", motivo: corpo.motivo, paraQuando: corpo.paraQuando, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado }, corpo && corpo.pedidoPor, Date.now());
+          const feito = P.aplicar(P.normalizarLista(atual), { acao: "criar", pedido, nivel: corpo.nivel, observacao: corpo.observacao, pedidoPor: contaPedido ? contaPedido.nome : corpo.pedidoPor, conta: contaPedido ? contaPedido.login : "", motivo: corpo.motivo, paraQuando: corpo.paraQuando, filial: r.achado && r.detalhes ? r.detalhes.armazem : "", naoAchado: !r.achado && !r.bloqueio }, corpo && corpo.pedidoPor, Date.now());
           if (feito.erro) { resultado = { erro: feito.erro }; return; }
           resultado = feito.resultado; linhas = feito.linhas;
           await objSave("prioridades-vendedoras.json", { linhas });
@@ -2580,7 +2580,7 @@ async function handleApi(req, res, pathname) {
         if (resultado.erro) return sendJson(res, 400, { error: resultado.erro });
         const linha = linhas.find((l) => l.id === resultado.id);
         const quemPediu = { login: contaPedido && contaPedido.login, nome: contaPedido ? contaPedido.nome : corpo.pedidoPor };
-        return sendJson(res, 200, { ok: true, duplicado: resultado.duplicado, naoAchado: !r.achado, linha: Object.assign(P.visaoMeu(linha, P.ehDono(linha, quemPediu), idReforco), { foraDoSc9: !r.achado }) });
+        return sendJson(res, 200, { ok: true, duplicado: resultado.duplicado, naoAchado: !r.achado && !r.bloqueio, linha: Object.assign(P.visaoMeu(linha, P.ehDono(linha, quemPediu), idReforco), { foraDoSc9: !r.achado && !r.bloqueio }) });
       }
       return sendJson(res, 404, { error: "não encontrado" });
     } catch (e) {
